@@ -1,0 +1,171 @@
+TESTES — SIASH UTIN Alpha Consolidada v0.10.6
+
+[ ] Primeiro acesso exibe criação de Administrador Proprietário.
+[ ] Não permite senha proprietária com menos de 10 caracteres.
+[ ] Após criar proprietário, tela passa ao login normal.
+[ ] Login proprietário exibe Administração SIASH e Configurações.
+[ ] Login operacional coordenacao.utin / siash oculta Administração e Configurações.
+[ ] Usuário operacional continua acessando módulos assistenciais/operacionais.
+[ ] Configurações só salvam em sessão proprietária.
+[ ] Auditoria registra criação, login e alteração estrutural.
+[ ] Logout encerra a sessão e remove privilégios visuais.
+[ ] Dados da v0.8 continuam no mesmo STORE local para preservar testes existentes.
+[ ] Gestão de leitos, indicadores, PIPA, PICC, SAE, Docs, Huddle e RH continuam renderizando.
+
+CORREÇÃO v0.9.1 — Lançamento Diário
+- Ao selecionar uma data sem lançamento: formulário deve abrir zerado e observação vazia.
+- Ao selecionar uma data já salva: formulário deve carregar exatamente os dados daquela data.
+- Alternar entre duas datas não pode transportar admissões, altas, transferências, óbitos ou demais eventos de um dia para outro.
+- O armazenamento local anterior foi preservado (mesma chave de dados da v0.8/v0.9).
+
+
+MELHORIA v0.9.3 — TESTE DE UX
+- Salvar Lançamento Diário: não deve abrir alert/OK.
+- Deve aparecer “Dados salvos” por aproximadamente 1 segundo.
+- Após a mensagem desaparecer, a tela deve permanecer livre para continuar o lançamento.
+- Troca de data e recuperação dos registros da v0.9.1 devem continuar funcionando.
+
+
+CORREÇÃO v0.9.3 — TESTE DE VM
+1. Dia 08: salvar RN em VM = 1 e Intubações no dia = 1.
+2. Dia 09: salvar RN em VM = 1 e Intubações no dia = 0.
+3. Dia 10: salvar RN em VM = 1 e Intubações no dia = 0.
+Resultado esperado: RN em VM atualmente = 1; VM-dia = 3; Intubações no mês = 1.
+4. No dia da extubação programada: informar RN em VM de acordo com o censo daquele dia e Extubação programada = 1.
+5. Confirmar que extubação acidental segue sendo acumulada apenas quando ocorrer.
+
+
+CORREÇÃO v0.9.4 — TESTE PIPA / DASHBOARD
+[OK] PIPA do Dashboard usa os registros do módulo Programa PIPA, e não o campo diário.
+[OK] Soma múltiplos municípios/registros da mesma competência.
+[OK] Ignora registros de outras competências.
+[OK] Inclusão/exclusão no PIPA atualiza o Dashboard via renderização global.
+
+MELHORIA v0.9.4 — TESTE COMPARATIVO MENSAL
+[OK] Taxa de ocupação, Média de permanência e Pacientes-dia permanecem presentes.
+[OK] Os três gráficos usam a nova grade compacta em desktop amplo.
+[OK] Altura dos gráficos foi reduzida sem alterar a lógica de cálculo.
+[OK] Layout responsivo preservado para larguras menores.
+
+
+TESTES v0.9.6 — PICC INTEGRADO
+[ ] Registrar PICC em uma data e conferir se Lançamento Diário mostra automaticamente a quantidade daquela data.
+[ ] Confirmar que o campo PICCs inseridos do Lançamento Diário é somente leitura.
+[ ] Conferir PICC ativo por leito e contagem D1, D2, D3...
+[ ] Registrar retirada e conferir saída imediata da lista de ativos.
+[ ] Conferir preservação no histórico com data, motivo e total PICC-dia.
+[ ] Testar motivo Programada / suspensão do tratamento.
+[ ] Testar motivo Infiltração.
+[ ] Conferir PICCs inseridos, PICC-dia, ativos e retirados nos Indicadores Mensais.
+[ ] Reabrir datas do Lançamento Diário e conferir ausência de dupla contagem.
+
+
+v0.9.6 — CORREÇÃO PIPA/INDICADORES
+- Produção acumulada > PIPA usa agora S.pipa da competência selecionada, mesma fonte do Programa PIPA e Dashboard.
+- Teste lógico: 3 + 2 bebês no Programa PIPA da mesma competência => Indicadores/PIPA = 5.
+
+
+TESTES v0.10.6 — SIASH DOCS
+[OK] Sintaxe JavaScript validada pelo Node.
+[OK] IDs da interface SIASH Docs verificados sem duplicidade.
+[OK] Arquivos PDF/Word dos POPs Admissão e Sepse presentes no pacote.
+[OK] Caminhos relativos dos documentos conferidos.
+[ ] Login operacional: abrir PDF vigente e histórico; não deve visualizar botões de cadastro/nova revisão/exclusão.
+[ ] Login proprietário: cadastrar documento e iniciar nova revisão.
+[ ] Anexar novo PDF/Word e conferir persistência local após recarregar a página.
+[ ] Criar revisão Em elaboração e confirmar que a versão vigente anterior continua sendo a consulta principal.
+[ ] Avançar fluxo para Em revisão e Aguardando aprovação.
+[ ] Publicar como Vigente e confirmar que a versão anterior fica Obsoleta no histórico.
+[ ] Confirmar cálculo bienal da próxima revisão e alertas de prazo.
+[ ] Confirmar que POPs institucionais incorporados não podem ser excluídos.
+
+
+v0.10.6: alertas 90/30/vencido, painel Documentos que exigem atenção, botão Analisar atualização e validação profissional obrigatória antes de publicação vigente.
+
+
+v0.10.6 — SIASH DOCS MULTISSETORIAL / COMPACTO
+- Título alterado para gestão documental institucional por setor.
+- Filtro por setor incluído.
+- Acesso documental separado da governança estrutural: Leitor, Editor/Revisor e Validador/Aprovador.
+- Super Admin mantém controle global; permissões documentais não concedem acesso à arquitetura da SIASH.
+- Editor pode cadastrar/revisar apenas seu setor; Validador pode publicar revisão como Vigente no seu setor.
+- Interface SIASH Docs compactada (hero, cards, filtros, alertas, tabela e botões).
+
+
+v0.10.6 — BIBLIOTECA POPs UTIN
+- 44 documentos importados do arquivo POP UTIN 2024.zip.
+- Arquivos originais preservados dentro do pacote.
+- Documentos legado sinalizados como Revisão necessária quando data formal não está confirmada.
+- Arquivos explicitamente identificados como atualizado 2022 entram com revisão 01 Em revisão.
+- POP Sepse Neonatal: revisão 01 Em revisão iniciada; versão 00 permanece vigente até validação.
+
+
+v0.10.6 — PRIMEIRO POP ATUALIZADO COM IA
+- LEG-UTIN-025: proposta Rev.05 gerada em Word/PDF e incorporada ao SIASH Docs.
+- Versão 04 permanece Vigente; Rev.05 fica Aguardando aprovação/validação profissional.
+- Botão Validar e publicar reconhece PDF incorporado (pdfPath), não apenas arquivo IndexedDB.
+- Migração adiciona a proposta mesmo para instalações com dados locais da v0.10.4.
+
+
+v0.10.6 — FLUXO SIASH DOCS SIMPLIFICADO
+- LEG-UTIN-025 Rev.05 registrada como Vigente após confirmação explícita de validação profissional em 25/08/2026; versão anterior arquivada como Obsoleta.
+- Atualizar com IA preenche automaticamente revisão, data, status Em revisão e periodicidade.
+- Gera solicitação pronta para copiar à IA.
+- Após anexar PDF/Word, ações diretas: Abrir revisão proposta, Aprovar e publicar, Solicitar correção.
+- Aprovação registra validador e data atual automaticamente e arquiva a versão anterior.
+- Publicação segue bloqueada sem PDF real.
+
+
+v0.10.8 — SIASH DOCS / ATUALIZAÇÃO SIMPLIFICADA
+- Removida a exigência de anexar PDF e Word ao mesmo tempo.
+- O POP vigente já cadastrado é usado como referência; o usuário não precisa anexá-lo novamente.
+- Novo botão principal: ATUALIZAR POP COM IA.
+- O botão prepara/copia a solicitação, oferece abrir o POP vigente e abre o ChatGPT.
+- Resultado da IA pode ser importado em Word OU PDF; ambos são aceitos, mas não obrigatórios simultaneamente.
+- Nova revisão importada entra automaticamente como Aguardando aprovação.
+- Campos técnicos manuais foram ocultados/simplificados.
+- Validação aceita Word ou PDF real, mantendo validação profissional obrigatória.
+
+
+v0.10.8 — CORREÇÃO FUNCIONAL DO ATUALIZAR COM IA
+- Corrigidos 33 nomes de arquivos legado com codificação corrompida; 45 wordPath verificados e 0 ausentes.
+- POP selecionado agora aparece em destaque na tela de atualização.
+- ABRIR POP ATUAL usa efetivamente o arquivo vigente cadastrado.
+- Fluxo reduzido para 4 ações reais: abrir atual, atualizar com IA, importar revisão, conferir/aprovar.
+- Área “Recebeu atualização?” substituída por “Importar revisão produzida pela IA”.
+- Aceita Word ou PDF; não exige ambos.
+- Se a revisão já existe Em revisão sem arquivo (ex.: LEG-UTIN-004 Rev.01), a importação completa a revisão existente em vez de bloquear por duplicidade.
+- Após importação, aparecem botões Abrir Word/PDF atualizado, Aprovar e publicar, Solicitar correção.
+
+
+v0.10.9 — CONSOLIDAÇÃO SIASH DOCS
+- Base: v0.10.8 consolidada, preservando módulos e regras anteriores.
+- Removida a lista redundante "Documentos que exigem atenção".
+- "Documentos do Setor" passa a ser a lista única/principal; filtro Situação mantém acesso às pendências.
+- LEG-UTIN-004 corrigido para histórico institucional real: Rev.05 (03/2024) -> Rev.06 validada em 25/08/2026.
+- Rev.01 criada pelo protótipo é migrada/retirada por não corresponder à revisão real do documento.
+- Word real da Rev.06 incorporado à biblioteca como arquivo vigente.
+- Migração aplicada também sobre dados existentes no localStorage, preservando demais dados do usuário.
+
+
+v0.10.10 — AUTOMAÇÃO DA APROVAÇÃO DOCUMENTAL
+- Base oficial: v0.10.9 consolidada; funcionalidades anteriores preservadas.
+- Ao aprovar/publicar uma revisão importada em DOCX, o nome digitado em “Profissional responsável pela aprovação” é gravado no histórico do SIASH e inserido automaticamente no campo Aprovação do Word.
+- A automação usa o marcador institucional “A preencher automaticamente pelo SIASH após validação”.
+- Nome, data, usuário e revisão continuam registrados na trilha de auditoria do SIASH.
+- JSZip incorporado localmente ao pacote: funcionamento offline, sem dependência de internet.
+- Se o arquivo for PDF, .DOC antigo ou DOCX sem o marcador institucional, a publicação é mantida e o sistema orienta a conferir o campo de aprovação.
+
+
+v0.11.0 — SIASH CLOUD / PERSISTÊNCIA ENTRE COMPUTADORES
+- Base oficial: v0.10.10 consolidada; módulos e regras anteriores preservados.
+- Backend Node/Express + PostgreSQL incluído.
+- Estado completo S + segurança documental sincronizados em banco central.
+- Documentos importados em Word/PDF sincronizados via banco central, mantendo IndexedDB local como cache/contingência.
+- Primeiro acesso Cloud: se o banco estiver vazio, os dados locais existentes são migrados.
+- Abertura no hospital pela mesma URL carrega o estado central automaticamente.
+- Autenticação Cloud com senha hash bcrypt e token JWT.
+- Administrador Proprietário permanece com perfil owner; endpoint de usuários restrito ao owner.
+- Uso local file:// continua disponível, porém sem sincronização entre máquinas.
+
+- Validação final v0.11.0: sintaxe app.js e server.js OK; IDs HTML sem duplicidade; PIPA/PICC/VM/SIASH Docs/aprovação DOCX preservados; endpoints Cloud e backup/migração presentes.

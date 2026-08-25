@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: siash-utin-cloud
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: siash-postgres
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PGSSLMODE
+        value: disable
+
+databases:
+  - name: siash-postgres
+    plan: free

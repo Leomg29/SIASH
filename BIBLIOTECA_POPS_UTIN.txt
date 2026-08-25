@@ -1,0 +1,48 @@
+SIASH Docs v0.10.4 - Biblioteca POPs UTIN
+
+Documentos importados do acervo POP UTIN 2024: 44
+
+LEG-UTIN-001 | POP1_2_3_Higienização simples das mãos 2024 | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-002 | ADMINISTRAÇÃO DE DIETA (SNE ou Ostomias) por gotejamento 1 | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-003 | Administração de dieta por gavagem | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-004 | ADMINISTRAÇÃO SEGURA DE MEDICAÇÃO - atualizado 2022 | EM REVISÃO (origem 2022)
+LEG-UTIN-005 | Alta do Rn Transferência do RN | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-006 | ANOTAÇÃO DE ENFERMAGEM - atulalizado | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-007 | ASSISTENCIA DE ENFERMAGEM NA ADMISSÃO DO PACIENTE NO CTI NEONATAL | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-008 | BOMBA DE INFUSÃO B -BRAUN | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-009 | Cateterismo da Veia Umbilical | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-010 | CATETERISMO VESICAL | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-011 | CHECAGEM DE PRESCRIÇÃO MÉDICA E DE ENFERMAGEM | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-012 | Check-List de Leito - atualizado 2022 | EM REVISÃO (origem 2022)
+LEG-UTIN-013 | Coleta de Teste do Pezinho | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-014 | coleta para Hemocultura | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-015 | Conferencia Validade Medicação de Uso Coletivo | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-016 | CONTROLE DE NUMERAÇÃO DOS PROCEDIMENTOS | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-017 | Cuidados com a Pele do RN - atualizado | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-018 | Cuidados de Enfermagem com Fototerapia | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-019 | CUIDADOS PÓS-MORTE | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-020 | Desinfecção Terminal da Incubadora | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-021 | Glicemia Capilar em RN | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-022 | Higiene Oral | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-023 | Higienização das mãos_alcool_gel_POP2 - atualizado | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-024 | HIGIENIZAÇÃO DO RECÉM NASCIDO EM INCUBADORA | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-025 | INSERÇÃO DO CATETER EPICUTÂNEO | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-026 | Lavagem Gástrica | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-027 | Manipulação Mininma UTI NEONATA E PEDIÁTRICA | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-028 | Mensuração de Radiância | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-029 | Monitorização Cardíaca | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-030 | Monitorização da temperatura corporal em incubadora ou berço de calor radiante | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-031 | Montagem do sistema de Drenagem de torax | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-032 | Montagem do Box para Admissão do RN | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-033 | POP Posicionamento | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-034 | POP1_2_3_Higienização simples das mãos | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-035 | Punção venosa no RN - atualizado | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-036 | Relatório de Enfermagem | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-037 | Sedação e Analgesia em Recém-Nascidos UTI Neonatal | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-038 | Sondagem Orogástrica e Nasogástrica - atualizado 2022 | EM REVISÃO (origem 2022)
+LEG-UTIN-039 | Troca de Equipos e Soluções | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-040 | TROCA DE ÓCULOS | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-041 | Verificação do Peso do RN | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-042 | Verificação do Resíduo Gástrico Estáse gástrica | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-043 | VERIFICAÇÃO DOS DADOS ANTROPOMÉTRICOS - atualizado | REVISÃO NECESSÁRIA / data a confirmar
+LEG-UTIN-044 | Verificação dos Dados Vitais em RN’s | REVISÃO NECESSÁRIA / data a confirmar

@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>SIASH | HospitalIA UTIN — Alpha Consolidada v0.11.0</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="login-view" class="login-shell">
+  <div class="login-card">
+    <div class="brand-mark">SIASH</div>
+    <h1>HospitalIA</h1>
+    <p class="muted">UTI Neonatal • Alpha Consolidada v0.11.0</p>
+    <div id="owner-setup" class="owner-setup hidden">
+      <div class="security-badge">Primeiro acesso do Proprietário</div>
+      <p class="muted">Crie aqui a credencial exclusiva do Administrador Proprietário. Esta etapa aparece somente enquanto não houver proprietário configurado neste navegador.</p>
+      <label>Usuário proprietário</label><input id="owner-user" autocomplete="username" placeholder="Ex.: leandro.admin">
+      <label>Senha proprietária</label><input id="owner-pass" type="password" autocomplete="new-password" placeholder="Mínimo 10 caracteres">
+      <label>Confirmar senha</label><input id="owner-pass2" type="password" autocomplete="new-password">
+      <button id="owner-create-btn" class="primary">Criar acesso exclusivo</button>
+    </div>
+    <div id="normal-login">
+      <label>Usuário</label><input id="login-user" value="coordenacao.utin" autocomplete="username">
+      <label>Senha</label><input id="login-pass" type="password" value="siash" autocomplete="current-password">
+      <button id="login-btn" class="primary">Entrar</button>
+      <div class="cloud-migration-tools">
+  <strong>Migração / segurança dos dados</strong>
+  <span>Antes da primeira migração Cloud, você pode exportar o banco local atual. Depois de entrar na Cloud, importe o backup para levar também documentos e validações locais.</span>
+  <div class="form-actions">
+    <button id="export-local-backup" class="secondary" type="button">Exportar banco local</button>
+    <label class="secondary migration-file">Importar backup<input id="import-local-backup" type="file" accept=".json,application/json"></label>
+  </div>
+</div>
+<p id="login-feedback" class="login-feedback"></p>
+      <small>Usuário operacional de teste: coordenacao.utin / siash. O acesso de Proprietário é criado no primeiro uso.</small>
+    </div>
+    <small class="security-note">Protótipo local para testes. Não utilize dados identificáveis reais de pacientes.</small>
+  </div>
+</div>
+
+<div id="app-view" class="app-shell hidden">
+<aside class="sidebar">
+  <div class="sidebar-brand"><div class="brand-mark small">SIASH</div><div><strong>HospitalIA</strong><span>UTIN • v0.11.0</span></div></div>
+  <nav>
+    <button data-view="dashboard" class="nav-item active">Dashboard</button>
+    <button data-view="plantao" class="nav-item">Meu Plantão</button>
+    <button data-view="lancamento" class="nav-item">Lançamento Diário</button>
+    <button data-view="leitos" class="nav-item">Gestão de Leitos</button>
+    <button data-view="movimentacoes" class="nav-item">Admissões / Altas</button>
+    <button data-view="checklist" class="nav-item">Checklist do Plantão</button>
+    <button data-view="assistencia" class="nav-item">SAE / Evolução</button>
+    <button data-view="picc" class="nav-item">PICC e Dispositivos</button>
+    <button data-view="pipa" class="nav-item">Programa PIPA</button>
+    <button data-view="pendencias" class="nav-item">Pendências</button>
+    <button data-view="indicadores" class="nav-item">Indicadores</button>
+    <button data-view="comparativo" class="nav-item">Comparativo Mensal</button>
+    <button data-view="docs" class="nav-item">SIASH Docs</button>
+    <button data-view="huddle" class="nav-item">NIR / Huddle</button>
+    <button data-view="rh" class="nav-item">Pessoas / RH</button>
+    <button data-view="administracao" class="nav-item owner-only hidden">Administração SIASH</button>
+    <button data-view="configuracoes" class="nav-item owner-only hidden">Configurações</button>
+  </nav>
+  <div class="sidebar-footer"><div><span id="logged-user">Coordenação UTIN</span><small id="logged-role" class="role-label">Operacional</small></div><button id="logout-btn" class="ghost">Sair</button></div>
+</aside>
+
+<main class="main">
+<header class="topbar">
+  <div><h2 id="page-title">Dashboard</h2><p id="top-subtitle">UTI Neonatal • Gestão inteligente e continuidade do cuidado</p></div>
+  <div class="top-actions">
+    <div class="clock-box"><strong id="clock-date">--/--/----</strong><span id="clock-time">--:--:--</span><small id="shift-label">Turno</small></div>
+    <div class="status-pill">Sistema operacional</div>
+  </div>
+<span id="cloud-status" class="cloud-status">Cloud: aguardando login</span></header>
+
+<!-- DASHBOARD -->
+<section id="view-dashboard" class="view">
+  <div class="hero"><div><h3>Visão geral da UTI Neonatal</h3><p>Produção, ocupação, plantão e pendências em uma única visão.</p></div><button id="refresh-dashboard" class="secondary">Atualizar painel</button></div>
+  <div class="cards six">
+    <article class="metric-card"><span>Pacientes-dia</span><strong id="m-pacientedias">0</strong><small>competência atual</small></article>
+    <article class="metric-card"><span>Taxa de ocupação</span><strong id="m-ocupacao">0%</strong><small>10 leitos Neonatal</small></article>
+    <article class="metric-card"><span>Média de permanência</span><strong id="m-permanencia">—</strong><small>paciente-dia / saídas</small></article>
+    <article class="metric-card"><span>Admissões</span><strong id="m-admissoes">0</strong><small>competência atual</small></article>
+    <article class="metric-card"><span>Transferências</span><strong id="m-transferencias">0</strong><small>competência atual</small></article>
+    <article class="metric-card"><span>PIPA</span><strong id="m-pipa">0</strong><small>encaminhamentos</small></article>
+  </div>
+  <div class="cards competence-cards">
+    <article class="metric-card compact"><span>Leitos-dia</span><strong id="m-leitosdia">0</strong></article>
+    <article class="metric-card compact"><span>Dias lançados</span><strong id="m-diaslancados">0</strong></article>
+    <article class="metric-card compact"><span>Dias pendentes</span><strong id="m-diaspendentes">0</strong></article>
+    <article class="metric-card compact"><span>Pendências do plantão</span><strong id="m-pendencias">0</strong></article>
+  </div>
+  <div class="grid-2">
+    <article class="panel"><div class="panel-head"><h3>Ocupação diária</h3><span>últimos lançamentos</span></div><div id="occupancy-bars" class="bar-chart"></div></article>
+    <article class="panel"><div class="panel-head"><h3>Alertas operacionais</h3><span>gerados pelos registros</span></div><div id="alerts" class="alerts"></div></article>
+  </div>
+  <article class="panel"><div class="panel-head"><h3>Resumo executivo</h3><span>análise automática inicial</span></div><p id="executive-summary" class="summary-text"></p></article>
+</section>
+
+<!-- PLANTAO -->
+<section id="view-plantao" class="view hidden">
+  <div class="hero"><div><h3>Jornada do Plantão — 12 horas</h3><p>Recebimento → passagem multiprofissional → checklist → SAE/evolução → cuidados → pendências → entrega.</p></div><button id="reset-shift" class="secondary">Iniciar novo plantão</button></div>
+  <div class="grid-2">
+    <article class="panel"><div class="panel-head"><h3>Etapas do plantão</h3><span>continuidade operacional</span></div><div id="shift-steps"></div></article>
+    <article class="panel"><div class="panel-head"><h3>Linha do tempo</h3><span>eventos do turno</span></div><div id="timeline" class="timeline"></div>
+      <form id="event-form" class="form-grid one">
+        <label>Tipo<select id="ev-type"><option>Intercorrência</option><option>Passagem multiprofissional</option><option>Cuidado</option><option>Comunicação</option><option>Admissão</option><option>Procedimento</option></select></label>
+        <label>Leito<select id="ev-bed" class="bed-select"></select></label>
+        <label>Resumo<input id="ev-text" placeholder="O que aconteceu?"></label>
+        <button class="primary" type="submit">Registrar evento</button>
+      </form>
+    </article>
+  </div>
+  <article class="panel"><div class="panel-head"><h3>Resumo para entrega do plantão</h3><span>gerado a partir dos registros</span></div><div id="shift-summary"></div></article>
+</section>
+
+<!-- LANCAMENTO -->
+<section id="view-lancamento" class="view hidden">
+  <div class="hero"><div><h3>Lançamento Diário de Indicadores</h3><p>Registre os dados do dia. A SIASH calcula os indicadores mensais automaticamente.</p></div><span class="badge" id="competence-label">Competência</span></div>
+  <article class="panel">
+    <form id="daily-form" class="form-grid five">
+      <label>Data<input id="d-date" type="date" required></label>
+      <label>Pacientes internados no dia<input id="d-internados" type="number" min="0" max="20" value="0" required></label>
+      <label>Admissões<input id="d-admissoes" type="number" min="0" value="0"></label>
+      <label>Altas<input id="d-altas" type="number" min="0" value="0"></label>
+      <label>Transferências<input id="d-transferencias" type="number" min="0" value="0"></label>
+      <label>Óbitos<input id="d-obitos" type="number" min="0" value="0"></label>
+      <label>Encaminhamentos PIPA<input id="d-pipa" type="number" min="0" value="0"></label>
+      <label>Alta p/ Pediatria/Canguru<input id="d-canguru" type="number" min="0" value="0"></label>
+      <label>PICCs inseridos — automático<input id="d-picc" type="number" min="0" value="0" readonly><small>Calculado a partir dos PICCs registrados na Gestão de PICC nesta data.</small></label>
+      <label>Teste do pezinho<input id="d-pezinho" type="number" min="0" value="0"></label>
+      <label>Intubações no dia<input id="d-intub" type="number" min="0" value="0"></label>
+      <label>RN em VM — censo do dia<input id="d-vm" type="number" min="0" value="0"><small>Quantos RNs estão em ventilação mecânica neste dia. O mesmo RN pode permanecer aqui por vários dias.</small></label>
+      <label>Extubação programada<input id="d-extub-prog" type="number" min="0" value="0"></label>
+      <label>Extubação acidental<input id="d-extub" type="number" min="0" value="0"></label>
+      <label>Lesão por pressão<input id="d-lpp" type="number" min="0" value="0"></label>
+      <label class="span2">Observação<input id="d-obs" placeholder="Opcional"></label>
+      <div class="full form-actions"><button class="primary" type="submit">Salvar dados do dia</button><button type="button" id="daily-clear" class="secondary">Limpar</button></div>
+    </form>
+    <div class="info-box"><strong>Paciente-dia:</strong> soma dos pacientes internados informados em cada dia. <strong>Leitos-dia:</strong> 10 × dias efetivamente lançados na competência. <br><strong>RN em VM:</strong> é um censo diário, não um novo paciente a cada dia. A soma diária gera <strong>VM-dia</strong>; o total atual considera somente o lançamento mais recente. Intubação e extubação são registradas separadamente como eventos.<br><strong>PICC:</strong> a quantidade inserida no dia é automática e vem da Gestão de PICC; não é necessário lançar novamente aqui.</div>
+  </article>
+  <div class="cards six">
+    <article class="metric-card"><span>Paciente-dia</span><strong id="d-kpi-pd">0</strong></article>
+    <article class="metric-card"><span>Leitos-dia</span><strong id="d-kpi-ld">0</strong></article>
+    <article class="metric-card"><span>Taxa ocupação</span><strong id="d-kpi-occ">0%</strong></article>
+    <article class="metric-card"><span>Saídas</span><strong id="d-kpi-outs">0</strong></article>
+    <article class="metric-card"><span>Média permanência</span><strong id="d-kpi-los">—</strong></article>
+    <article class="metric-card"><span>Dias lançados</span><strong id="d-kpi-days">0</strong></article>
+  </div>
+  <div class="cards two">
+    <article class="metric-card"><span>RN em VM atualmente</span><strong id="d-kpi-vm-current">0</strong></article>
+    <article class="metric-card"><span>VM-dia na competência</span><strong id="d-kpi-vm-days">0</strong></article>
+  </div>
+  <article class="panel"><div class="panel-head"><h3>Histórico da competência</h3><span>um registro por dia</span></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Internados</th><th>Adm.</th><th>Altas</th><th>Transf.</th><th>Óbitos</th><th>PIPA</th><th>Canguru</th><th>PICC</th><th>Pezinho</th><th>Intub.</th><th>RN em VM</th><th>Extub. prog.</th><th>Extub. acid.</th><th>Ação</th></tr></thead><tbody id="daily-table"></tbody></table></div></article>
+</section>
+
+<!-- LEITOS -->
+<section id="view-leitos" class="view hidden">
+  <div class="hero"><div><h3>Gestão de Leitos Neonatais</h3><p>10 leitos físicos da Neonatal. O perfil assistencial de cada RN pode ser Intensivo ou Intermediário sem mudança física de leito. Leitos 09 e 10 são de isolamento.</p></div></div>
+  <article class="panel"><div class="panel-head"><h3>Mapa de leitos</h3><span>situação atual</span></div><div id="bed-grid" class="bed-grid"></div></article>
+  <div class="grid-2">
+    <article class="panel"><div class="panel-head"><h3>Atualizar ocupação</h3><span>cadastro operacional</span></div>
+      <form id="bed-form" class="form-grid one">
+        <label>Leito<select id="bed-number" class="bed-select"></select></label>
+        <label>Status<select id="bed-status"><option>Livre</option><option>Ocupado</option><option>Bloqueado</option></select></label>
+        <label>Perfil assistencial<select id="bed-profile"><option>Intensivo</option><option>Intermediário</option></select></label>
+        <label>Identificador não nominal<input id="bed-rn" placeholder="Ex.: RN-003"></label>
+        <label>Observação<input id="bed-note" placeholder="Resumo operacional"></label>
+        <button class="primary" type="submit">Salvar leito</button>
+      </form>
+      <div class="info-box">O perfil assistencial pertence ao RN naquele momento. Qualquer leito físico pode receber perfil Intensivo ou Intermediário, conforme a situação clínica e a organização do serviço.</div>
+    </article>
+
+    <article class="panel"><div class="panel-head"><h3>Alterar perfil assistencial no mesmo leito</h3><span>sem mover o RN</span></div>
+      <form id="profile-form" class="form-grid one">
+        <label>Leito ocupado<select id="profile-bed" class="bed-select"></select></label>
+        <label>Novo perfil<select id="profile-new"><option>Intensivo</option><option>Intermediário</option></select></label>
+        <label>Motivo / observação<input id="profile-note" placeholder="Ex.: evolução clínica para cuidado intermediário"></label>
+        <button class="primary" type="submit">Alterar perfil do RN</button>
+      </form>
+      <div class="info-box">Exemplo: RN permanece fisicamente no Leito 02, mas seu perfil muda de Intensivo para Intermediário. Não há liberação nem ocupação de outro leito.</div>
+    </article>
+  </div>
+
+  <article class="panel"><div class="panel-head"><h3>Remanejar RN entre leitos físicos</h3><span>somente quando houver necessidade do serviço</span></div>
+    <form id="move-bed-form" class="form-grid three">
+      <label>Leito atual<select id="move-origin" class="bed-select"></select></label>
+      <label>Novo leito<select id="move-target" class="bed-select"></select></label>
+      <label>Motivo / observação<input id="move-note" placeholder="Ex.: necessidade de isolamento / organização do setor"></label>
+      <button class="primary" type="submit">Remanejar RN</button>
+    </form>
+    <div class="info-box">O remanejamento físico preserva o perfil assistencial atual do RN. Os Leitos 09 e 10 são identificados como isolamento, mas não são exclusivos de perfil intermediário.</div>
+  </article>
+  <div class="grid-2">
+    <article class="panel"><div class="panel-head"><h3>Histórico de perfis assistenciais</h3><span>sem mudança física</span></div><div class="table-wrap"><table><thead><tr><th>Data/hora</th><th>Leito</th><th>RN</th><th>De</th><th>Para</th><th>Observação</th></tr></thead><tbody id="profile-history-table"></tbody></table></div></article>
+    <article class="panel"><div class="panel-head"><h3>Histórico de remanejamentos físicos</h3><span>rastreabilidade</span></div><div class="table-wrap"><table><thead><tr><th>Data/hora</th><th>Origem</th><th>Destino</th><th>RN</th><th>Perfil</th><th>Observação</th></tr></thead><tbody id="bed-moves-table"></tbody></table></div></article>
+  </div>
+</section>
+
+<!-- MOVIMENTACOES -->
+<section id="view-movimentacoes" class="view hidden">
+  <div class="hero"><div><h3>Admissões, Altas e Movimentações</h3><p>Registre eventos individuais para rastreabilidade operacional.</p></div></div>
+  <article class="panel">
+    <form id="movement-form" class="form-grid four">
+      <label>Tipo de movimentação<select id="mv-type"><option>Admissão</option><option>Alta</option><option>Transferência</option><option>Óbito</option><option>Encaminhamento PIPA</option><option>Alta para Pediatria/Canguru</option></select></label>
+      <label>Tipo de leito<select id="mv-bedtype"><option>Intensivo</option><option>Intermediário</option></select></label>
+      <label id="mv-context-label">Município de origem<input id="mv-context" placeholder="Ex.: Pirapora"></label>
+      <label>Observação<input id="mv-note" placeholder="Opcional"></label>
+      <div class="full"><div id="mv-help" class="info-box">Na admissão, informe de qual município o RN é proveniente.</div></div>
+      <button class="primary" type="submit">Registrar movimentação</button>
+    </form>
+  </article>
+  <article class="panel"><div class="table-wrap"><table><thead><tr><th>Data/hora</th><th>Tipo</th><th>Leito</th><th>Origem/Destino</th><th>Observação</th></tr></thead><tbody id="movement-table"></tbody></table></div></article>
+</section>
+
+<!-- CHECKLIST -->
+<section id="view-checklist" class="view hidden">
+  <div class="hero"><div><h3>Checklist Inteligente do Plantão</h3><p>Realizado • Não realizado • N/A • Pendência. N/A não conta como falha.</p></div><span class="badge" id="checklist-score">Adesão 0%</span></div>
+  <article class="panel" id="checklist-list"></article>
+</section>
+
+<!-- ASSISTENCIA -->
+<section id="view-assistencia" class="view hidden">
+  <div class="hero"><div><h3>SAE / Evolução — Apoio ao fluxo</h3><p>Protótipo para organizar a rotina. Ainda não é prontuário eletrônico oficial.</p></div></div>
+  <article class="panel">
+    <div class="info-box">A SAE e a Folha de Evolução real permanecem como documentos assistenciais oficiais nesta fase. Aqui registramos apenas o estado operacional do processo para evitar substituição indevida do prontuário.</div>
+    <div class="form-grid four">
+      <label>Leito<select id="care-bed" class="bed-select"></select></label>
+      <label>SAE entregue<select id="care-sae"><option>Pendente</option><option>Realizada/entregue</option><option>N/A</option></select></label>
+      <label>Evolução do enfermeiro<select id="care-evol"><option>Pendente</option><option>Realizada</option><option>N/A</option></select></label>
+      <label>Passagem multiprofissional<select id="care-multi"><option>Pendente</option><option>Realizada</option><option>N/A</option></select></label>
+    </div>
+    <button id="care-save" class="primary">Salvar status assistencial</button>
+  </article>
+  <article class="panel"><div class="panel-head"><h3>Status por leito</h3><span>apoio à continuidade</span></div><div class="table-wrap"><table><thead><tr><th>Leito</th><th>SAE</th><th>Evolução</th><th>Multiprofissional</th><th>Atualizado</th></tr></thead><tbody id="care-table"></tbody></table></div></article>
+</section>
+
+<!-- PICC -->
+<section id="view-picc" class="view hidden">
+  <div class="hero"><div><h3>Gestão de PICC</h3><p>Controle do ciclo completo do dispositivo, do dia da inserção até a retirada.</p></div><span class="badge">Fonte oficial dos indicadores de PICC</span></div>
+  <div class="cards three picc-kpis">
+    <article class="metric-card"><span>PICCs ativos</span><strong id="picc-active-count">0</strong></article>
+    <article class="metric-card"><span>PICC-dia na competência</span><strong id="picc-days-month">0</strong></article>
+    <article class="metric-card"><span>Retirados na competência</span><strong id="picc-removed-month">0</strong></article>
+  </div>
+  <article class="panel">
+    <div class="panel-head"><h3>Nova inserção / correção</h3><span>um registro por dispositivo</span></div>
+    <form id="picc-form" class="form-grid four">
+      <label>Data da inserção<input id="picc-date" type="date" required></label>
+      <label>Leito<select id="picc-bed" class="bed-select"></select></label>
+      <label>Veia / sítio<select id="picc-vein"><option value="">Selecione</option><option>Cefálica</option><option>Cubital média</option><option>Basílica</option><option>Safena</option><option>Jugular</option><option>Axilar</option><option>Temporal</option><option>Retroauricular</option><option>Outro</option></select></label>
+      <label>Lateralidade<select id="picc-side"><option>Direita</option><option>Esquerda</option><option>Não se aplica</option></select></label>
+      <label>Nº de punções<input id="picc-punctures" type="number" min="1" value="1"></label>
+      <label>Comprimento introduzido (cm)<input id="picc-length" type="number" min="0" step="0.1"></label>
+      <label>Medida exteriorizada (cm)<input id="picc-external" type="number" min="0" step="0.1"></label>
+      <label>Posicionamento confirmado<select id="picc-position"><option>Sim</option><option>Não</option><option>Pendente</option></select></label>
+      <label>Preparo/degermação das mãos<select id="picc-b1"><option>Sim</option><option>Não</option></select></label>
+      <label>Barreira máxima conforme protocolo<select id="picc-b2"><option>Sim</option><option>Não</option></select></label>
+      <label>Antissepsia do sítio<select id="picc-b3"><option>Sim</option><option>Não</option></select></label>
+      <input id="picc-edit-index" type="hidden" value="">
+      <div class="full form-actions">
+        <button id="picc-save-btn" class="primary" type="submit">Registrar PICC</button>
+        <button id="picc-cancel-edit" class="secondary hidden" type="button">Cancelar edição</button>
+      </div>
+    </form>
+    <div class="info-box"><strong>Integração automática:</strong> ao registrar o PICC aqui, a SIASH contabiliza a inserção no Lançamento Diário da mesma data e nos indicadores mensais. O tempo de permanência é calculado automaticamente.</div>
+    <div id="picc-edit-note" class="info-box hidden"><strong>Modo de edição:</strong> você está corrigindo um registro existente. Ao salvar, o registro será atualizado e não será criado outro PICC.</div>
+  </article>
+
+  <article id="picc-removal-panel" class="panel removal-panel hidden">
+    <div class="panel-head"><h3>Registrar retirada do PICC</h3><span id="picc-removal-target">—</span></div>
+    <form id="picc-removal-form" class="form-grid four">
+      <input id="picc-removal-index" type="hidden" value="">
+      <label>Data da retirada<input id="picc-removal-date" type="date" required></label>
+      <label class="span2">Motivo da retirada<select id="picc-removal-reason" required>
+        <option value="">Selecione</option>
+        <option>Programada / suspensão do tratamento</option>
+        <option>Infecção / suspeita de infecção</option>
+        <option>Obstrução</option>
+        <option>Exteriorização</option>
+        <option>Infiltração</option>
+        <option>Transferência</option>
+        <option>Óbito</option>
+        <option>Outro</option>
+      </select></label>
+      <label class="full">Observação<input id="picc-removal-note" placeholder="Opcional"></label>
+      <div class="full form-actions"><button class="primary" type="submit">Confirmar retirada</button><button id="picc-removal-cancel" class="secondary" type="button">Cancelar</button></div>
+    </form>
+  </article>
+
+  <article class="panel"><div class="panel-head"><h3>PICCs ativos</h3><span>dispositivos em uso por leito</span></div><div class="table-wrap"><table><thead><tr><th>Leito</th><th>Inserção</th><th>Dias de PICC</th><th>Veia/lado</th><th>Punções</th><th>Posição</th><th>Bundle</th><th>Status</th><th>Ações</th></tr></thead><tbody id="picc-active-table"></tbody></table></div></article>
+  <article class="panel"><div class="panel-head"><h3>Histórico de PICCs retirados</h3><span>registro preservado para indicadores e auditoria</span></div><div class="table-wrap"><table><thead><tr><th>Leito</th><th>Inserção</th><th>Retirada</th><th>Total PICC-dia</th><th>Motivo</th><th>Veia/lado</th><th>Ações</th></tr></thead><tbody id="picc-history-table"></tbody></table></div></article>
+</section>
+
+<!-- PIPA -->
+<section id="view-pipa" class="view hidden">
+  <div class="hero"><div><h3>Encaminhamentos ao Programa PIPA</h3><p>Registro por competência e município.</p></div></div>
+  <div class="cards">
+    <article class="metric-card"><span>Total no mês</span><strong id="pipa-total">0</strong></article>
+    <article class="metric-card"><span>Municípios com encaminhamento</span><strong id="pipa-cities">0</strong></article>
+    <article class="metric-card"><span>Competência</span><strong id="pipa-competence">—</strong></article>
+    <article class="metric-card"><span>Última atualização</span><strong id="pipa-updated">—</strong></article>
+  </div>
+  <div class="grid-2">
+    <article class="panel">
+      <form id="pipa-form" class="form-grid one">
+        <label>Competência<input id="pipa-month" type="month"></label>
+        <label>Município<select id="pipa-city"><option value="">Selecione</option><option>Pirapora</option><option>Buritizeiro</option><option>Ibiaí</option><option>Lassance</option><option>Ponto Chique</option><option>Santa Fé de Minas</option><option>Várzea da Palma</option><option>Lagoa dos Patos</option><option>Coração de Jesus</option><option>Brasília de Minas</option><option>Barra do Guaicuí</option><option>Outro</option></select></label>
+        <label>Quantidade<input id="pipa-qty" type="number" min="0" value="0"></label>
+        <label>Observação<textarea id="pipa-note"></textarea></label>
+        <button class="primary" type="submit">Salvar encaminhamento</button>
+      </form>
+    </article>
+    <article class="panel"><div class="panel-head"><h3>Distribuição mensal</h3><span>por município</span></div><div id="pipa-bars" class="bar-chart tall"></div></article>
+  </div>
+  <article class="panel"><div class="table-wrap"><table><thead><tr><th>Competência</th><th>Município</th><th>Quantidade</th><th>Observação</th><th>Ação</th></tr></thead><tbody id="pipa-table"></tbody></table></div></article>
+</section>
+
+<!-- PENDENCIAS -->
+<section id="view-pendencias" class="view hidden">
+  <div class="hero"><div><h3>Pendências para Continuidade</h3><p>O que precisa atravessar a troca de plantão.</p></div></div>
+  <article class="panel">
+    <form id="pending-form" class="form-grid three">
+      <label>Leito / referência<select id="pending-bed" class="bed-select"><option value="Geral / Setor">Geral / Setor</option></select></label>
+      <label>Prioridade<select id="pending-priority"><option>Normal</option><option>Alta</option><option>Crítica</option></select></label>
+      <label>Pendência<input id="pending-text" required></label>
+      <button class="primary" type="submit">Adicionar</button>
+    </form>
+  </article>
+  <article class="panel"><div id="pending-list"></div></article>
+</section>
+
+<!-- INDICADORES -->
+<section id="view-indicadores" class="view hidden">
+  <div class="hero"><div><h3>Central de Indicadores</h3><p>Produção e indicadores calculados a partir dos dados lançados.</p></div><select id="indicator-month" class="compact-select"></select></div>
+  <div class="cards six">
+    <article class="metric-card"><span>Pacientes-dia</span><strong id="i-pd">0</strong></article>
+    <article class="metric-card"><span>Taxa de ocupação</span><strong id="i-occ">0%</strong></article>
+    <article class="metric-card"><span>Média de permanência</span><strong id="i-los">—</strong></article>
+    <article class="metric-card"><span>Admissões</span><strong id="i-adm">0</strong></article>
+    <article class="metric-card"><span>Transferências</span><strong id="i-transf">0</strong></article>
+    <article class="metric-card"><span>Óbitos</span><strong id="i-deaths">0</strong></article>
+  </div>
+  <article class="panel"><div class="panel-head"><h3>Produção acumulada</h3><span>competência selecionada</span></div><div class="table-wrap"><table><tbody id="indicator-production"></tbody></table></div></article>
+  <article class="panel"><div class="panel-head"><h3>PIPA por município</h3><span>competência selecionada</span></div><div class="table-wrap"><table><thead><tr><th>Município</th><th>Quantidade</th></tr></thead><tbody id="indicator-pipa-cities"></tbody></table></div></article>
+</section>
+
+<!-- COMPARATIVO -->
+<section id="view-comparativo" class="view hidden">
+  <div class="hero"><div><h3>Comparativo Mensal</h3><p>Tendência de ocupação e permanência entre competências.</p></div></div>
+  <div class="comparison-grid">
+    <article class="panel comparison-panel"><div class="panel-head"><h3>Taxa de ocupação</h3><span>mês a mês</span></div><div id="comparison-occ" class="bar-chart comparison-chart"></div></article>
+    <article class="panel comparison-panel"><div class="panel-head"><h3>Média de permanência</h3><span>mês a mês</span></div><div id="comparison-los" class="bar-chart comparison-chart"></div></article>
+    <article class="panel comparison-panel"><div class="panel-head"><h3>Pacientes-dia</h3><span>total mensal</span></div><div id="comparison-pd" class="bar-chart comparison-chart"></div></article>
+  </div>
+  <article class="panel comparison-summary"><p id="comparison-text" class="summary-text"></p></article>
+</section>
+
+<!-- DOCS -->
+<section id="view-docs" class="view hidden">
+  <div class="hero">
+    <div><h3>SIASH Docs</h3><p>Gestão documental institucional por setor: consulta, cadastro, revisão, validação, histórico e controle de versões.</p></div>
+    <div class="docs-hero-actions"><span class="badge">Revisão padrão: bienal</span><span class="badge">Aprovação humana</span></div>
+  </div>
+  <div class="cards">
+    <article class="metric-card"><span>Documentos cadastrados</span><strong id="docs-total">0</strong></article>
+    <article class="metric-card"><span>Vigentes</span><strong id="docs-valid">0</strong></article>
+    <article class="metric-card"><span>Revisão próxima ≤90d</span><strong id="docs-soon">0</strong></article>
+    <article class="metric-card"><span>Revisão prioritária ≤30d</span><strong id="docs-priority">0</strong></article>
+    <article class="metric-card"><span>Revisão vencida</span><strong id="docs-expired">0</strong></article>
+  </div>
+  <article class="panel docs-toolbar-panel">
+    <div class="docs-toolbar">
+      <label>Buscar documento<input id="doc-search" placeholder="Título, código ou setor"></label>
+      <label>Setor<select id="doc-sector-filter"><option value="">Todos os setores</option></select></label><label>Situação<select id="doc-filter"><option value="">Todos</option><option value="valid">Vigentes</option><option value="review">Revisão necessária / acervo legado</option><option value="soon">Revisão próxima (31–90 dias)</option><option value="priority">Revisão prioritária (≤30 dias)</option><option value="expired">Revisão vencida</option><option value="unknown">Sem data de revisão</option></select></label>
+      <span id="doc-access-badge" class="badge">Acesso documental</span><button id="doc-new-toggle" class="primary doc-editor-only" type="button">+ Cadastrar documento</button>
+    </div>
+    <div class="info-box">Use <strong>Documentos do Setor</strong> como lista principal. Para localizar pendências, use o filtro <strong>Situação</strong>. Fluxo: <strong>Consultar vigente → Atualizar com IA → Abrir revisão proposta → Validar e publicar.</strong></div>
+  </article>
+
+  <article id="doc-access-panel" class="panel owner-only docs-compact-panel">
+    <div class="panel-head"><h3>Acessos documentais</h3><span>Administrador Proprietário</span></div>
+    <form id="doc-access-form" class="form-grid four">
+      <label>Usuário<input id="doc-access-user" value="coordenacao.utin" required></label>
+      <label>Setor<input id="doc-access-sector" value="UTIN" required placeholder="UTIN, Pediatria..."></label>
+      <label>Permissão<select id="doc-access-level"><option value="reader">Leitor</option><option value="editor">Editor / Revisor</option><option value="validator">Validador / Aprovador</option></select></label>
+      <button class="primary" type="submit">Salvar acesso</button>
+    </form>
+    <div id="doc-access-list" class="compact-list"></div>
+  </article>
+
+  <article id="doc-new-panel" class="panel hidden">
+    <div class="panel-head"><h3>Novo documento</h3><span>Cadastro inicial</span></div>
+    <form id="doc-form" class="form-grid four">
+      <label class="span2">Título<input id="doc-title" required placeholder="Ex.: POP Admissão do RN"></label>
+      <label>Código<input id="doc-code" required placeholder="POP-UTIN-..."></label>
+      <label>Setor<input id="doc-sector" value="UTIN"></label>
+      <label>Revisão<input id="doc-revision" value="00" required></label>
+      <label>Data da revisão/emissão<input id="doc-review" type="date"></label>
+      <label>Periodicidade<select id="doc-period"><option value="24">2 anos</option><option value="12">1 ano</option><option value="36">3 anos</option></select></label>
+      <label>Status do fluxo<select id="doc-workflow"><option>Vigente</option><option>Em elaboração</option><option>Em revisão</option><option>Aguardando aprovação</option></select></label>
+      <label class="span2">PDF para consulta<input id="doc-pdf" type="file" accept=".pdf,application/pdf"><small>Opcional. Fica armazenado localmente neste navegador.</small></label>
+      <label class="span2">Word editável<input id="doc-word" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"><small>Opcional. Use para editar o POP externamente e depois registrar nova revisão.</small></label>
+      <label class="full">Observação / histórico inicial<textarea id="doc-note" rows="2" placeholder="Ex.: Emissão inicial"></textarea></label>
+      <div class="full form-actions"><button class="primary" type="submit">Salvar documento</button><button id="doc-new-cancel" class="secondary" type="button">Cancelar</button></div>
+    </form>
+  </article>
+  <article class="panel">
+    <div class="panel-head"><h3>Documentos do Setor</h3><span id="docs-list-count">0 documento(s)</span></div>
+    <div class="table-wrap"><table class="docs-table"><thead><tr><th>Documento</th><th>Código</th><th>Rev.</th><th>Última revisão</th><th>Próxima revisão</th><th>Situação</th><th>Fluxo atual</th><th>Arquivos vigentes</th><th>Ações</th></tr></thead><tbody id="docs-table"></tbody></table></div>
+  </article>
+  <article id="doc-revision-panel" class="panel hidden">
+    <div class="panel-head"><div><h3>Atualização do POP</h3><strong id="doc-selected-title" class="doc-selected-title">Documento selecionado</strong></div><span id="doc-revision-name"></span></div>
+    <div class="doc-update-status" id="doc-update-status">Preparando atualização...</div>
+
+    <div class="doc-action-grid">
+      <article class="doc-action-card">
+        <span class="doc-step-number">1</span>
+        <div><strong>Abrir POP vigente</strong><p>Confira o documento que será usado como base da atualização.</p></div>
+        <button id="doc-open-current" class="secondary" type="button">ABRIR POP ATUAL</button>
+      </article>
+      <article class="doc-action-card primary-card">
+        <span class="doc-step-number">2</span>
+        <div><strong>Solicitar atualização à IA</strong><p>O SIASH prepara o pedido técnico com o POP selecionado e a próxima revisão.</p></div>
+        <button id="doc-send-ai" class="primary" type="button">ATUALIZAR COM IA</button>
+      </article>
+    </div>
+
+    <textarea id="doc-ai-request-text" class="hidden" readonly></textarea>
+    <div class="info-box"><strong>Como funciona nesta fase:</strong> como a SIASH ainda roda localmente, a IA não está embutida no arquivo HTML. O botão acima abre o ChatGPT e copia automaticamente o pedido. Depois que a IA gerar o novo Word ou PDF, volte a esta tela e use a etapa 3 abaixo.</div>
+
+    <article class="doc-import-card">
+      <div class="doc-import-head"><span class="doc-step-number">3</span><div><strong>Importar revisão produzida pela IA</strong><p>Selecione <b>um único arquivo atualizado</b>: Word ou PDF. Se tiver os dois, pode anexar ambos.</p></div></div>
+      <form id="doc-revision-form" class="form-grid four ai-result-form">
+        <input id="doc-revision-index" type="hidden"><input id="doc-revision-number" type="hidden"><input id="doc-revision-date" type="hidden"><input id="doc-revision-workflow" type="hidden" value="Em revisão"><input id="doc-revision-period" type="hidden" value="24">
+        <label class="span2">Word atualizado<input id="doc-revision-word" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></label>
+        <label class="span2">PDF atualizado<input id="doc-revision-pdf" type="file" accept=".pdf,application/pdf"></label>
+        <details class="full ai-details"><summary>Informações técnicas da revisão (opcional)</summary><label>O que mudou / justificativa<textarea id="doc-revision-note" rows="3"></textarea></label><label>Referências utilizadas<textarea id="doc-revision-sources" rows="3"></textarea></label></details>
+        <input id="doc-validator" type="hidden"><input id="doc-validation-date" type="hidden">
+        <div class="full form-actions"><button class="primary" type="submit">IMPORTAR E ABRIR PARA CONFERÊNCIA</button><button id="doc-revision-cancel" class="secondary" type="button">Fechar</button></div>
+      </form>
+    </article>
+
+    <article id="doc-proposal-ready" class="doc-ready-card hidden">
+      <div class="doc-import-head"><span class="doc-step-number">4</span><div><strong>Revisão pronta para conferência</strong><p id="doc-proposal-ready-text">Abra o arquivo atualizado antes de aprovar.</p></div></div>
+      <div id="doc-proposal-actions" class="form-actions"></div>
+    </article>
+    <div class="governance-box compact"><strong>Regra:</strong> nenhuma revisão é publicada automaticamente. A versão vigente só muda depois que o profissional abre, confere e aprova a nova versão.</div>
+  </article>
+  <article id="doc-history-panel" class="panel hidden">
+    <div class="panel-head"><h3>Histórico de versões</h3><span id="doc-history-name">Documento</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Revisão</th><th>Data</th><th>Fluxo</th><th>Responsável</th><th>Histórico</th><th>Arquivos</th></tr></thead><tbody id="doc-history-table"></tbody></table></div>
+    <button id="doc-history-close" class="secondary" type="button">Fechar histórico</button>
+  </article>
+</section>
+
+<!-- HUDDLE -->
+<section id="view-huddle" class="view hidden">
+  <div class="hero"><div><h3>SIASH NIR / Huddle</h3><p>Problema → prioridade → responsável → ação → prazo → resolução.</p></div></div>
+  <div class="cards">
+    <article class="metric-card"><span>Ações abertas</span><strong id="h-open">0</strong></article>
+    <article class="metric-card"><span>Concluídas</span><strong id="h-done">0</strong></article>
+    <article class="metric-card"><span>Vencidas</span><strong id="h-overdue">0</strong></article>
+    <article class="metric-card"><span>Resolutividade</span><strong id="h-resolution">0%</strong></article>
+  </div>
+  <article class="panel">
+    <form id="huddle-form" class="form-grid four">
+      <label>Setor<select id="h-sector"><option>UTIN</option><option>NIR</option><option>Pronto Socorro</option><option>Clínica Médica</option><option>Pediatria</option><option>Laboratório</option><option>Higienização</option><option>RH</option><option>Outro</option></select></label>
+      <label>Problema / demanda<input id="h-problem" required></label>
+      <label>Responsável<input id="h-owner" required></label>
+      <label>Prazo<input id="h-deadline" type="datetime-local"></label>
+      <label class="span2">Ação definida<input id="h-action" required></label>
+      <label>Prioridade<select id="h-priority"><option>Normal</option><option>Alta</option><option>Crítica</option></select></label>
+      <button class="primary" type="submit">Registrar ação</button>
+    </form>
+  </article>
+  <article class="panel"><div class="table-wrap"><table><thead><tr><th>Setor</th><th>Problema</th><th>Ação</th><th>Responsável</th><th>Prazo</th><th>Prioridade</th><th>Status</th><th>Ação</th></tr></thead><tbody id="huddle-table"></tbody></table></div></article>
+</section>
+
+<!-- RH -->
+<section id="view-rh" class="view hidden">
+  <div class="hero"><div><h3>SIASH Pessoas / RH</h3><p>Fluxos administrativos sem interpretar troca de plantão como déficit de cobertura.</p></div></div>
+  <div class="grid-2">
+    <article class="panel"><div class="panel-head"><h3>Solicitação de troca de plantão</h3><span>substituição com cobertura</span></div>
+      <form id="swap-form" class="form-grid one">
+        <label>Solicitante<input id="swap-a"></label><label>Substituto<input id="swap-b"></label>
+        <label>Plantão do solicitante<input id="swap-date-a" type="date"></label><label>Plantão de compensação<input id="swap-date-b" type="date"></label>
+        <label>Motivo<input id="swap-reason"></label><button class="primary" type="submit">Registrar solicitação</button>
+      </form>
+    </article>
+    <article class="panel"><div class="panel-head"><h3>Inconsistência de ponto</h3><span>fluxo para aprovação</span></div>
+      <form id="point-form" class="form-grid one">
+        <label>Profissional<input id="point-name"></label><label>Data<input id="point-date" type="date"></label>
+        <label>Ocorrência<select id="point-type"><option>Não registrei o ponto</option><option>Registrei em duplicidade</option></select></label>
+        <label>Horário<input id="point-time" type="time"></label><label>Motivo<input id="point-reason"></label>
+        <button class="primary" type="submit">Registrar solicitação</button>
+      </form>
+    </article>
+  </div>
+  <article class="panel"><div class="panel-head"><h3>Solicitações registradas</h3><span>protótipo local</span></div><div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Profissional</th><th>Detalhe</th><th>Status</th></tr></thead><tbody id="rh-table"></tbody></table></div></article>
+</section>
+
+
+<!-- ADMINISTRACAO -->
+<section id="view-administracao" class="view hidden owner-only-view">
+  <div class="hero"><div><h3>Administração Proprietária SIASH</h3><p>Área estrutural exclusiva do fundador/proprietário. Usuários operacionais não têm acesso a estas funções.</p></div><span class="security-badge">SUPER ADMIN</span></div>
+  <div class="cards">
+    <article class="metric-card"><span>Administrador proprietário</span><strong id="admin-owner-name">—</strong><small>controle estrutural exclusivo</small></article>
+    <article class="metric-card"><span>Perfil atual</span><strong>Proprietário</strong><small>nível máximo de permissão</small></article>
+    <article class="metric-card"><span>Usuários operacionais</span><strong>1</strong><small>protótipo local</small></article>
+    <article class="metric-card"><span>Auditoria administrativa</span><strong id="admin-audit-count">0</strong><small>eventos registrados</small></article>
+  </div>
+  <div class="grid-2">
+    <article class="panel">
+      <div class="panel-head"><h3>Regra de governança</h3><span>SIASH Core</span></div>
+      <div class="governance-box"><strong>Somente o Administrador Proprietário</strong> pode alterar configurações estruturais, arquitetura, regras globais, módulos e permissões administrativas. Demais usuários ficam limitados às funções operacionais necessárias ao trabalho.</div>
+      <div class="permission-list">
+        <div><span>Alterar arquitetura/configurações globais</span><strong>Proprietário</strong></div>
+        <div><span>Gerenciar permissões administrativas</span><strong>Proprietário</strong></div>
+        <div><span>Lançar dados assistenciais e indicadores</span><strong>Operacional autorizado</strong></div>
+        <div><span>Movimentar leitos/pacientes</span><strong>Operacional autorizado</strong></div>
+        <div><span>Consultar relatórios e rotina</span><strong>Conforme perfil</strong></div>
+      </div>
+    </article>
+    <article class="panel">
+      <div class="panel-head"><h3>Auditoria administrativa</h3><span>últimos eventos</span></div>
+      <div id="admin-audit" class="timeline"></div>
+      <button id="admin-test-lock" class="secondary" type="button">Testar bloqueio estrutural</button>
+    </article>
+  </div>
+  <article class="panel security-warning"><strong>Proteção desta versão:</strong> o acesso proprietário é protegido por hash local e bloqueio de interface. Para proteção real contra alteração do código por terceiros, a versão de produção deverá usar servidor/backend, autenticação forte e autorização validada no servidor.</article>
+</section>
+
+<!-- CONFIG -->
+<section id="view-configuracoes" class="view hidden">
+  <article class="panel"><div class="panel-head"><h3>Configurações da Unidade</h3><span>SIASH Core • acesso proprietário</span></div>
+    <div class="governance-box compact"><strong>Área protegida.</strong> Alterações aqui modificam parâmetros estruturais da unidade e exigem sessão de Administrador Proprietário.</div>
+    <form id="settings-form" class="form-grid four">
+      <label>Unidade<input id="s-unit"></label><label>Total leitos<input id="s-beds" type="number" min="1"></label>
+      <label>Referência inicial intensivos<input id="s-intensive" type="number" min="0"></label><label>Referência inicial intermediários<input id="s-intermediate" type="number" min="0"></label>
+      <label>Meta ocupação (%)<input id="s-target" type="number" min="1" max="100"></label><label class="span2">Instituição<input id="s-hospital"></label>
+      <button class="primary" type="submit">Salvar configurações</button>
+    </form>
+  </article>
+</section>
+
+</main>
+</div>
+<script src="jszip.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

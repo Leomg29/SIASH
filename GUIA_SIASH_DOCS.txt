@@ -1,0 +1,39 @@
+SIASH Docs — Guia rápido de teste v0.10.6
+
+1. Entre como usuário operacional.
+   - Abra SIASH Docs.
+   - Confirme que aparecem POP Admissão do RN e POP Sepse Neonatal.
+   - Teste PDF e Histórico.
+   - Confirme que não aparecem ações de cadastro/nova revisão/exclusão.
+
+2. Entre como Administrador Proprietário.
+   - Abra SIASH Docs.
+   - Clique em “Nova revisão” no POP desejado.
+   - Registre Revisão 01 como “Em elaboração”, descrevendo o histórico.
+   - Se desejar, anexe o Word/PDF atualizado.
+   - Abra o Histórico e use “Avançar fluxo”: Em elaboração → Em revisão → Aguardando aprovação → Vigente.
+
+3. Regra de segurança documental.
+   - Enquanto a nova revisão não estiver Vigente, o usuário continua consultando a versão vigente anterior.
+   - Quando a nova revisão vira Vigente, a anterior passa a Obsoleta e permanece no histórico.
+   - Os POPs institucionais incorporados à base não podem ser excluídos.
+
+4. Edição do Word nesta fase local.
+   - O SIASH entrega/abre o arquivo Word para edição no computador.
+   - Faça a alteração no Word normalmente.
+   - Depois selecione o arquivo atualizado no formulário de nova revisão para armazená-lo no SIASH Docs local.
+
+5. Observação técnica.
+   - Arquivos novos anexados pelo usuário são guardados no IndexedDB do navegador.
+   - Metadados continuam no armazenamento local da SIASH.
+   - Na versão de produção, documentos e versões serão migrados para servidor/banco de dados com controle institucional de acesso e auditoria.
+
+
+v0.10.6 — FLUXO SIMPLIFICADO DE ATUALIZAÇÃO COM IA
+1. Consultar vigente.
+2. Atualizar com IA cria/abre a revisão proposta.
+3. A IA desta conversa pesquisa fontes oficiais e literatura validada e produz Word/PDF atualizado.
+4. Anexar os arquivos produzidos e registrar O que mudou + Referências.
+5. Abrir revisão proposta e conferir o PDF.
+6. Somente então Validador/Aprovador pode publicar como Vigente.
+IMPORTANTE: no pacote local não existe conexão direta com um serviço de IA. Por isso a geração automática dentro da própria tela exige futura integração segura com backend/API. A v0.10.6 não simula atualização: sem PDF novo, a validação é bloqueada.
