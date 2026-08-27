@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.11.0",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.12.0",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -78,12 +78,32 @@ async function exportLocalBackup(){
    showToast("Backup local exportado",1600)
  }catch(e){alert("Não foi possível exportar o backup: "+e.message)}
 }
-async function importBackupFile(file,toCloud=false){
- const data=JSON.parse(await file.text());if(!data?.state)throw new Error("Backup SIASH inválido.");
- S=data.state;if(data.security)setSecurityState(data.security);normalize();localStorage.setItem(STORE,JSON.stringify(S));
+let PENDING_BACKUP=null;
+function normalizeBackupObject(data){
+ if(data?.state)return data;
+ // Backup legado exportado diretamente do localStorage da v0.10.10.
+ if(data&&typeof data==="object"&&data[STORE]){
+   const state=typeof data[STORE]==="string"?JSON.parse(data[STORE]):data[STORE];
+   const security=data[SECURITY_STORE]?(typeof data[SECURITY_STORE]==="string"?JSON.parse(data[SECURITY_STORE]):data[SECURITY_STORE]):null;
+   return {schema:"siash-legacy-localstorage-v0.10.10",createdAt:new Date().toISOString(),state,security,documents:[],legacy:true};
+ }
+ throw new Error("Backup SIASH inválido ou incompatível.");
+}
+async function applyBackupData(data,toCloud=false){
+ data=normalizeBackupObject(data);S=data.state;if(data.security){const safeSec={...data.security};delete safeSec.ownerHash;delete safeSec.ownerUser;const current=securityState()||{};setSecurityState({...safeSec,ownerHash:current.ownerHash,ownerUser:current.ownerUser})}normalize();localStorage.setItem(STORE,JSON.stringify(S));
  for(const d of data.documents||[]){const bytes=Uint8Array.from(atob(d.data),c=>c.charCodeAt(0)),blob=new Blob([bytes],{type:d.type||"application/octet-stream"});await putDocBlob(d.key,blob)}
- if(toCloud&&SIASH_CLOUD.enabled&&SIASH_CLOUD.token){await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});updateCloudBadge("Backup migrado para Cloud")}
- renderAll();showToast(toCloud?"Backup migrado para Cloud":"Backup importado",1800)
+ if(toCloud&&SIASH_CLOUD.enabled&&SIASH_CLOUD.token){await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),reason:"Snapshot automático antes da migração de backup"})});updateCloudBadge("Backup migrado para Cloud")}
+ renderAll();showToast(toCloud?"Backup migrado para Cloud":"Backup preparado",1800);return data
+}
+async function importBackupFile(file,toCloud=false){
+ const data=normalizeBackupObject(JSON.parse(await file.text()));
+ if(SIASH_CLOUD.enabled&&!SIASH_CLOUD.token){PENDING_BACKUP=data;showToast("Backup conferido e preparado · faça login para migrar",2200);alert(`Backup reconhecido${data.legacy?" (v0.10.10)":""}. Nenhum dado Cloud foi alterado. Agora faça login como Administrador Proprietário; a SIASH pedirá confirmação antes da migração.`);return}
+ return applyBackupData(data,toCloud)
+}
+async function applyPendingBackupAfterLogin(){
+ if(!PENDING_BACKUP||!isOwner())return;const data=PENDING_BACKUP;PENDING_BACKUP=null;
+ if(!confirm("Backup preparado para migração. A SIASH criará automaticamente um snapshot do estado Cloud atual antes de importar. Deseja continuar?"))return;
+ await applyBackupData(data,true);alert("Migração do estado concluída. Agora vamos conferir os documentos Word armazenados no navegador antigo antes de considerar a migração encerrada.")
 }
 
 async function sha256(text){const data=new TextEncoder().encode(text);const hash=await crypto.subtle.digest("SHA-256",data);return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,"0")).join("")}
@@ -352,7 +372,22 @@ window.startDocRevision=i=>{
  renderProposalReady(i,proposalI);
  $("doc-revision-panel").classList.remove("hidden");$("doc-revision-panel").scrollIntoView({behavior:"smooth",block:"start"})
 }
-window.sendDocToAI=async i=>{const d=S.docs[i],t=$("doc-ai-request-text")?.value||"";try{await navigator.clipboard.writeText(t)}catch(e){}const pub=docPublishedVersion(d),pubI=docPublishedIndex(d),hasWord=!!(pub?.wordKey||pub?.wordPath),hasPdf=!!(pub?.pdfKey||pub?.pdfPath);if(hasWord||hasPdf){if(confirm("O pedido foi copiado. Deseja abrir o POP vigente para anexá-lo no ChatGPT?")){if(hasWord)await openDocVersion(i,pubI,"word");else await openDocVersion(i,pubI,"pdf")}}window.open("https://chatgpt.com/","_blank");showToast("Pedido copiado · ChatGPT aberto",1800)}
+window.sendDocToAI=async i=>{
+ const d=S.docs[i],pub=docPublishedVersion(d),pubI=docPublishedIndex(d);if(!d||!pub)return alert("Versão vigente não localizada.");
+ if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return alert("A atualização automática com IA está disponível somente na SIASH Cloud.");
+ if(!(pub.wordKey||pub.wordPath))return alert("Para preservar a estrutura institucional, a revisão automática exige o arquivo Word vigente. Migre/anexe o Word antes de continuar.");
+ const rev=$("doc-revision-number").value.trim();if(!confirm(`Gerar com IA a proposta de revisão ${rev} de ${d.code}? A versão vigente NÃO será substituída nem publicada.`))return;
+ const btn=$("doc-send-ai"),status=$("doc-update-status");btn.disabled=true;status.textContent="IA analisando o POP e pesquisando referências atuais... Isso pode levar alguns minutos.";
+ try{
+   let blob;if(pub.wordKey)blob=await getDocBlob(pub.wordKey);else{const r=await fetch(pub.wordPath);if(!r.ok)throw new Error("Word vigente não pôde ser aberto.");blob=await r.blob()}
+   if(!blob)throw new Error("Arquivo Word vigente não localizado.");const buf=await blob.arrayBuffer(),bytes=new Uint8Array(buf);let bin="";for(let o=0;o<bytes.length;o+=0x8000)bin+=String.fromCharCode(...bytes.subarray(o,o+0x8000));
+   const ai=await cloudJson("/api/ai/revise-pop",{method:"POST",body:JSON.stringify({doc_code:d.code,doc_title:d.title,current_revision:pub.revision,next_revision:rev,file_name:pub.wordName||`${d.code}.docx`,file_base64:btoa(bin)})});
+   const out=Uint8Array.from(atob(ai.file_base64),c=>c.charCodeAt(0)),proposalBlob=new Blob([out],{type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
+   let vi=d.versions.findIndex((v,x)=>x!==pubI&&String(v.revision)===rev&&v.workflow!=="Obsoleto"),v=vi>=0?d.versions[vi]:null;if(!v){v={revision:rev,reviewDate:todayISO(),workflow:"Em revisão",createdBy:"SIASH Docs / IA",createdAt:nowBR()};d.versions.push(v);vi=d.versions.length-1}
+   v.note=`PROPOSTA gerada por IA. ${ai.summary||""}`;v.sources=(ai.references||[]).map(x=>`${x.title}: ${x.url}`).join("\n");v.aiModel=ai.model;v.aiChanges=(ai.changes||[]).map(x=>({paragraph_index:x.paragraph_index,reason:x.reason}));v.wordKey=`${d.id}|${rev}|word|${Date.now()}`;v.wordName=ai.file_name||`${d.code}_Rev${rev}_PROPOSTA_IA.docx`;await putDocBlob(v.wordKey,new File([proposalBlob],v.wordName,{type:proposalBlob.type}));
+   auditAdmin(`SIASH Docs: ${d.code} revisão ${rev} gerada automaticamente com IA para conferência profissional.`);save();renderDocs();renderProposalReady(i,vi);showDocHistory(i);status.textContent=`Proposta ${rev} gerada. Abra o Word atualizado, confira e somente depois aprove.`;showToast("Proposta de revisão gerada pela IA",2200)
+ }catch(e){console.error(e);status.textContent="A proposta não foi gerada.";alert(e.message||"Falha na atualização com IA.")}finally{btn.disabled=false}
+}
 function renderProposalReady(i,vi){const box=$("doc-proposal-ready"),actions=$("doc-proposal-actions");if(!box||!actions)return;const d=S.docs[i],v=(vi>=0?d?.versions?.[vi]:null);const hasFile=!!(v&&(v.wordKey||v.wordPath||v.pdfKey||v.pdfPath));box.classList.toggle("hidden",!hasFile);if(!hasFile){actions.innerHTML="";return}$("doc-proposal-ready-text").textContent=`Revisão ${v.revision} importada. Abra o arquivo atualizado e só depois aprove.`;actions.innerHTML=`${v.wordKey||v.wordPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'word')">ABRIR WORD ATUALIZADO</button>`:""}${v.pdfKey||v.pdfPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'pdf')">ABRIR PDF ATUALIZADO</button>`:""}<button class="primary" type="button" onclick="validateDocProposal(${i},${vi})">APROVAR E PUBLICAR</button><button class="ghost" type="button" onclick="requestDocCorrection(${i},${vi})">SOLICITAR CORREÇÃO</button>`}
 function cancelDocRevision(){$("doc-revision-panel").classList.add("hidden");$("doc-revision-form").reset()}
 window.showDocHistory=i=>{
@@ -432,7 +467,7 @@ $("owner-create-btn").addEventListener("click",async()=>{
    $("owner-pass").value="";$("owner-pass2").value="";initSecurityUI();alert("Administrador Proprietário criado. Faça o login com sua credencial exclusiva.");
  }catch(e){alert(e.message||"Falha na configuração Cloud.")}
 })
-$("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}$("login-view").classList.add("hidden");$("app-view").classList.remove("hidden");$("logged-user").textContent=SESSION.user;applyPermissions();if(role==="owner")auditAdmin("Login do Administrador Proprietário.");renderAll()}catch(e){$("login-feedback").textContent=e.message||"Falha no login."}})
+$("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}$("login-view").classList.add("hidden");$("app-view").classList.remove("hidden");$("logged-user").textContent=SESSION.user;applyPermissions();if(role==="owner")auditAdmin("Login do Administrador Proprietário.");renderAll()}catch(e){$("login-feedback").textContent=e.message||"Falha no login."}})
 $("logout-btn").addEventListener("click",()=>{SIASH_CLOUD.token="";sessionStorage.removeItem("siash_cloud_token");SESSION={authenticated:false,role:null,user:null};$("app-view").classList.add("hidden");$("login-view").classList.remove("hidden");initSecurityUI()})
 $("refresh-dashboard").addEventListener("click",renderAll)
 $("reset-shift").addEventListener("click",()=>{if(confirm("Iniciar novo plantão? O histórico mensal será preservado.")){S.checklist=CHECKS.map(x=>({text:x,status:"Pendente"}));S.events=[];S.pending=[];S.shiftStarted=new Date().toISOString();save()}})

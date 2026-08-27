@@ -42,6 +42,13 @@ async function initDb(){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_by TEXT
     );
+    CREATE TABLE IF NOT EXISTS siash_state_history(
+      id BIGSERIAL PRIMARY KEY,
+      payload JSONB NOT NULL,
+      saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      saved_by TEXT,
+      reason TEXT
+    );
     CREATE TABLE IF NOT EXISTS siash_cloud_audit(
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -97,10 +104,10 @@ app.get("/api/state",auth,async(req,res)=>{
 app.put("/api/state",auth,async(req,res)=>{
   const payload=req.body?.payload;
   if(!payload || typeof payload!=="object") return res.status(400).json({error:"Estado inválido."});
-  await pool.query(`
+  const client=await pool.connect();try{await client.query("BEGIN");const cur=await client.query("SELECT payload FROM siash_state WHERE id=1 FOR UPDATE");if(cur.rows.length)await client.query("INSERT INTO siash_state_history(payload,saved_by,reason) VALUES($1,$2,$3)",[cur.rows[0].payload,req.user.u,req.body?.reason||"Antes de atualização do estado"]);await client.query(`
     INSERT INTO siash_state(id,payload,updated_at,updated_by) VALUES(1,$1,NOW(),$2)
     ON CONFLICT(id) DO UPDATE SET payload=EXCLUDED.payload,updated_at=NOW(),updated_by=EXCLUDED.updated_by
-  `,[payload,req.user.u]);
+  `,[payload,req.user.u]);await client.query("COMMIT")}catch(e){await client.query("ROLLBACK");throw e}finally{client.release()}
   res.json({ok:true,updated_at:new Date().toISOString()});
 });
 app.put("/api/state/init",auth,async(req,res)=>{
@@ -128,6 +135,49 @@ app.get("/api/doc/:key",auth,async(req,res)=>{
   res.setHeader("Content-Type",q.rows[0].mime_type||"application/octet-stream");
   res.setHeader("X-File-Name",encodeURIComponent(q.rows[0].file_name||req.params.key));
   res.send(q.rows[0].file_data);
+});
+
+
+// --- SIASH Docs IA: revisão técnico-científica com preservação do OOXML ---
+const OpenAI = require("openai");
+const AdmZip = require("adm-zip");
+const aiClient = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+const AI_MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
+function xmlDecode(s=""){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&")}
+function xmlEncode(s=""){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;")}
+function docxParagraphs(buf){
+  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)throw new Error("DOCX sem word/document.xml.");
+  const xml=entry.getData().toString("utf8"), blocks=[...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
+  return blocks.map((m,index)=>({index,text:[...m[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(x=>xmlDecode(x[1])).join("").trim()})).filter(x=>x.text);
+}
+function patchDocx(buf,updates){
+  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml"),xml=entry.getData().toString("utf8");
+  const map=new Map((updates||[]).map(u=>[Number(u.paragraph_index),String(u.new_text||"")]));let idx=-1;
+  const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{idx++;if(!map.has(idx))return p;let first=true;return p.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{if(first){first=false;return a+xmlEncode(map.get(idx))+c}return a+c})});
+  zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return zip.toBuffer();
+}
+function collectWebSources(response){
+  const urls=new Map();for(const item of response.output||[]){if(item.type==="web_search_call"){for(const s of item.action?.sources||[]){if(s?.url)urls.set(s.url,s.title||s.url)}}}
+  return [...urls].map(([url,title])=>({title,url}));
+}
+app.get("/api/ai/status",auth,(req,res)=>res.json({configured:!!aiClient,model:AI_MODEL}));
+app.post("/api/ai/revise-pop",auth,async(req,res)=>{
+  if(req.user.r!=="owner")return res.status(403).json({error:"Somente o Administrador Proprietário pode iniciar revisão com IA."});
+  if(!aiClient)return res.status(503).json({error:"OPENAI_API_KEY ainda não configurada no servidor."});
+  try{
+    const {doc_code,doc_title,current_revision,next_revision,file_name,file_base64}=req.body||{};
+    if(!doc_code||!file_base64)return res.status(400).json({error:"POP/arquivo não informado."});
+    const original=Buffer.from(file_base64,"base64");if(original.length>18*1024*1024)return res.status(413).json({error:"Word acima do limite de 18 MB para revisão automática."});
+    const paragraphs=docxParagraphs(original);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});
+    const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
+    const editable=paragraphs.filter(p=>!protectedRx.test(p.text));
+    const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Pesquise na web referências oficiais e atuais, priorizando ANVISA, Ministério da Saúde, COFEN/COREN, SBP e órgãos oficiais; complemente com diretrizes e literatura revisada por pares somente quando necessário.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Não invente recomendações nem referências. Se não houver base suficiente, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
+    const response=await aiClient.responses.create({model:AI_MODEL,tools:[{type:"web_search"}],input:prompt,text:{format:{type:"json_schema",name:"siash_pop_revision",strict:true,schema:{type:"object",additionalProperties:false,properties:{summary:{type:"string"},updates:{type:"array",items:{type:"object",additionalProperties:false,properties:{paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"}},required:["paragraph_index","new_text","reason"]}},references:{type:"array",items:{type:"object",additionalProperties:false,properties:{title:{type:"string"},url:{type:"string"}},required:["title","url"]}}},required:["summary","updates","references"]}}}});
+    const result=JSON.parse(response.output_text||"{}");const allowed=new Set(editable.map(p=>p.index));result.updates=(result.updates||[]).filter(u=>allowed.has(Number(u.paragraph_index))&&String(u.new_text||"").trim());
+    const revised=patchDocx(original,result.updates),sources=[...(result.references||[]),...collectWebSources(response)].filter(x=>x&&x.url);const unique=[...new Map(sources.map(x=>[x.url,x])).values()];
+    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada por IA.",{doc_code,current_revision,next_revision,model:AI_MODEL,changes:result.updates.length});
+    res.json({ok:true,model:AI_MODEL,summary:result.summary||"",changes:result.updates,references:unique,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
+  }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 
 app.get("/api/users",auth,async(req,res)=>{
