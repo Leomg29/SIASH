@@ -356,7 +356,7 @@ function renderDocs(){
    const pubI=docPublishedIndex(d),pub=docPublishedVersion(d),work=docWorkingVersion(d),workI=docWorkingIndex(d);
    const workflow=work?(workI!==pubI?`${safe(work.workflow)} · Rev. ${safe(work.revision)}`:safe(work.workflow)):"—";
    const proposalI=(d.versions||[]).findIndex((v,vi)=>vi!==pubI&&v.workflow!=="Obsoleto"),proposal=proposalI>=0?d.versions[proposalI]:null,hasProposalFile=!!(proposal&&(proposal.pdf||proposal.pdfBlobId||proposal.pdfPath||proposal.pdfKey||proposal.wordKey||proposal.wordPath));
-   const ownerActions=`${canDocEdit(d)?`<button class="ghost compact-btn" onclick="startDocRevision(${i})">Atualizar com IA</button>`:""} ${proposal?`<button class="secondary compact-btn" onclick="showDocHistory(${i})">Abrir revisão proposta</button>`:""} ${proposal&&hasProposalFile&&canDocValidate(d)?`<button class="primary compact-btn" onclick="validateDocProposal(${i},${proposalI})">Aprovar e publicar</button> <button class="secondary compact-btn" onclick="requestDocCorrection(${i},${proposalI})">Solicitar correção</button>`:""}${isOwner()&&!d.seed?` <button class="danger compact-btn owner-only" onclick="deleteDoc(${i})">Excluir</button>`:""}`;
+   const ownerActions=`${canDocEdit(d)?`<button class="ghost compact-btn" onclick="startDocRevision(${i})">Atualizar com IA</button>`:""} ${isOwner()&&pub?`<button class="secondary compact-btn owner-only" onclick="restoreCurrentWord(${i})">Restaurar Word vigente</button>`:""} ${proposal?`<button class="secondary compact-btn" onclick="showDocHistory(${i})">Abrir revisão proposta</button>`:""} ${proposal&&hasProposalFile&&canDocValidate(d)?`<button class="primary compact-btn" onclick="validateDocProposal(${i},${proposalI})">Aprovar e publicar</button> <button class="secondary compact-btn" onclick="requestDocCorrection(${i},${proposalI})">Solicitar correção</button>`:""}${isOwner()&&!d.seed?` <button class="danger compact-btn owner-only" onclick="deleteDoc(${i})">Excluir</button>`:""}`;
    return `<tr><td><strong>${safe(d.title)}</strong><br><small>${safe(d.sector)}</small></td><td>${safe(d.code)}</td><td>${safe(pub?.revision||"—")}</td><td>${dateBR(pub?.reviewDate||"")}</td><td>${dateBR(s.next)}</td><td class="${s.cls}">${s.text}</td><td class="${workflowClass(work?.workflow)}">${workflow}</td><td>${pubI>=0?docsVersionButtons(i,pubI):"—"}</td><td><button class="ghost compact-btn" onclick="showDocHistory(${i})">Histórico</button> ${ownerActions}</td></tr>`
  }).join("")||'<tr><td colspan="9">Nenhum documento localizado com os filtros atuais.</td></tr>';
  applyPermissions();
@@ -516,6 +516,39 @@ $("pending-form").addEventListener("submit",e=>{e.preventDefault();S.pending.pus
 $("indicator-month").addEventListener("change",renderIndicators)
 
 
+// v0.12.2 — restauração individual segura do Word da revisão vigente.
+// Exclusivo do Administrador Proprietário. Não cria revisão, não muda workflow,
+// não altera data de revisão/validação e só troca o vínculo do arquivo Word vigente.
+let DOC_RESTORE_SINGLE_INDEX=null;
+window.restoreCurrentWord=i=>{
+ const d=S.docs[i];if(!d)return alert("Documento não localizado.");
+ if(!requireOwner("a restauração do Word da revisão vigente"))return;
+ const vi=docPublishedIndex(d),v=vi>=0?d.versions[vi]:null;if(!v)return alert("Revisão vigente não localizada para este documento.");
+ DOC_RESTORE_SINGLE_INDEX=i;
+ const input=$("doc-restore-single-file");if(!input)return alert("Ferramenta de restauração não disponível nesta versão.");
+ input.value="";input.click();
+};
+async function restoreSingleCurrentWord(file){
+ const i=DOC_RESTORE_SINGLE_INDEX;DOC_RESTORE_SINGLE_INDEX=null;
+ const d=S.docs[i];if(!d||!file)return;
+ if(!isOwner())return alert("Somente o Administrador Proprietário pode restaurar arquivos documentais.");
+ const vi=docPublishedIndex(d),v=vi>=0?d.versions[vi]:null;if(!v)return alert("Revisão vigente não localizada. Nenhum vínculo foi alterado.");
+ const isWord=/\.(docx?|DOCX?)$/.test(file.name||"")||/wordprocessingml|msword/i.test(file.type||"");
+ if(!isWord)return alert("Selecione um arquivo Word (.doc ou .docx). Nenhum vínculo foi alterado.");
+ const existing=v.wordName?`\nArquivo atualmente vinculado: ${v.wordName}`:"\nAtualmente não há Word recuperável vinculado a esta revisão.";
+ if(!confirm(`Restaurar o Word da revisão JÁ VIGENTE?\n\nDocumento: ${d.code} — ${d.title}\nRevisão vigente na SIASH: ${v.revision}${existing}\nNovo arquivo: ${file.name}\n\nA operação NÃO criará nova revisão e NÃO alterará validação, workflow ou datas.`))return;
+ const key=`${d.id}|${v.revision}|word|restored-${Date.now()}`;
+ try{
+   updateCloudBadge("Restaurando Word…");
+   await putDocBlob(key,file);
+   if(SIASH_CLOUD.enabled&&SIASH_CLOUD.token)await uploadDocCloud(key,file);
+   v.wordKey=key;v.wordName=file.name;v.restoredAt=new Date().toISOString();v.restoredBy=SESSION.user||"Administrador Proprietário";v.restoredMode="individual";
+   auditAdmin(`SIASH Docs: Word vigente restaurado manualmente para ${d.code}, revisão ${v.revision}, sem criação de nova revisão.`);
+   save();renderDocs();updateCloudBadge("Sincronizado");
+   alert(`Word restaurado com sucesso para ${d.code} — revisão ${v.revision}. Nenhuma nova revisão foi criada.`);
+ }catch(err){console.error(err);updateCloudBadge("Falha na restauração",true);alert("A restauração não foi concluída e o vínculo documental não foi alterado. Detalhe: "+err.message)}
+}
+
 // v0.12.1 — restauração segura dos 8 Word já validados na v0.10.10.
 // Esta rotina NÃO cria revisão, NÃO muda workflow e NÃO altera datas de validação.
 const LEGACY_VALIDATED_WORD_MAP=[
@@ -552,6 +585,7 @@ async function restoreValidatedWords(files){
 $("doc-new-toggle").addEventListener("click",()=>{if(!canDocEdit())return alert("Seu perfil documental não permite cadastrar documentos.");$("doc-new-panel").classList.remove("hidden");$("doc-new-panel").scrollIntoView({behavior:"smooth",block:"start"})})
 $("doc-restore-batch")?.addEventListener("click",()=>{if(!requireOwner("a restauração de arquivos documentais migrados"))return;$("doc-restore-files").click()});
 $("doc-restore-files")?.addEventListener("change",async e=>{const files=e.target.files;if(files?.length)await restoreValidatedWords(files);e.target.value=""});
+$("doc-restore-single-file")?.addEventListener("change",async e=>{const file=e.target.files?.[0];if(file)await restoreSingleCurrentWord(file);e.target.value=""});
 $("doc-new-cancel").addEventListener("click",hideDocNewPanel)
 $("doc-search").addEventListener("input",renderDocs)
 $("doc-filter").addEventListener("change",renderDocs); $("doc-sector-filter").addEventListener("change",renderDocs)
