@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>SIASH | HospitalIA UTIN — Alpha Consolidada v0.12.0</title>
+<title>SIASH | HospitalIA UTIN — Alpha Consolidada v0.12.1</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
   <div class="login-card">
     <div class="brand-mark">SIASH</div>
     <h1>HospitalIA</h1>
-    <p class="muted">UTI Neonatal • Alpha Consolidada v0.12.0</p>
+    <p class="muted">UTI Neonatal • Alpha Consolidada v0.12.1</p>
     <div id="owner-setup" class="owner-setup hidden">
       <div class="security-badge">Primeiro acesso do Proprietário</div>
       <p class="muted">Crie aqui a credencial exclusiva do Administrador Proprietário. Esta etapa aparece somente enquanto não houver proprietário configurado neste navegador.</p>
@@ -373,7 +373,7 @@
     <div class="docs-toolbar">
       <label>Buscar documento<input id="doc-search" placeholder="Título, código ou setor"></label>
       <label>Setor<select id="doc-sector-filter"><option value="">Todos os setores</option></select></label><label>Situação<select id="doc-filter"><option value="">Todos</option><option value="valid">Vigentes</option><option value="review">Revisão necessária / acervo legado</option><option value="soon">Revisão próxima (31–90 dias)</option><option value="priority">Revisão prioritária (≤30 dias)</option><option value="expired">Revisão vencida</option><option value="unknown">Sem data de revisão</option></select></label>
-      <span id="doc-access-badge" class="badge">Acesso documental</span><button id="doc-new-toggle" class="primary doc-editor-only" type="button">+ Cadastrar documento</button>
+      <span id="doc-access-badge" class="badge">Acesso documental</span><button id="doc-restore-batch" class="secondary owner-only" type="button">Restaurar 8 POPs migrados</button><input id="doc-restore-files" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden><button id="doc-new-toggle" class="primary doc-editor-only" type="button">+ Cadastrar documento</button>
     </div>
     <div class="info-box">Use <strong>Documentos do Setor</strong> como lista principal. Para localizar pendências, use o filtro <strong>Situação</strong>. Fluxo: <strong>Consultar vigente → Atualizar com IA → Abrir revisão proposta → Validar e publicar.</strong></div>
   </article>

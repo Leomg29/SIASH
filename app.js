@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.12.0",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.12.1",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -514,7 +514,44 @@ $("pipa-form").addEventListener("submit",e=>{e.preventDefault();if(!$("pipa-mont
 $("pipa-month").addEventListener("change",renderPipa)
 $("pending-form").addEventListener("submit",e=>{e.preventDefault();S.pending.push({bed:$("pending-bed").value,priority:$("pending-priority").value,text:$("pending-text").value.trim(),done:false});$("pending-text").value="";save()})
 $("indicator-month").addEventListener("change",renderIndicators)
+
+
+// v0.12.1 — restauração segura dos 8 Word já validados na v0.10.10.
+// Esta rotina NÃO cria revisão, NÃO muda workflow e NÃO altera datas de validação.
+const LEGACY_VALIDATED_WORD_MAP=[
+ {id:"LEG-UTIN-001",match:/Higienizacao_das_Maos/i},
+ {id:"LEG-UTIN-002",match:/Administracao_Dieta_Enteral/i},
+ {id:"LEG-UTIN-003",match:/Administracao_Dieta_por_Gavagem/i},
+ {id:"LEG-UTIN-004",match:/Administracao_Segura_Medicacao/i},
+ {id:"LEG-UTIN-005",match:/Alta_Transferencia_RN/i},
+ {id:"LEG-UTIN-006",match:/Anotacao_de_Enfermagem/i},
+ {id:"LEG-UTIN-007",match:/Admissao_RN_UTIN/i},
+ {id:"LEG-UTIN-008",match:/Bomba_de_Infusao/i}
+];
+async function restoreValidatedWords(files){
+ if(!isOwner())return alert("Somente o Administrador Proprietário pode restaurar arquivos migrados.");
+ const list=[...files];if(!list.length)return;
+ const found=[];
+ for(const spec of LEGACY_VALIDATED_WORD_MAP){const file=list.find(f=>spec.match.test(f.name));if(file)found.push({...spec,file})}
+ const missing=LEGACY_VALIDATED_WORD_MAP.filter(x=>!found.some(y=>y.id===x.id)).map(x=>x.id);
+ if(missing.length)return alert(`Foram reconhecidos ${found.length} de 8 arquivos. Faltam: ${missing.join(", ")}. Nenhum vínculo foi alterado.`);
+ if(list.length!==8&&!confirm(`Foram selecionados ${list.length} arquivos, mas os 8 POPs esperados foram reconhecidos. Continuar usando somente os 8 reconhecidos?`))return;
+ const plan=[];
+ for(const x of found){const d=S.docs.find(z=>z.id===x.id||z.code===x.id);if(!d)return alert(`Documento ${x.id} não localizado na base atual. Nenhum vínculo foi alterado.`);const vi=docPublishedIndex(d),v=vi>=0?d.versions[vi]:null;if(!v)return alert(`Revisão vigente de ${x.id} não localizada. Nenhum vínculo foi alterado.`);plan.push({d,v,file:x.file,key:`${d.id}|${v.revision}|word|restored-${Date.now()}-${x.id}`})}
+ if(!confirm(`A SIASH reconheceu os 8 POPs. Eles serão vinculados às revisões JÁ VIGENTES, sem criar novas revisões e sem alterar validações.\n\nDeseja restaurar os 8 arquivos agora?`))return;
+ try{
+   updateCloudBadge("Restaurando documentos…");
+   for(const x of plan){await putDocBlob(x.key,x.file);if(SIASH_CLOUD.enabled&&SIASH_CLOUD.token)await uploadDocCloud(x.key,x.file)}
+   for(const x of plan){x.v.wordKey=x.key;x.v.wordName=x.file.name;x.v.restoredFrom="v0.10.10";x.v.restoredAt=new Date().toISOString()}
+   auditAdmin("SIASH Docs: restauração em lote dos 8 arquivos Word validados da v0.10.10, sem criação de nova revisão.");
+   save();renderDocs();updateCloudBadge("Sincronizado");
+   alert("Restauração concluída: 8/8 arquivos Word vinculados às revisões vigentes. Nenhuma nova revisão foi criada.");
+ }catch(err){console.error(err);updateCloudBadge("Falha na restauração",true);alert("A restauração não foi concluída. O estado documental não foi alterado. Detalhe: "+err.message)}
+}
+
 $("doc-new-toggle").addEventListener("click",()=>{if(!canDocEdit())return alert("Seu perfil documental não permite cadastrar documentos.");$("doc-new-panel").classList.remove("hidden");$("doc-new-panel").scrollIntoView({behavior:"smooth",block:"start"})})
+$("doc-restore-batch")?.addEventListener("click",()=>{if(!requireOwner("a restauração de arquivos documentais migrados"))return;$("doc-restore-files").click()});
+$("doc-restore-files")?.addEventListener("change",async e=>{const files=e.target.files;if(files?.length)await restoreValidatedWords(files);e.target.value=""});
 $("doc-new-cancel").addEventListener("click",hideDocNewPanel)
 $("doc-search").addEventListener("input",renderDocs)
 $("doc-filter").addEventListener("change",renderDocs); $("doc-sector-filter").addEventListener("change",renderDocs)
