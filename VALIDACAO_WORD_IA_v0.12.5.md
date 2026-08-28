@@ -25,3 +25,7 @@ O Word vigente não é substituído durante a geração. Falhas de IA, OOXML, qu
 
 ## Consolidação adicional — Controle Histórico institucional
 Antes do deploy da v0.12.5 foi incorporada a regra de publicação institucional: durante a proposta o histórico do Word permanece preservado; somente após validação profissional a SIASH detecta a maior revisão institucional existente no próprio DOCX, calcula a próxima revisão (ex.: 04 -> 05), acrescenta nova linha ao Controle Histórico, registra mês/ano atual, número de páginas disponível nos metadados do DOCX, resumo da revisão, responsável pela verificação/aprovação e atualiza a validade bienal. A revisão interna da SIASH permanece independente da revisão institucional. Se a tabela de Controle Histórico não puder ser localizada/atualizada com segurança, a publicação é bloqueada e a versão vigente anterior permanece preservada.
+
+
+## Consolidação final — autoria e histórico institucional
+Na publicação, o campo **Histórico de Alteração** recebe somente o resumo objetivo das alterações realizadas, sem os rótulos internos “PROPOSTA gerada por IA” ou “verificada pelo SIASH”. O campo **Elaboração** passa a ser preenchido como `SIASH Docs / <profissional aprovador>`. Os campos **Verificação** e **Aprovação** recebem o nome do profissional que efetivamente aprovou a revisão, informado e confirmado no momento da publicação.
