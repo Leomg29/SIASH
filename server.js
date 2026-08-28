@@ -144,8 +144,10 @@ const AdmZip = require("adm-zip");
 const openaiClient = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+const GEMINI_SEARCH_MODE = String(process.env.GEMINI_SEARCH_MODE || "off").toLowerCase();
 const AI_DEFAULT_PROVIDER = String(process.env.AI_PROVIDER || "auto").toLowerCase();
+const GEMINI_TIMEOUT_MS = Math.max(15000, Number(process.env.GEMINI_TIMEOUT_MS || 90000));
 function xmlDecode(s=""){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&")}
 function xmlEncode(s=""){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;")}
 function docxParagraphs(buf){
@@ -171,24 +173,49 @@ function geminiGroundingSources(data){
   const chunks=data?.candidates?.[0]?.groundingMetadata?.groundingChunks||[];
   return chunks.map(x=>x?.web?.uri?{title:x.web.title||x.web.uri,url:x.web.uri}:null).filter(Boolean);
 }
+const GEMINI_REVISION_SCHEMA={
+  type:"object",
+  properties:{
+    summary:{type:"string"},
+    updates:{type:"array",items:{type:"object",properties:{paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"}},required:["paragraph_index","new_text","reason"]}},
+    references:{type:"array",items:{type:"object",properties:{title:{type:"string"},url:{type:"string"}},required:["title","url"]}}
+  },
+  required:["summary","updates","references"]
+};
+function geminiUseSearch(){return GEMINI_SEARCH_MODE==="on"||GEMINI_SEARCH_MODE==="true"||GEMINI_SEARCH_MODE==="enabled"}
 async function reviseWithGemini(prompt){
   if(!GEMINI_API_KEY)throw new Error("GEMINI_API_KEY ainda não configurada no servidor.");
-  const strictPrompt=prompt+`\n\nFORMATO DE SAÍDA OBRIGATÓRIO: responda SOMENTE com um objeto JSON válido, sem markdown, com as chaves summary, updates e references. updates deve ser uma lista de objetos {paragraph_index, new_text, reason}. references deve ser uma lista de objetos {title, url}. Não inclua comentários fora do JSON.`;
+  const useSearch=geminiUseSearch();
+  const researchRule=useSearch
+    ? "Use a Pesquisa Google integrada para verificar referências oficiais e atuais."
+    : "A Pesquisa Google integrada está desativada neste ambiente. Não afirme que pesquisou a web. Use conhecimento técnico do modelo apenas para propor ajustes; inclua referências somente quando tiver alta confiança no título e URL, e trate-as como sugestões que exigem conferência profissional.";
+  const strictPrompt=prompt+`\n\nMODO DE PESQUISA: ${researchRule}\nFORMATO DE SAÍDA OBRIGATÓRIO: responda SOMENTE com JSON válido nas chaves summary, updates e references. Não inclua markdown nem comentários fora do JSON.`;
   const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`;
-  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":GEMINI_API_KEY},body:JSON.stringify({contents:[{role:"user",parts:[{text:strictPrompt}]}],tools:[{google_search:{}}],generationConfig:{temperature:0.15,maxOutputTokens:16000}})});
+  const payload={contents:[{role:"user",parts:[{text:strictPrompt}]}],generationConfig:{maxOutputTokens:16000,responseMimeType:"application/json",responseSchema:GEMINI_REVISION_SCHEMA}};
+  if(useSearch)payload.tools=[{google_search:{}}];
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),GEMINI_TIMEOUT_MS);
+  let r;
+  try{r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":GEMINI_API_KEY},body:JSON.stringify(payload),signal:controller.signal})}
+  catch(e){if(e?.name==="AbortError")throw new Error(`Gemini excedeu o tempo limite de ${Math.round(GEMINI_TIMEOUT_MS/1000)} segundos.`);throw e}
+  finally{clearTimeout(timer)}
   const data=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(data?.error?.message||`Gemini retornou HTTP ${r.status}.`);
+  if(!r.ok){
+    const detail=data?.error?.message||`Gemini retornou HTTP ${r.status}.`;
+    if(r.status===429)throw new Error(`Gemini atingiu o limite/quota deste projeto. ${detail}`);
+    if(r.status===503)throw new Error(`Gemini está temporariamente indisponível. ${detail}`);
+    throw new Error(detail);
+  }
   const text=(data?.candidates?.[0]?.content?.parts||[]).map(p=>p?.text||"").join("").trim();
   if(!text)throw new Error("Gemini não retornou conteúdo utilizável.");
   const result=parseModelJson(text);
-  return {result,sources:geminiGroundingSources(data),model:GEMINI_MODEL,provider:"gemini"};
+  return {result,sources:useSearch?geminiGroundingSources(data):[],model:GEMINI_MODEL,provider:"gemini",researchMode:useSearch?"google_search":"model_knowledge"};
 }
 async function reviseWithOpenAI(prompt){
   if(!openaiClient)throw new Error("OPENAI_API_KEY ainda não configurada no servidor.");
   const response=await openaiClient.responses.create({model:OPENAI_MODEL,tools:[{type:"web_search"}],input:prompt,text:{format:{type:"json_schema",name:"siash_pop_revision",strict:true,schema:{type:"object",additionalProperties:false,properties:{summary:{type:"string"},updates:{type:"array",items:{type:"object",additionalProperties:false,properties:{paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"}},required:["paragraph_index","new_text","reason"]}},references:{type:"array",items:{type:"object",additionalProperties:false,properties:{title:{type:"string"},url:{type:"string"}},required:["title","url"]}}},required:["summary","updates","references"]}}}});
   return {result:JSON.parse(response.output_text||"{}"),sources:collectOpenAISources(response),model:OPENAI_MODEL,provider:"openai"};
 }
-function availableAIProviders(){return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
+function availableAIProviders(){return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL,searchMode:geminiUseSearch()?"google_search":"off"},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
 function providerOrder(requested){
   const p=String(requested||AI_DEFAULT_PROVIDER||"auto").toLowerCase();
   if(p==="gemini")return ["gemini"];
@@ -203,7 +230,7 @@ async function runAIRevision(prompt,requested){
   }
   throw new Error(`Nenhum provedor de IA concluiu a revisão. ${errors.join(" | ")}`);
 }
-app.get("/api/ai/status",auth,(req,res)=>res.json({configured:!!(GEMINI_API_KEY||openaiClient),defaultProvider:AI_DEFAULT_PROVIDER,providers:availableAIProviders(),privacyNotice:"No nível gratuito do Gemini, não envie dados identificáveis de pacientes."}));
+app.get("/api/ai/status",auth,(req,res)=>res.json({configured:!!(GEMINI_API_KEY||openaiClient),defaultProvider:AI_DEFAULT_PROVIDER,providers:availableAIProviders(),privacyNotice:"No nível gratuito do Gemini, não envie dados identificáveis de pacientes. Referências geradas sem Pesquisa Google devem ser conferidas pelo profissional."}));
 app.post("/api/ai/revise-pop",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente o Administrador Proprietário pode iniciar revisão com IA."});
   try{
@@ -213,12 +240,12 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const paragraphs=docxParagraphs(original);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text));
-    const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Pesquise na web referências oficiais e atuais, priorizando ANVISA, Ministério da Saúde, COFEN/COREN, SBP e órgãos oficiais; complemente com diretrizes e literatura revisada por pares somente quando necessário.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Não invente recomendações nem referências. Se não houver base suficiente, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
+    const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
     const ai=await runAIRevision(prompt,provider);
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));result.updates=(result.updates||[]).filter(u=>allowed.has(Number(u.paragraph_index))&&String(u.new_text||"").trim());
     const revised=patchDocx(original,result.updates),sources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&x.url);const unique=[...new Map(sources.map(x=>[x.url,x])).values()];
     await audit(req.user.u,"SIASH Docs: proposta de revisão gerada por IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:result.updates.length});
-    res.json({ok:true,provider:ai.provider,model:ai.model,summary:result.summary||"",changes:result.updates,references:unique,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
+    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:result.updates,references:unique,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 

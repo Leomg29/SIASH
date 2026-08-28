@@ -377,7 +377,7 @@ window.sendDocToAI=async i=>{
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return alert("A atualização automática com IA está disponível somente na SIASH Cloud.");
  if(!(pub.wordKey||pub.wordPath))return alert("Para preservar a estrutura institucional, a revisão automática exige o arquivo Word vigente. Migre/anexe o Word antes de continuar.");
  const rev=$("doc-revision-number").value.trim();if(!confirm(`Gerar com IA a proposta de revisão ${rev} de ${d.code}? A versão vigente NÃO será substituída nem publicada.`))return;
- const btn=$("doc-send-ai"),status=$("doc-update-status");btn.disabled=true;status.textContent="IA analisando o POP e pesquisando referências atuais... Isso pode levar alguns minutos.";
+ const btn=$("doc-send-ai"),status=$("doc-update-status");btn.disabled=true;status.textContent="IA analisando o POP e preparando uma proposta técnica... Isso pode levar alguns minutos.";
  try{
    let blob;if(pub.wordKey)blob=await getDocBlob(pub.wordKey);else{const r=await fetch(pub.wordPath);if(!r.ok)throw new Error("Word vigente não pôde ser aberto.");blob=await r.blob()}
    if(!blob)throw new Error("Arquivo Word vigente não localizado.");const buf=await blob.arrayBuffer(),bytes=new Uint8Array(buf);let bin="";for(let o=0;o<bytes.length;o+=0x8000)bin+=String.fromCharCode(...bytes.subarray(o,o+0x8000));
@@ -385,7 +385,7 @@ window.sendDocToAI=async i=>{
    const out=Uint8Array.from(atob(ai.file_base64),c=>c.charCodeAt(0)),proposalBlob=new Blob([out],{type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
    let vi=d.versions.findIndex((v,x)=>x!==pubI&&String(v.revision)===rev&&v.workflow!=="Obsoleto"),v=vi>=0?d.versions[vi]:null;if(!v){v={revision:rev,reviewDate:todayISO(),workflow:"Em revisão",createdBy:"SIASH Docs / IA",createdAt:nowBR()};d.versions.push(v);vi=d.versions.length-1}
    v.note=`PROPOSTA gerada por IA. ${ai.summary||""}`;v.sources=(ai.references||[]).map(x=>`${x.title}: ${x.url}`).join("\n");v.aiProvider=ai.provider||"—";v.aiModel=ai.model;v.aiChanges=(ai.changes||[]).map(x=>({paragraph_index:x.paragraph_index,reason:x.reason}));v.wordKey=`${d.id}|${rev}|word|${Date.now()}`;v.wordName=ai.file_name||`${d.code}_Rev${rev}_PROPOSTA_IA.docx`;await putDocBlob(v.wordKey,new File([proposalBlob],v.wordName,{type:proposalBlob.type}));
-   auditAdmin(`SIASH Docs: ${d.code} revisão ${rev} gerada automaticamente com IA para conferência profissional.`);save();renderDocs();renderProposalReady(i,vi);showDocHistory(i);status.textContent=`Proposta ${rev} gerada com ${ai.provider||"IA"} (${ai.model||"modelo"}). Abra o Word atualizado, confira e somente depois aprove.`;showToast("Proposta de revisão gerada pela IA",2200)
+   auditAdmin(`SIASH Docs: ${d.code} revisão ${rev} gerada automaticamente com IA para conferência profissional.`);save();renderDocs();renderProposalReady(i,vi);showDocHistory(i);const mode=ai.researchMode==="google_search"?"com pesquisa web integrada":"sem pesquisa web automática";status.textContent=`Proposta ${rev} gerada com ${ai.provider||"IA"} (${ai.model||"modelo"}), ${mode}. Abra o Word atualizado, confira referências e conteúdo e somente depois aprove.`;showToast("Proposta de revisão gerada pela IA",2200)
  }catch(e){console.error(e);status.textContent="A proposta não foi gerada.";alert(e.message||"Falha na atualização com IA.")}finally{btn.disabled=false}
 }
 function renderProposalReady(i,vi){const box=$("doc-proposal-ready"),actions=$("doc-proposal-actions");if(!box||!actions)return;const d=S.docs[i],v=(vi>=0?d?.versions?.[vi]:null);const hasFile=!!(v&&(v.wordKey||v.wordPath||v.pdfKey||v.pdfPath));box.classList.toggle("hidden",!hasFile);if(!hasFile){actions.innerHTML="";return}$("doc-proposal-ready-text").textContent=`Revisão ${v.revision} importada. Abra o arquivo atualizado e só depois aprove.`;actions.innerHTML=`${v.wordKey||v.wordPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'word')">ABRIR WORD ATUALIZADO</button>`:""}${v.pdfKey||v.pdfPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'pdf')">ABRIR PDF ATUALIZADO</button>`:""}<button class="primary" type="button" onclick="validateDocProposal(${i},${vi})">APROVAR E PUBLICAR</button><button class="ghost" type="button" onclick="requestDocCorrection(${i},${vi})">SOLICITAR CORREÇÃO</button>`}
@@ -457,7 +457,7 @@ function renderSettings(){
 async function renderAIStatus(){
  const el=$("s-ai-status");if(!el)return;
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token){el.innerHTML="<strong>IA:</strong> status disponível após login na Cloud.";return}
- try{const st=await cloudJson("/api/ai/status");const g=st.providers?.gemini,o=st.providers?.openai;el.innerHTML=`<strong>IA configurada:</strong> Gemini ${g?.configured?"✓":"—"} (${safe(g?.model||"—")}) · OpenAI ${o?.configured?"✓":"—"} (${safe(o?.model||"—")})`}
+ try{const st=await cloudJson("/api/ai/status");const g=st.providers?.gemini,o=st.providers?.openai,gs=g?.searchMode==="google_search"?"Pesquisa Google ativa":"Pesquisa Google desativada (Free Tier)";el.innerHTML=`<strong>IA configurada:</strong> Gemini ${g?.configured?"✓":"—"} (${safe(g?.model||"—")}) · ${gs} · OpenAI ${o?.configured?"✓":"—"} (${safe(o?.model||"—")})`}
  catch(e){el.innerHTML="<strong>IA:</strong> não foi possível consultar o status dos provedores."}
 }
 function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderHuddle();renderRH();renderSettings();renderAdmin();applyPermissions()}
@@ -635,4 +635,4 @@ $("doc-access-form")?.addEventListener("submit",e=>{
  auditAdmin(`Acesso documental definido: ${user} · ${sector} · ${level}`);renderDocAccessList();showToast("Acesso documental salvo",1200);
 });
 renderAll();
-// v0.12.3 — camada multi-provedor de IA (Gemini + OpenAI), seleção pelo Proprietário e fallback seguro.
+// v0.12.4 — Gemini compatível com Free Tier sem Search grounding, saída JSON estruturada e timeout seguro; preserva fallback OpenAI.
