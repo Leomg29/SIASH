@@ -384,11 +384,13 @@ window.sendDocToAI=async i=>{
    const ai=await cloudJson("/api/ai/revise-pop",{method:"POST",body:JSON.stringify({doc_code:d.code,doc_title:d.title,current_revision:pub.revision,next_revision:rev,file_name:pub.wordName||`${d.code}.docx`,file_base64:btoa(bin),provider:S.settings?.aiProvider||"auto"})});
    const out=Uint8Array.from(atob(ai.file_base64),c=>c.charCodeAt(0)),proposalBlob=new Blob([out],{type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
    let vi=d.versions.findIndex((v,x)=>x!==pubI&&String(v.revision)===rev&&v.workflow!=="Obsoleto"),v=vi>=0?d.versions[vi]:null;if(!v){v={revision:rev,reviewDate:todayISO(),workflow:"Em revisão",createdBy:"SIASH Docs / IA",createdAt:nowBR()};d.versions.push(v);vi=d.versions.length-1}
-   v.note=`PROPOSTA gerada por IA. ${ai.summary||""}`;v.sources=(ai.references||[]).map(x=>`${x.title}: ${x.url}`).join("\n");v.aiProvider=ai.provider||"—";v.aiModel=ai.model;v.aiChanges=(ai.changes||[]).map(x=>({paragraph_index:x.paragraph_index,reason:x.reason}));v.wordKey=`${d.id}|${rev}|word|${Date.now()}`;v.wordName=ai.file_name||`${d.code}_Rev${rev}_PROPOSTA_IA.docx`;await putDocBlob(v.wordKey,new File([proposalBlob],v.wordName,{type:proposalBlob.type}));
+   if(!ai.verification?.verified||!(Number(ai.verification?.actualChanges)>0))throw new Error("A SIASH não conseguiu comprovar alterações reais no Word. A proposta não será salva para aprovação.");
+   v.note=`PROPOSTA gerada por IA e verificada pelo SIASH (${ai.verification.actualChanges} alteração(ões) aplicada(s)). ${ai.summary||""}`;v.sources=(ai.references||[]).map(x=>`${x.title}: ${x.url}`).join("\n");v.aiProvider=ai.provider||"—";v.aiModel=ai.model;v.aiVerified=true;v.aiVerification=ai.verification;v.aiChanges=(ai.changes||[]).map(x=>({paragraph_index:x.paragraph_index,before_text:x.before_text,new_text:x.new_text,reason:x.reason}));v.wordKey=`${d.id}|${rev}|word|${Date.now()}`;v.wordName=ai.file_name||`${d.code}_Rev${rev}_PROPOSTA_IA.docx`;await putDocBlob(v.wordKey,new File([proposalBlob],v.wordName,{type:proposalBlob.type}));
    auditAdmin(`SIASH Docs: ${d.code} revisão ${rev} gerada automaticamente com IA para conferência profissional.`);save();renderDocs();renderProposalReady(i,vi);showDocHistory(i);const mode=ai.researchMode==="google_search"?"com pesquisa web integrada":"sem pesquisa web automática";status.textContent=`Proposta ${rev} gerada com ${ai.provider||"IA"} (${ai.model||"modelo"}), ${mode}. Abra o Word atualizado, confira referências e conteúdo e somente depois aprove.`;showToast("Proposta de revisão gerada pela IA",2200)
  }catch(e){console.error(e);status.textContent="A proposta não foi gerada.";alert(e.message||"Falha na atualização com IA.")}finally{btn.disabled=false}
 }
-function renderProposalReady(i,vi){const box=$("doc-proposal-ready"),actions=$("doc-proposal-actions");if(!box||!actions)return;const d=S.docs[i],v=(vi>=0?d?.versions?.[vi]:null);const hasFile=!!(v&&(v.wordKey||v.wordPath||v.pdfKey||v.pdfPath));box.classList.toggle("hidden",!hasFile);if(!hasFile){actions.innerHTML="";return}$("doc-proposal-ready-text").textContent=`Revisão ${v.revision} importada. Abra o arquivo atualizado e só depois aprove.`;actions.innerHTML=`${v.wordKey||v.wordPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'word')">ABRIR WORD ATUALIZADO</button>`:""}${v.pdfKey||v.pdfPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'pdf')">ABRIR PDF ATUALIZADO</button>`:""}<button class="primary" type="button" onclick="validateDocProposal(${i},${vi})">APROVAR E PUBLICAR</button><button class="ghost" type="button" onclick="requestDocCorrection(${i},${vi})">SOLICITAR CORREÇÃO</button>`}
+function renderProposalReady(i,vi){const box=$("doc-proposal-ready"),actions=$("doc-proposal-actions");if(!box||!actions)return;const d=S.docs[i],v=(vi>=0?d?.versions?.[vi]:null);const hasFile=!!(v&&(v.wordKey||v.wordPath||v.pdfKey||v.pdfPath));box.classList.toggle("hidden",!hasFile);if(!hasFile){actions.innerHTML="";return}const n=Number(v.aiVerification?.actualChanges||v.aiChanges?.length||0),verified=v.aiVerified===true;$("doc-proposal-ready-text").textContent=verified?`Revisão ${v.revision} pronta para conferência. SIASH comprovou ${n} alteração(ões) real(is) no Word. Abra e confira antes de aprovar.`:`Revisão ${v.revision} disponível para conferência. Esta proposta foi criada antes da verificação automática da v0.12.5; confira o Word com atenção.`;const diffBtn=v.aiChanges?.length?`<button class="ghost" type="button" onclick="showAIChanges(${i},${vi})">VER ALTERAÇÕES APLICADAS</button>`:"";actions.innerHTML=`${v.wordKey||v.wordPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'word')">ABRIR WORD ATUALIZADO</button>`:""}${v.pdfKey||v.pdfPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'pdf')">ABRIR PDF ATUALIZADO</button>`:""}${diffBtn}<button class="primary" type="button" onclick="validateDocProposal(${i},${vi})">APROVAR E PUBLICAR</button><button class="ghost" type="button" onclick="requestDocCorrection(${i},${vi})">SOLICITAR CORREÇÃO</button>`}
+window.showAIChanges=(i,vi)=>{const v=S.docs?.[i]?.versions?.[vi],changes=v?.aiChanges||[];if(!changes.length)return alert("Esta proposta não possui detalhamento das alterações disponível.");const text=changes.map((c,n)=>`${n+1}. Parágrafo ${c.paragraph_index}\nANTES: ${c.before_text||"(não registrado na versão antiga)"}\nDEPOIS: ${c.new_text||"(não registrado na versão antiga)"}\nMOTIVO: ${c.reason||"—"}`).join("\n\n");alert(`ALTERAÇÕES APLICADAS PELA IA — REVISÃO ${v.revision}\n\n${text.slice(0,12000)}${text.length>12000?"\n\n[Lista abreviada na tela; confira também o Word.]":""}`)}
 function cancelDocRevision(){$("doc-revision-panel").classList.add("hidden");$("doc-revision-form").reset()}
 window.showDocHistory=i=>{
  const d=S.docs[i];$("doc-history-name").textContent=`${d.code} — ${d.title}`;
@@ -402,45 +404,49 @@ window.advanceDocVersion=(i,vi)=>{
  v.workflow=next;v.updatedAt=nowBR();auditAdmin(`SIASH Docs: ${d.code} revisão ${v.revision} avançou para ${next}.`);save();showDocHistory(i);showToast(`Revisão ${v.revision}: ${next}`,1400)
 }
 
-async function writeValidatorIntoApprovedWord(v,validator){
- if(!v?.wordKey)return {updated:false,reason:"no-word-key"};
- const blob=await getDocBlob(v.wordKey);if(!blob)return {updated:false,reason:"word-not-found"};
- const name=(v.wordName||"").toLowerCase();if(!name.endsWith(".docx"))return {updated:false,reason:"not-docx"};
- try{
-   const zip=await JSZip.loadAsync(blob);
-   const file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};
-   let xml=await file.async("string");
-   const placeholder="A preencher automaticamente pelo SIASH após validação";
-   const escaped=validator.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-   let changed=false;
-   if(xml.includes(placeholder)){xml=xml.replace(placeholder,escaped);changed=true}
-   // Compatibilidade com revisões produzidas anteriormente, caso o placeholder tenha outra capitalização.
-   if(!changed){
-     const variants=["A preencher automaticamente pelo SIASH após validação","A PREENCHER AUTOMATICAMENTE PELO SIASH APÓS VALIDAÇÃO"];
-     for(const p of variants){if(xml.includes(p)){xml=xml.replace(p,escaped);changed=true;break}}
-   }
-   if(!changed)return {updated:false,reason:"approval-placeholder-not-found"};
-   zip.file("word/document.xml",xml);
-   const approved=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
-   await putDocBlob(v.wordKey,approved);
-   v.approvalEmbedded=true;v.approvalEmbeddedAt=nowBR();
-   return {updated:true};
- }catch(err){console.error("Falha ao inserir aprovação no Word",err);return {updated:false,reason:"docx-update-failed"}}
+function xmlEscapeText(s=""){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function currentMonthYearPT(){const m=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];const d=new Date();return `${m[d.getMonth()]}/${d.getFullYear()}`}
+function nextInstitutionalRevisionFromXml(xml){
+ const table=(xml.match(/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/i)||[])[0];if(!table)return null;
+ const rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);let max=-1;
+ for(const row of rows){const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>[...x[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(y=>y[1].replace(/<[^>]+>/g,"")).join("").trim());if(cells.length>=7&&/^\d{1,3}$/.test(cells[0]))max=Math.max(max,Number(cells[0]))}
+ return max>=0?String(max+1).padStart(2,"0"):null;
+}
+function replaceCellText(tc,text){let first=true,found=false;const escaped=xmlEscapeText(text);let out=tc.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{found=true;if(first){first=false;return a+escaped+c}return a+c});if(!found)out=out.replace(/<w:tcPr[\s\S]*?<\/w:tcPr>/,m=>m+`<w:p><w:r><w:t>${escaped}</w:t></w:r></w:p>`);return out}
+function buildHistoryRowFromTemplate(row,values){let ci=0;return row.replace(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g,tc=>replaceCellText(tc,values[ci++]??""))}
+function updateInstitutionalHistoryXml(xml,validator,summary,pages){
+ const tblRe=/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/i,m=xml.match(tblRe);if(!m)return {ok:false,reason:"history-table-not-found"};
+ const table=m[0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);
+ const revisionRows=rows.filter(row=>{const c=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>[...x[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(y=>y[1]).join("").trim());return c.length>=7&&/^\d{1,3}$/.test(c[0])});
+ if(!revisionRows.length)return {ok:false,reason:"history-revision-row-not-found"};
+ const institutionalRevision=nextInstitutionalRevisionFromXml(xml);if(!institutionalRevision)return {ok:false,reason:"institutional-revision-not-detected"};
+ const template=revisionRows[revisionRows.length-1],note=(String(summary||"Revisão técnico-científica").replace(/\s+/g," ").trim().slice(0,220)||"Revisão técnico-científica");
+ const newRow=buildHistoryRowFromTemplate(template,[institutionalRevision,currentMonthYearPT(),String(pages||"A conferir"),note,"SIASH Docs / IA",validator,validator]);
+ let newTable=table;const validityRow=rows.find(r=>/Válido até|Valido ate|Vigente até|Vigente ate/i.test(r));
+ if(validityRow)newTable=newTable.replace(validityRow,newRow+validityRow);else newTable=newTable.replace(/<\/w:tbl>$/,newRow+"</w:tbl>");
+ const d=new Date(),future=new Date(d.getFullYear()+2,d.getMonth(),d.getDate()),months=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"],validity=`Válido até ${months[future.getMonth()]} de ${future.getFullYear()}, caso não haja alterações técnicas.`;
+ if(validityRow){const updatedValidity=replaceCellText(validityRow,validity);newTable=newTable.replace(validityRow,updatedValidity)}
+ return {ok:true,xml:xml.replace(table,newTable),institutionalRevision,validity};
+}
+async function finalizeApprovedWord(d,v,validator){
+ if(!v?.wordKey)return {updated:false,reason:"no-word-key"};const blob=await getDocBlob(v.wordKey);if(!blob)return {updated:false,reason:"word-not-found"};const name=(v.wordName||"").toLowerCase();if(!name.endsWith(".docx"))return {updated:false,reason:"not-docx"};
+ try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");let pages="";try{const appXml=await zip.file("docProps/app.xml")?.async("string");pages=(appXml?.match(/<Pages>(\d+)<\/Pages>/)||[])[1]||""}catch(_){ }
+   const hist=updateInstitutionalHistoryXml(xml,validator,v.aiSummary||v.note||"Revisão técnico-científica",pages);if(!hist.ok)return {updated:false,reason:hist.reason};xml=hist.xml;
+   const placeholder="A preencher automaticamente pelo SIASH após validação",escaped=xmlEscapeText(validator);if(xml.includes(placeholder))xml=xml.replace(placeholder,escaped);
+   zip.file("word/document.xml",xml);const approved=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,approved);
+   v.approvalEmbedded=true;v.approvalEmbeddedAt=nowBR();v.institutionalRevision=hist.institutionalRevision;v.institutionalRevisionDate=todayISO();v.institutionalValidity=hist.validity;return {updated:true,institutionalRevision:hist.institutionalRevision,validity:hist.validity};
+ }catch(err){console.error("Falha ao finalizar histórico institucional do Word",err);return {updated:false,reason:"docx-update-failed"}}
 }
 
 window.validateDocProposal=async(i,vi)=>{
- const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");if(!(v.pdfKey||v.pdfPath||v.wordKey||v.wordPath))return alert("Validação bloqueada: esta revisão não possui Word ou PDF atualizado para conferência.");
- if(!confirm(`Confirma que você abriu, conferiu e aprova a revisão ${v.revision} de ${d.code}?`))return;
+ const _v=S.docs?.[i]?.versions?.[vi];if(_v?.createdBy==="SIASH Docs / IA"&&_v.aiVerified!==true)return alert("Publicação bloqueada: esta proposta de IA não possui a verificação automática de integridade da v0.12.5. Gere uma nova proposta ou solicite correção antes de publicar.");
+ const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");if(!(v.wordKey||v.wordPath))return alert("Validação bloqueada: a publicação institucional exige o Word atualizado para registrar a nova revisão no Controle Histórico.");
+ if(!confirm(`Confirma que você abriu, conferiu e aprova a revisão ${v.revision} de ${d.code}?\n\nAo publicar, a SIASH acrescentará automaticamente a PRÓXIMA REVISÃO INSTITUCIONAL no Controle Histórico do Word, com a data atual e nova validade bienal.`))return;
  const validator=(prompt("Profissional responsável pela aprovação:",SESSION.user||"")||"").trim();if(!validator)return alert("A identificação do profissional responsável é obrigatória.");
- const approvalResult=await writeValidatorIntoApprovedWord(v,validator);
- d.versions.forEach((x,xv)=>{if(xv!==vi&&x.workflow==="Vigente")x.workflow="Obsoleto"});
- v.workflow="Vigente";v.validator=validator;v.approver=validator;v.validationDate=todayISO();v.updatedAt=nowBR();d.reviewRequired=false;
- auditAdmin(`SIASH Docs: ${d.code} revisão ${v.revision} validada e publicada por ${validator}${approvalResult.updated?" · aprovação inserida no Word":""}.`);
- save();
- if(v.wordKey&&approvalResult.updated)showToast(`Revisão ${v.revision} publicada · aprovação inserida no Word`,2200);
- else if(v.wordKey)showToast(`Revisão ${v.revision} publicada · confira o campo Aprovação no Word`,2200);
- else showToast(`Revisão ${v.revision} publicada`,1600);
- renderDocs();
+ const finalization=await finalizeApprovedWord(d,v,validator);if(!finalization.updated)return alert(`Publicação BLOQUEADA: a SIASH não conseguiu atualizar com segurança o Controle Histórico institucional do Word (${finalization.reason}). A versão vigente anterior foi preservada.`);
+ d.versions.forEach((x,xv)=>{if(xv!==vi&&x.workflow==="Vigente")x.workflow="Obsoleto"});v.workflow="Vigente";v.validator=validator;v.approver=validator;v.validationDate=todayISO();v.updatedAt=nowBR();d.reviewRequired=false;
+ v.note=`${v.note||"Revisão técnico-científica."} Revisão institucional ${finalization.institutionalRevision} registrada automaticamente no Word em ${dateBR(todayISO())}.`;
+ auditAdmin(`SIASH Docs: ${d.code} revisão interna ${v.revision} validada e publicada por ${validator} · revisão institucional ${finalization.institutionalRevision} registrada no Word.`);save();showToast(`Publicado · Word institucional Rev.${finalization.institutionalRevision} atualizado`,2600);renderDocs();
 }
 window.requestDocCorrection=(i,vi)=>{const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;const reason=(prompt("Descreva resumidamente o que precisa ser corrigido na proposta:")||"").trim();if(!reason)return;const text=`Corrigir a revisão proposta ${v.revision} do POP ${d.code} — ${d.title}. Ajuste solicitado pelo profissional: ${reason}. Manter as referências oficiais atuais, informar claramente o que foi corrigido e gerar novamente Word e PDF para nova conferência.`;navigator.clipboard?.writeText(text).then(()=>showToast("Pedido de correção copiado",1500)).catch(()=>{});v.workflow="Em revisão";v.correctionRequested=reason;v.updatedAt=nowBR();save();alert("A revisão voltou para 'Em revisão'. O pedido de correção foi preparado para enviar à IA.")};
 window.deleteDoc=i=>{if(!requireOwner("a exclusão de documentos do SIASH Docs"))return;const d=S.docs[i];if(d.seed)return alert("Os POPs institucionais incorporados à base não podem ser excluídos. Crie uma nova revisão para substituí-los.");if(confirm(`Excluir o cadastro ${d.code}? O histórico documental será removido desta instalação.`)){auditAdmin(`SIASH Docs: documento ${d.code} excluído.`);S.docs.splice(i,1);save()}}
@@ -635,4 +641,4 @@ $("doc-access-form")?.addEventListener("submit",e=>{
  auditAdmin(`Acesso documental definido: ${user} · ${sector} · ${level}`);renderDocAccessList();showToast("Acesso documental salvo",1200);
 });
 renderAll();
-// v0.12.4 — Gemini compatível com Free Tier sem Search grounding, saída JSON estruturada e timeout seguro; preserva fallback OpenAI.
+// v0.12.5 — verificação obrigatória de alterações reais no DOCX, bloqueio de falsa revisão e comparação antes/depois; preserva v0.12.4.

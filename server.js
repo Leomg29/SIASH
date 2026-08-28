@@ -156,10 +156,42 @@ function docxParagraphs(buf){
   return blocks.map((m,index)=>({index,text:[...m[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(x=>xmlDecode(x[1])).join("").trim()})).filter(x=>x.text);
 }
 function patchDocx(buf,updates){
-  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml"),xml=entry.getData().toString("utf8");
+  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)throw new Error("DOCX sem word/document.xml.");
+  const xml=entry.getData().toString("utf8");
   const map=new Map((updates||[]).map(u=>[Number(u.paragraph_index),String(u.new_text||"")]));let idx=-1;
-  const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{idx++;if(!map.has(idx))return p;let first=true;return p.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{if(first){first=false;return a+xmlEncode(map.get(idx))+c}return a+c})});
+  const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
+    idx++;if(!map.has(idx))return p;
+    const replacement=map.get(idx);let first=true,found=false;
+    const out=p.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{found=true;if(first){first=false;return a+xmlEncode(replacement)+c}return a+c});
+    if(!found)throw new Error(`Parágrafo ${idx} não possui trecho de texto editável no OOXML.`);
+    return out;
+  });
   zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return zip.toBuffer();
+}
+function normalizedText(s=""){return String(s||"").replace(/\s+/g," ").trim()}
+function effectiveAIUpdates(paragraphs,updates,allowed){
+  const originalByIndex=new Map(paragraphs.map(p=>[Number(p.index),String(p.text||"")]));
+  const dedup=new Map();
+  for(const u of updates||[]){
+    const index=Number(u?.paragraph_index),newText=String(u?.new_text||"").trim();
+    if(!allowed.has(index)||!newText)continue;
+    const before=originalByIndex.get(index);if(before==null)continue;
+    if(normalizedText(before)===normalizedText(newText))continue;
+    dedup.set(index,{paragraph_index:index,before_text:before,new_text:newText,reason:String(u?.reason||"").trim()});
+  }
+  return [...dedup.values()];
+}
+function verifyDocxRevision(original,revised,effective){
+  if(!effective.length)throw new Error("A IA não produziu nenhuma alteração real no conteúdo do Word. A proposta foi bloqueada para evitar uma falsa revisão.");
+  if(Buffer.compare(original,revised)===0)throw new Error("O arquivo revisado ficou idêntico ao Word vigente. A proposta foi bloqueada.");
+  const after=new Map(docxParagraphs(revised).map(p=>[Number(p.index),String(p.text||"")]));
+  const failures=[];
+  for(const u of effective){
+    const got=after.get(Number(u.paragraph_index));
+    if(normalizedText(got)!==normalizedText(u.new_text))failures.push(Number(u.paragraph_index));
+  }
+  if(failures.length)throw new Error(`Falha de integridade ao gravar as alterações no Word (parágrafos: ${failures.join(", ")}). A proposta não foi liberada.`);
+  return {verified:true,actualChanges:effective.length,checkedParagraphs:effective.length,documentChanged:true};
 }
 function collectOpenAISources(response){
   const urls=new Map();for(const item of response.output||[]){if(item.type==="web_search_call"){for(const s of item.action?.sources||[]){if(s?.url)urls.set(s.url,s.title||s.url)}}}
@@ -242,10 +274,13 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text));
     const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
     const ai=await runAIRevision(prompt,provider);
-    const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));result.updates=(result.updates||[]).filter(u=>allowed.has(Number(u.paragraph_index))&&String(u.new_text||"").trim());
-    const revised=patchDocx(original,result.updates),sources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&x.url);const unique=[...new Map(sources.map(x=>[x.url,x])).values()];
-    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada por IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:result.updates.length});
-    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:result.updates,references:unique,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
+    const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
+    const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
+    const revised=patchDocx(original,effective);
+    const verification=verifyDocxRevision(original,revised,effective);
+    const sources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&x.url),unique=[...new Map(sources.map(x=>[x.url,x])).values()];
+    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:effective.length,verified:true});
+    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:effective,references:unique,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 
