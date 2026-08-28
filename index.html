@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>SIASH | HospitalIA UTIN — Alpha Consolidada v0.12.5</title>
+<title>SIASH | HospitalIA UTIN — Alpha Consolidada v0.12.6</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
   <div class="login-card">
     <div class="brand-mark">SIASH</div>
     <h1>HospitalIA</h1>
-    <p class="muted">UTI Neonatal • Alpha Consolidada v0.12.5</p>
+    <p class="muted">UTI Neonatal • Alpha Consolidada v0.12.6</p>
     <div id="owner-setup" class="owner-setup hidden">
       <div class="security-badge">Primeiro acesso do Proprietário</div>
       <p class="muted">Crie aqui a credencial exclusiva do Administrador Proprietário. Esta etapa aparece somente enquanto não houver proprietário configurado neste navegador.</p>
@@ -373,7 +373,7 @@
     <div class="docs-toolbar">
       <label>Buscar documento<input id="doc-search" placeholder="Título, código ou setor"></label>
       <label>Setor<select id="doc-sector-filter"><option value="">Todos os setores</option></select></label><label>Situação<select id="doc-filter"><option value="">Todos</option><option value="valid">Vigentes</option><option value="review">Revisão necessária / acervo legado</option><option value="soon">Revisão próxima (31–90 dias)</option><option value="priority">Revisão prioritária (≤30 dias)</option><option value="expired">Revisão vencida</option><option value="unknown">Sem data de revisão</option></select></label>
-      <span id="doc-access-badge" class="badge">Acesso documental</span><button id="doc-restore-batch" class="secondary owner-only" type="button">Restaurar 8 POPs migrados</button><input id="doc-restore-files" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden><input id="doc-restore-single-file" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden><button id="doc-new-toggle" class="primary doc-editor-only" type="button">+ Cadastrar documento</button>
+      <span id="doc-access-badge" class="badge">Acesso documental</span><button id="doc-restore-batch" class="secondary owner-only" type="button">Restaurar 8 POPs migrados</button><input id="doc-restore-files" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden><input id="doc-restore-single-file" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden><button id="doc-new-toggle" class="primary doc-editor-only" type="button">+ ADICIONAR DOCUMENTO</button>
     </div>
     <div class="info-box">Use <strong>Documentos do Setor</strong> como lista principal. Para localizar pendências, use o filtro <strong>Situação</strong>. Fluxo: <strong>Consultar vigente → Atualizar com IA → Abrir revisão proposta → Validar e publicar.</strong></div>
   </article>
@@ -390,8 +390,11 @@
   </article>
 
   <article id="doc-new-panel" class="panel hidden">
-    <div class="panel-head"><h3>Novo documento</h3><span>Cadastro inicial</span></div>
+    <div class="panel-head"><h3>Adicionar documento à biblioteca</h3><span>Novo documento institucional</span></div>
     <form id="doc-form" class="form-grid four">
+      <label class="full">Arquivo Word institucional<input id="doc-word" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"><small>Ao selecionar um .docx, a SIASH tentará identificar título, código, revisão e data. Confira os dados antes de salvar.</small></label>
+      <div id="doc-new-detected" class="info-box full">Selecione o Word do novo documento para iniciar o cadastro assistido.</div>
+      <label>Tipo<select id="doc-type"><option>POP</option><option>Protocolo</option><option>Manual</option><option>Formulário</option><option>Outro</option></select></label>
       <label class="span2">Título<input id="doc-title" required placeholder="Ex.: POP Admissão do RN"></label>
       <label>Código<input id="doc-code" required placeholder="POP-UTIN-..."></label>
       <label>Setor<input id="doc-sector" value="UTIN"></label>
@@ -399,10 +402,9 @@
       <label>Data da revisão/emissão<input id="doc-review" type="date"></label>
       <label>Periodicidade<select id="doc-period"><option value="24">2 anos</option><option value="12">1 ano</option><option value="36">3 anos</option></select></label>
       <label>Status do fluxo<select id="doc-workflow"><option>Vigente</option><option>Em elaboração</option><option>Em revisão</option><option>Aguardando aprovação</option></select></label>
-      <label class="span2">PDF para consulta<input id="doc-pdf" type="file" accept=".pdf,application/pdf"><small>Opcional. Fica armazenado localmente neste navegador.</small></label>
-      <label class="span2">Word editável<input id="doc-word" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"><small>Opcional. Use para editar o POP externamente e depois registrar nova revisão.</small></label>
+      <label class="span2">PDF para consulta<input id="doc-pdf" type="file" accept=".pdf,application/pdf"><small>Opcional. O arquivo também será sincronizado na SIASH Cloud.</small></label>
       <label class="full">Observação / histórico inicial<textarea id="doc-note" rows="2" placeholder="Ex.: Emissão inicial"></textarea></label>
-      <div class="full form-actions"><button class="primary" type="submit">Salvar documento</button><button id="doc-new-cancel" class="secondary" type="button">Cancelar</button></div>
+      <div class="full form-actions"><button class="primary" type="submit">ADICIONAR À BIBLIOTECA</button><button id="doc-new-cancel" class="secondary" type="button">Cancelar</button></div>
     </form>
   </article>
   <article class="panel">
@@ -430,7 +432,7 @@
     <div class="info-box"><strong>IA integrada à SIASH Cloud:</strong> o botão acima envia o Word vigente ao provedor configurado e gera uma proposta em Word preservando a estrutura institucional. No Gemini Free Tier, a Pesquisa Google integrada fica desativada para evitar erro de quota; referências sugeridas devem ser conferidas pelo profissional. A versão vigente não é substituída até a validação profissional.</div>
 
     <article class="doc-import-card">
-      <div class="doc-import-head"><span class="doc-step-number">3</span><div><strong>Importação manual (opcional)</strong><p>Use somente se uma revisão tiver sido produzida fora do fluxo automático. Selecione Word ou PDF atualizado; se tiver os dois, pode anexar ambos.</p></div></div>
+      <div class="doc-import-head"><span class="doc-step-number">3</span><div><strong>Importação manual (opcional)</strong><p>Use somente para importar uma nova versão de um documento que já está cadastrado. Este campo não adiciona novos documentos à biblioteca.</p></div></div>
       <form id="doc-revision-form" class="form-grid four ai-result-form">
         <input id="doc-revision-index" type="hidden"><input id="doc-revision-number" type="hidden"><input id="doc-revision-date" type="hidden"><input id="doc-revision-workflow" type="hidden" value="Em revisão"><input id="doc-revision-period" type="hidden" value="24">
         <label class="span2">Word atualizado<input id="doc-revision-word" type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></label>
@@ -447,6 +449,11 @@
     </article>
     <div class="governance-box compact"><strong>Regra:</strong> nenhuma revisão é publicada automaticamente. A versão vigente só muda depois que o profissional abre, confere e aprova a nova versão.</div>
   </article>
+  <dialog id="doc-ai-changes-dialog" class="doc-diff-dialog">
+    <div class="doc-diff-head"><div><h3>Conferência Técnica Assistida</h3><span id="doc-ai-changes-title">Alterações da revisão</span></div><button id="doc-ai-changes-close" class="secondary" type="button">Fechar</button></div>
+    <div class="info-box">Compare <strong>ANTES → DEPOIS → JUSTIFICATIVA → REFERÊNCIA</strong>. A conferência profissional continua obrigatória antes da publicação.</div>
+    <div id="doc-ai-changes-list" class="doc-diff-list"></div>
+  </dialog>
   <article id="doc-history-panel" class="panel hidden">
     <div class="panel-head"><h3>Histórico de versões</h3><span id="doc-history-name">Documento</span></div>
     <div class="table-wrap"><table><thead><tr><th>Revisão</th><th>Data</th><th>Fluxo</th><th>Responsável</th><th>Histórico</th><th>Arquivos</th></tr></thead><tbody id="doc-history-table"></tbody></table></div>

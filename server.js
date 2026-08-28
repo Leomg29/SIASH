@@ -177,7 +177,7 @@ function effectiveAIUpdates(paragraphs,updates,allowed){
     if(!allowed.has(index)||!newText)continue;
     const before=originalByIndex.get(index);if(before==null)continue;
     if(normalizedText(before)===normalizedText(newText))continue;
-    dedup.set(index,{paragraph_index:index,before_text:before,new_text:newText,reason:String(u?.reason||"").trim()});
+    dedup.set(index,{paragraph_index:index,before_text:before,new_text:newText,reason:String(u?.reason||"").trim(),references:Array.isArray(u?.references)?u.references.map(String).filter(Boolean):[]});
   }
   return [...dedup.values()];
 }
@@ -209,7 +209,7 @@ const GEMINI_REVISION_SCHEMA={
   type:"object",
   properties:{
     summary:{type:"string"},
-    updates:{type:"array",items:{type:"object",properties:{paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"}},required:["paragraph_index","new_text","reason"]}},
+    updates:{type:"array",items:{type:"object",properties:{paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"},references:{type:"array",items:{type:"string"}}},required:["paragraph_index","new_text","reason","references"]}},
     references:{type:"array",items:{type:"object",properties:{title:{type:"string"},url:{type:"string"}},required:["title","url"]}}
   },
   required:["summary","updates","references"]
@@ -244,7 +244,7 @@ async function reviseWithGemini(prompt){
 }
 async function reviseWithOpenAI(prompt){
   if(!openaiClient)throw new Error("OPENAI_API_KEY ainda não configurada no servidor.");
-  const response=await openaiClient.responses.create({model:OPENAI_MODEL,tools:[{type:"web_search"}],input:prompt,text:{format:{type:"json_schema",name:"siash_pop_revision",strict:true,schema:{type:"object",additionalProperties:false,properties:{summary:{type:"string"},updates:{type:"array",items:{type:"object",additionalProperties:false,properties:{paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"}},required:["paragraph_index","new_text","reason"]}},references:{type:"array",items:{type:"object",additionalProperties:false,properties:{title:{type:"string"},url:{type:"string"}},required:["title","url"]}}},required:["summary","updates","references"]}}}});
+  const response=await openaiClient.responses.create({model:OPENAI_MODEL,tools:[{type:"web_search"}],input:prompt,text:{format:{type:"json_schema",name:"siash_pop_revision",strict:true,schema:{type:"object",additionalProperties:false,properties:{summary:{type:"string"},updates:{type:"array",items:{type:"object",additionalProperties:false,properties:{paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"},references:{type:"array",items:{type:"string"}}},required:["paragraph_index","new_text","reason","references"]}},references:{type:"array",items:{type:"object",additionalProperties:false,properties:{title:{type:"string"},url:{type:"string"}},required:["title","url"]}}},required:["summary","updates","references"]}}}});
   return {result:JSON.parse(response.output_text||"{}"),sources:collectOpenAISources(response),model:OPENAI_MODEL,provider:"openai"};
 }
 function availableAIProviders(){return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL,searchMode:geminiUseSearch()?"google_search":"off"},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
@@ -272,7 +272,7 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const paragraphs=docxParagraphs(original);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text));
-    const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
+    const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida. Para cada alteração, preencha references com os títulos e/ou URLs das fontes que sustentam aquela alteração; use [] quando não houver fonte específica confiável.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
     const ai=await runAIRevision(prompt,provider);
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
