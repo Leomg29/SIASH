@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.9",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.10",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -325,7 +325,7 @@ async function openDocVersion(docIndex,versionIndex,kind){
  const d=S.docs[docIndex],v=d?.versions?.[versionIndex];if(!v)return alert("Versão não localizada.");
  const key=v[kind+"Key"],path=v[kind+"Path"],name=v[kind+"Name"]||`${d.code}_Rev${v.revision}.${kind==="pdf"?"pdf":"docx"}`;
  try{
-   if(key){let blob=await getDocBlob(key);if(!blob)return alert("Arquivo local não localizado neste navegador.");if(kind==="word"&&v.publicationPrepared){const san=await sanitizePreparedWordBlob(v);if(san.blob)blob=san.blob;if(san.changed)showToast("Word preparado saneado · reabra e confira a paginação",2200)}const url=URL.createObjectURL(blob);if(kind==="pdf"){window.open(url,"_blank");setTimeout(()=>URL.revokeObjectURL(url),60000)}else{const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}return}
+   if(key){let blob=await getDocBlob(key);if(!blob)return alert("Arquivo local não localizado neste navegador.");if(kind==="word"&&v.publicationPrepared){const san=await sanitizePreparedWordBlob(d,v);if(san.blob)blob=san.blob;if(san.changed)showToast("Word preparado saneado · reabra e confira a paginação",2200)}const url=URL.createObjectURL(blob);if(kind==="pdf"){window.open(url,"_blank");setTimeout(()=>URL.revokeObjectURL(url),60000)}else{const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}return}
    if(path){const url=encodeURI(path);if(kind==="pdf")window.open(url,"_blank");else{const a=document.createElement("a");a.href=url;a.download=name||path.split("/").pop();document.body.appendChild(a);a.click();a.remove();setTimeout(()=>a.remove(),50)}return}
    alert("Esta versão não possui arquivo "+kind.toUpperCase()+".")
  }catch(err){console.error(err);alert("Não foi possível abrir o arquivo. Verifique as permissões do navegador.")}
@@ -407,84 +407,70 @@ window.advanceDocVersion=(i,vi)=>{
 
 function xmlEscapeText(s=""){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function currentMonthYearPT(){const m=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];const d=new Date();return `${m[d.getMonth()]}/${d.getFullYear()}`}
-function nextInstitutionalRevisionFromXml(xml){
- const table=(xml.match(/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/i)||[])[0];if(!table)return null;
- const rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);let max=-1;
- for(const row of rows){const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>[...x[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(y=>y[1].replace(/<[^>]+>/g,"")).join("").trim());if(cells.length>=7&&/^\d{1,3}$/.test(cells[0]))max=Math.max(max,Number(cells[0]))}
- return max>=0?String(max+1).padStart(2,"0"):null;
+function historyTableData(xml){
+ const m=xml.match(/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/i);if(!m)return null;
+ const table=m[0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);
+ const info=rows.map(row=>{const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>[...x[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(y=>y[1].replace(/<[^>]+>/g,"")).join("").replace(/\s+/g," ").trim());return {row,cells,revision:(cells.length>=7&&/^\d{1,3}$/.test(cells[0]))?Number(cells[0]):null}});
+ return {table,rows,info};
+}
+function nextInstitutionalRevisionFromXml(xml){const h=historyTableData(xml);if(!h)return null;const nums=h.info.filter(x=>x.revision!==null).map(x=>x.revision);if(!nums.length)return null;return String(Math.max(...nums)+1).padStart(2,"0")}
+function normalizeMonthYearText(s=""){return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g,"").replace(/\//g,"/").toLowerCase()}
+function priorPublishedVersion(d,v){return (d?.versions||[]).filter(x=>x!==v&&x.workflow==="Vigente").slice(-1)[0]||null}
+function shouldReuseLatestInstitutionalRevision(d,v,rowInfo){
+ if(!rowInfo||rowInfo.revision===null)return false;const c=rowInfo.cells||[];
+ const authoredBySiash=/SIASH\s*Docs/i.test(c[4]||"");if(!authoredBySiash)return false;
+ const prior=priorPublishedVersion(d,v);if(!prior)return false;
+ // Regra de causa raiz: várias correções/publicações SIASH no MESMO DIA pertencem ao mesmo
+ // ciclo institucional. Rev. interna do SIASH pode avançar, mas não deve criar 04→05→06 no Word.
+ const sameDay=String(prior.validationDate||prior.reviewDate||"")===todayISO();if(!sameDay)return false;
+ const sameMonth=normalizeMonthYearText(c[1]||"")===normalizeMonthYearText(currentMonthYearPT());
+ return sameMonth;
+}
+function institutionalRevisionPlan(xml,d,v,{ignorePreparedRevision=""}={}){
+ const h=historyTableData(xml);if(!h)return {ok:false,reason:"history-table-not-found"};
+ let revs=h.info.filter(x=>x.revision!==null);
+ if(ignorePreparedRevision)revs=revs.filter(x=>String(x.cells[0]).padStart(2,"0")!==String(ignorePreparedRevision).padStart(2,"0"));
+ if(!revs.length)return {ok:false,reason:"history-revision-row-not-found"};
+ const latest=revs.reduce((a,b)=>a.revision>b.revision?a:b);
+ if(shouldReuseLatestInstitutionalRevision(d,v,latest))return {ok:true,mode:"reuse",revision:String(latest.revision).padStart(2,"0"),rowInfo:latest,history:h};
+ const max=Math.max(...revs.map(x=>x.revision));return {ok:true,mode:"append",revision:String(max+1).padStart(2,"0"),rowInfo:latest,history:h};
 }
 function replaceCellText(tc,text){let first=true,found=false;const escaped=xmlEscapeText(text);let out=tc.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{found=true;if(first){first=false;return a+escaped+c}return a+c});if(!found)out=out.replace(/<w:tcPr[\s\S]*?<\/w:tcPr>/,m=>m+`<w:p><w:r><w:t>${escaped}</w:t></w:r></w:p>`);return out}
 function buildHistoryRowFromTemplate(row,values){let ci=0;return row.replace(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g,tc=>replaceCellText(tc,values[ci++]??""))}
-// v0.13.9: saneamento estrutural da área final de assinatura.
-// Causa raiz confirmada em Word real: parágrafos vazios invisíveis permaneciam DEPOIS de
-// "Assinatura e Carimbo" dentro da mesma célula. Ao crescer o Controle Histórico, esses
-// parágrafos transbordavam sozinhos para uma página nova, que mostrava apenas o cabeçalho.
-// A rotina procura a célula de assinatura em QUALQUER tabela/linha, remove somente os
-// parágrafos vazios posteriores à assinatura e preserva todo texto, imagem, campo e estrutura.
+// v0.13.9+: saneamento estrutural da área final de assinatura.
 function trimLegacyTrailingEmptyParagraphs(xml){
  const tables=[...xml.matchAll(/<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>/g)];
- for(let ti=tables.length-1;ti>=0;ti--){
-  const table=tables[ti][0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)];
-  for(let ri=rows.length-1;ri>=0;ri--){
-   const row=rows[ri][0],cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)];
-   for(let ci=cells.length-1;ci>=0;ci--){
-    const cell=cells[ci][0],plain=[...cell.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1].replace(/<[^>]+>/g," ")).join(" ").replace(/\s+/g," ").trim();
-    if(!/Assinatura\s+(?:e\s+)?Carimbo/i.test(plain))continue;
-    const paras=[...cell.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);
-    if(!paras.length)return xml;
-    let sig=-1;
-    for(let pi=0;pi<paras.length;pi++){const t=[...paras[pi].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1]).join(" ").replace(/\s+/g," ").trim();if(/Assinatura\s+(?:e\s+)?Carimbo/i.test(t))sig=pi}
-    if(sig<0)return xml;
-    const kept=[];let removed=0;
-    for(let pi=0;pi<paras.length;pi++){
-      const para=paras[pi];
-      if(pi<=sig){kept.push(para);continue}
-      const text=[...para.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1]).join("").replace(/&nbsp;/g," ").trim();
-      const hasPayload=/<w:(?:drawing|pict|object|br|fldChar|instrText|hyperlink)(?:\s|>)/.test(para);
-      if(text||hasPayload)kept.push(para);else removed++;
-    }
-    if(!removed)return xml;
-    let rebuilt=cell;for(const para of paras)rebuilt=rebuilt.replace(para,"");
-    rebuilt=rebuilt.replace(/<\/w:tc>$/,kept.join("")+"</w:tc>");
-    return xml.replace(table,table.replace(row,row.replace(cell,rebuilt)));
-   }
-  }
- }
- return xml;
+ for(let ti=tables.length-1;ti>=0;ti--){const table=tables[ti][0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)];for(let ri=rows.length-1;ri>=0;ri--){const row=rows[ri][0],cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)];for(let ci=cells.length-1;ci>=0;ci--){const cell=cells[ci][0],plain=[...cell.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1].replace(/<[^>]+>/g," ")).join(" ").replace(/\s+/g," ").trim();if(!/Assinatura\s+(?:e\s+)?Carimbo/i.test(plain))continue;const paras=[...cell.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);if(!paras.length)return xml;let sig=-1;for(let pi=0;pi<paras.length;pi++){const t=[...paras[pi].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1]).join(" ").replace(/\s+/g," ").trim();if(/Assinatura\s+(?:e\s+)?Carimbo/i.test(t))sig=pi}if(sig<0)return xml;const kept=[];let removed=0;for(let pi=0;pi<paras.length;pi++){const para=paras[pi];if(pi<=sig){kept.push(para);continue}const text=[...para.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1]).join("").replace(/&nbsp;/g," ").trim();const hasPayload=/<w:(?:drawing|pict|object|br|fldChar|instrText|hyperlink)(?:\s|>)/.test(para);if(text||hasPayload)kept.push(para);else removed++}if(!removed)return xml;let rebuilt=cell;for(const para of paras)rebuilt=rebuilt.replace(para,"");rebuilt=rebuilt.replace(/<\/w:tc>$/,kept.join("")+"</w:tc>");return xml.replace(table,table.replace(row,row.replace(cell,rebuilt)))}}}return xml;
 }
-
-async function sanitizePreparedWordBlob(v){
- if(!v?.wordKey)return {changed:false,reason:"no-word-key",blob:null};
- const blob=await getDocBlob(v.wordKey);if(!blob)return {changed:false,reason:"word-not-found",blob:null};
+function removeInstitutionalRevisionRowXml(xml,revision){const h=historyTableData(xml);if(!h)return {ok:false,reason:"history-table-not-found",xml};const target=h.info.find(x=>x.revision!==null&&String(x.revision).padStart(2,"0")===String(revision).padStart(2,"0"));if(!target)return {ok:false,reason:"revision-row-not-found",xml};return {ok:true,xml:xml.replace(h.table,h.table.replace(target.row,""))}}
+async function normalizePreparedInstitutionalCycle(d,v){
+ if(!v?.publicationPrepared||!v?.preparedInstitutionalRevision||!v?.wordKey)return {changed:false,reason:"not-prepared"};const blob=await getDocBlob(v.wordKey);if(!blob)return {changed:false,reason:"word-not-found"};
+ try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {changed:false,reason:"document-xml-missing"};let xml=await file.async("string");const plan=institutionalRevisionPlan(xml,d,v,{ignorePreparedRevision:v.preparedInstitutionalRevision});if(!plan.ok||plan.mode!=="reuse")return {changed:false,reason:plan.reason||"new-cycle"};const prepared=String(v.preparedInstitutionalRevision).padStart(2,"0");if(prepared===plan.revision)return {changed:false,reason:"already-target"};const rm=removeInstitutionalRevisionRowXml(xml,prepared);if(!rm.ok)return {changed:false,reason:rm.reason};xml=trimLegacyTrailingEmptyParagraphs(rm.xml);zip.file("word/document.xml",xml);const fixed=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,fixed);v.publicationPrepared=false;v.publicationPreparedAt="";v.publicationPreparedBy="";v.preparedInstitutionalRevision="";v.institutionalValidity="";v.confirmedFinalPages=0;v.preparedSanitizedAt=nowBR();v.institutionalCycleTarget=plan.revision;save();return {changed:true,reason:"same-day-cycle-normalized",targetRevision:plan.revision,blob:fixed}}catch(err){console.error("Falha ao normalizar ciclo institucional preparado",err);return {changed:false,reason:"cycle-normalize-failed",blob}}
+}
+async function sanitizePreparedWordBlob(d,v){
+ const cycle=await normalizePreparedInstitutionalCycle(d,v);if(cycle.changed){renderDocs();return {changed:true,reason:cycle.reason,blob:cycle.blob,cycleNormalized:true}};
+ if(!v?.wordKey)return {changed:false,reason:"no-word-key",blob:null};const blob=await getDocBlob(v.wordKey);if(!blob)return {changed:false,reason:"word-not-found",blob:null};
  try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {changed:false,reason:"document-xml-missing",blob};let xml=await file.async("string");const cleaned=trimLegacyTrailingEmptyParagraphs(xml);if(cleaned===xml)return {changed:false,reason:"already-clean",blob};zip.file("word/document.xml",cleaned);const fixed=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,fixed);v.preparedSanitizedAt=nowBR();save();return {changed:true,reason:"trailing-empty-paragraphs-removed",blob:fixed}}catch(err){console.error("Falha ao sanear Word preparado",err);return {changed:false,reason:"docx-sanitize-failed",blob}}
 }
-
-function updateInstitutionalHistoryXml(xml,validator,summary,pages){
- const tblRe=/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/i,m=xml.match(tblRe);if(!m)return {ok:false,reason:"history-table-not-found"};
- const table=m[0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);
- const revisionRows=rows.filter(row=>{const c=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>[...x[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(y=>y[1]).join("").trim());return c.length>=7&&/^\d{1,3}$/.test(c[0])});
- if(!revisionRows.length)return {ok:false,reason:"history-revision-row-not-found"};
- const institutionalRevision=nextInstitutionalRevisionFromXml(xml);if(!institutionalRevision)return {ok:false,reason:"institutional-revision-not-detected"};
- const template=revisionRows[revisionRows.length-1],rawNote=String(summary||"Revisão técnico-científica").replace(/\s+/g," ").trim(),note=((rawNote.length>100?rawNote.slice(0,97).replace(/\s+\S*$/," ").trim()+"...":rawNote)||"Revisão técnico-científica");
- const newRow=buildHistoryRowFromTemplate(template,[institutionalRevision,currentMonthYearPT(),String(pages||"A conferir"),note,`SIASH Docs / ${validator}`,validator,validator]);
- let newTable=table;const validityRow=rows.find(r=>/Válido até|Valido ate|Vigente até|Vigente ate/i.test(r));
- if(validityRow)newTable=newTable.replace(validityRow,newRow+validityRow);else newTable=newTable.replace(/<\/w:tbl>$/,newRow+"</w:tbl>");
- const d=new Date(),future=new Date(d.getFullYear()+2,d.getMonth(),d.getDate()),months=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"],validity=`Válido até ${months[future.getMonth()]} de ${future.getFullYear()}, caso não haja alterações técnicas.`;
- if(validityRow){const updatedValidity=replaceCellText(validityRow,validity);newTable=newTable.replace(validityRow,updatedValidity)}
- return {ok:true,xml:xml.replace(table,newTable),institutionalRevision,validity};
+function updateInstitutionalHistoryXml(xml,validator,summary,pages,d,v){
+ const plan=institutionalRevisionPlan(xml,d,v);if(!plan.ok)return {ok:false,reason:plan.reason};const {history:h}=plan,table=h.table,rows=h.rows,revisionRows=h.info.filter(x=>x.revision!==null).map(x=>x.row);if(!revisionRows.length)return {ok:false,reason:"history-revision-row-not-found"};
+ const institutionalRevision=plan.revision,template=plan.rowInfo.row,rawNote=String(summary||"Revisão técnico-científica").replace(/\s+/g," ").trim(),note=((rawNote.length>100?rawNote.slice(0,97).replace(/\s+\S*$/," ").trim()+"...":rawNote)||"Revisão técnico-científica");const values=[institutionalRevision,currentMonthYearPT(),String(pages||"A conferir"),note,`SIASH Docs / ${validator}`,validator,validator];
+ let newTable=table;if(plan.mode==="reuse"){const updated=buildHistoryRowFromTemplate(template,values);newTable=newTable.replace(template,updated)}else{const newRow=buildHistoryRowFromTemplate(template,values),validityRow=rows.find(r=>/Válido até|Valido ate|Vigente até|Vigente ate/i.test(r));if(validityRow)newTable=newTable.replace(validityRow,newRow+validityRow);else newTable=newTable.replace(/<\/w:tbl>$/,newRow+"</w:tbl>")}
+ const dte=new Date(),future=new Date(dte.getFullYear()+2,dte.getMonth(),dte.getDate()),months=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"],validity=`Válido até ${months[future.getMonth()]} de ${future.getFullYear()}, caso não haja alterações técnicas.`;const validityRowAfter=[...newTable.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]).find(r=>/Válido até|Valido ate|Vigente até|Vigente ate/i.test(r));if(validityRowAfter)newTable=newTable.replace(validityRowAfter,replaceCellText(validityRowAfter,validity));
+ return {ok:true,xml:xml.replace(table,newTable),institutionalRevision,validity,mode:plan.mode};
 }
 async function prepareApprovedWord(d,v,validator){
  if(!v?.wordKey)return {updated:false,reason:"no-word-key"};const blob=await getDocBlob(v.wordKey);if(!blob)return {updated:false,reason:"word-not-found"};const name=(v.wordName||"").toLowerCase();if(!name.endsWith(".docx"))return {updated:false,reason:"not-docx"};
- if(v.publicationPrepared&&v.preparedInstitutionalRevision)return {updated:true,institutionalRevision:v.preparedInstitutionalRevision,validity:v.institutionalValidity||"",alreadyPrepared:true};
+ if(v.publicationPrepared&&v.preparedInstitutionalRevision){const norm=await normalizePreparedInstitutionalCycle(d,v);if(!norm.changed)return {updated:true,institutionalRevision:v.preparedInstitutionalRevision,validity:v.institutionalValidity||"",alreadyPrepared:true};}
  try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");
    const cleanSummary=String(v.aiSummary||v.note||"Revisão técnico-científica").replace(/^PROPOSTA gerada por IA e verificada pelo SIASH(?:\s*\([^)]*\))?\.?\s*/i,"").trim()||"Revisão técnico-científica";
    // v0.13.7: primeiro cria o Word FINAL estrutural, incluindo a nova linha do Controle Histórico,
    // mas deixa Nº Páginas como "A conferir". Só depois o profissional abre este Word já expandido
    // e informa a paginação real. Isso evita medir 3 páginas antes de a nova linha criar a 4ª página.
-   const hist=updateInstitutionalHistoryXml(xml,validator,cleanSummary,"A conferir");if(!hist.ok)return {updated:false,reason:hist.reason};xml=trimLegacyTrailingEmptyParagraphs(hist.xml);
+   const hist=updateInstitutionalHistoryXml(xml,validator,cleanSummary,"A conferir",d,v);if(!hist.ok)return {updated:false,reason:hist.reason};xml=trimLegacyTrailingEmptyParagraphs(hist.xml);
    const placeholder="A preencher automaticamente pelo SIASH após validação",escaped=xmlEscapeText(validator);if(xml.includes(placeholder))xml=xml.replace(placeholder,escaped);
    zip.file("word/document.xml",xml);const prepared=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,prepared);
-   v.publicationPrepared=true;v.publicationPreparedAt=nowBR();v.publicationPreparedBy=validator;v.preparedInstitutionalRevision=hist.institutionalRevision;v.institutionalValidity=hist.validity;return {updated:true,institutionalRevision:hist.institutionalRevision,validity:hist.validity};
+   v.publicationPrepared=true;v.publicationPreparedAt=nowBR();v.publicationPreparedBy=validator;v.preparedInstitutionalRevision=hist.institutionalRevision;v.institutionalValidity=hist.validity;v.institutionalPreparationMode=hist.mode||"append";return {updated:true,institutionalRevision:hist.institutionalRevision,validity:hist.validity,mode:hist.mode||"append"};
  }catch(err){console.error("Falha ao preparar Word final para conferência de paginação",err);return {updated:false,reason:"docx-prepare-failed"}}
 }
 function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){
@@ -516,10 +502,10 @@ window.validateDocProposal=async(i,vi)=>{
  if(!confirm(`Confirma que você abriu, conferiu e aprova tecnicamente a revisão ${v.revision} de ${d.code}?\n\nA SIASH agora vai PREPARAR o Word final, acrescentando a próxima revisão institucional no Controle Histórico. O documento ainda NÃO será publicado.`))return;
  const validator=(prompt("Profissional responsável pela aprovação:",SESSION.user||"")||"").trim();if(!validator)return alert("A identificação do profissional responsável é obrigatória.");
  const prep=await prepareApprovedWord(d,v,validator);if(!prep.updated)return alert(`Preparação BLOQUEADA: a SIASH não conseguiu montar com segurança o Word final (${prep.reason}). A versão vigente anterior foi preservada.`);
- save();renderDocs();renderProposalReady(i,vi);alert(`Word final preparado com a Revisão Institucional ${prep.institutionalRevision} e o campo Nº Páginas como “A conferir”.\n\nAgora abra o WORD ATUALIZADO novamente. Confira a quantidade REAL de páginas DEPOIS da inclusão do Controle Histórico. Em seguida clique em FINALIZAR PUBLICAÇÃO.`);
+ save();renderDocs();renderProposalReady(i,vi);alert(`Word final preparado com a Revisão Institucional ${prep.institutionalRevision}${prep.mode==="reuse"?" (consolidada no mesmo ciclo)":""} e o campo Nº Páginas como “A conferir”.\n\nAgora abra o WORD ATUALIZADO novamente. Confira a quantidade REAL de páginas DEPOIS da inclusão do Controle Histórico. Em seguida clique em FINALIZAR PUBLICAÇÃO.`);
 }
 window.finalizePreparedPublication=async(i,vi)=>{
- const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");if(!v.publicationPrepared)return validateDocProposal(i,vi);
+ const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");if(v.publicationPrepared){const norm=await normalizePreparedInstitutionalCycle(d,v);if(norm.changed){renderDocs();renderProposalReady(i,vi);return alert(`A SIASH corrigiu automaticamente uma revisão institucional intermediária do mesmo ciclo (alvo: Rev.${norm.targetRevision}). Abra o Word novamente e clique em PREPARAR PUBLICAÇÃO para consolidar a revisão correta.`)}}if(!v.publicationPrepared)return validateDocProposal(i,vi);
  const validator=(v.publicationPreparedBy||v.validator||SESSION.user||"").trim();if(!validator)return alert("A identificação do profissional responsável não foi preservada. Solicite nova preparação.");
  if(!confirm(`Confirma que você ABRIU o Word preparado da revisão ${v.revision} e conferiu a paginação após a inclusão da nova linha do Controle Histórico?`))return;
  const confirmedPages=(prompt("Informe o NÚMERO TOTAL DE PÁGINAS do Word FINAL que você acabou de conferir:",v.confirmedFinalPages?String(v.confirmedFinalPages):"")||"").trim();if(!/^\d{1,3}$/.test(confirmedPages)||Number(confirmedPages)<1)return alert("Publicação interrompida: informe o número total de páginas do Word final preparado.");
