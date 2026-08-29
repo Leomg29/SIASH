@@ -170,17 +170,21 @@ function patchDocx(buf,updates){
 }
 function normalizedText(s=""){return String(s||"").replace(/\s+/g," ").trim()}
 function normalizeUrl(u=""){try{const x=new URL(String(u||"").trim());return /^https?:$/.test(x.protocol)?x.toString():""}catch(_){return ""}}
-async function verifyReferenceUrls(refs){
-  const out=[];
+async function classifyReferenceUrls(refs){
+  const verified=[],pending=[];
   for(const r of refs||[]){
-    const title=String(r?.title||"").trim(),url=normalizeUrl(r?.url);if(!title||!url)continue;
+    const title=String(r?.title||"").trim(),raw=String(r?.url||"").trim(),url=normalizeUrl(raw);
+    if(!title)continue;
+    if(!url){pending.push({title,url:raw,status:"pending",reason:"URL ausente ou inválida; requer conferência profissional."});continue;}
     try{
       const c=new AbortController(),t=setTimeout(()=>c.abort(),7000);
-      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.12.8 reference-check"}});clearTimeout(t);
-      if(resp.ok)out.push({title,url:resp.url||url});
-    }catch(_){/* referência inacessível não é aceita automaticamente */}
+      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.12.9 reference-check"}});clearTimeout(t);
+      if(resp.ok)verified.push({title,url:resp.url||url,status:"verified"});
+      else pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});
+    }catch(_){pending.push({title,url,status:"pending",reason:"Não foi possível confirmar eletronicamente a fonte; requer conferência profissional."});}
   }
-  return [...new Map(out.map(x=>[x.url,x])).values()];
+  const dedup=a=>[...new Map(a.map(x=>[(x.url||x.title).toLowerCase(),x])).values()];
+  return {verified:dedup(verified),pending:dedup(pending)};
 }
 function referenceSectionInfo(paragraphs){
   const heading=paragraphs.find(p=>/refer[eê]ncias?\s*(bibliogr[aá]ficas?)?/i.test(p.text));if(!heading)return null;
@@ -188,16 +192,19 @@ function referenceSectionInfo(paragraphs){
   const stop=after.find(p=>/(assinatura|carimbo|anexo|controle\s+hist[oó]rico)/i.test(p.text));
   return {headingIndex:heading.index,stopIndex:stop?stop.index:Infinity};
 }
-function appendVerifiedReferences(buf,verifiedRefs){
-  if(!verifiedRefs?.length)throw new Error("Nenhuma referência eletrônica verificável foi encontrada. A proposta foi bloqueada para evitar atualização técnico-científica sem fonte rastreável.");
+function appendReviewedReferences(buf,refs){
+  if(!refs?.length)throw new Error("Nenhuma referência foi retornada para conferência. A proposta foi bloqueada para evitar atualização técnico-científica sem fonte rastreável.");
   const paragraphs=docxParagraphs(buf),sec=referenceSectionInfo(paragraphs);
   if(!sec)throw new Error("A seção de Referências Bibliográficas não foi localizada no Word. A proposta foi bloqueada para preservar a estrutura institucional.");
   const existing=paragraphs.filter(p=>p.index>sec.headingIndex&&p.index<sec.stopIndex).map(p=>normalizedText(p.text).toLowerCase()).join(" ");
-  const additions=verifiedRefs.filter(r=>!existing.includes(normalizedText(r.url).toLowerCase()));
+  const additions=refs.filter(r=>!r.url||!existing.includes(normalizedText(r.url).toLowerCase()));
   if(!additions.length)return {buffer:buf,added:0};
   const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml"),xml=entry.getData().toString("utf8");
   let idx=-1,inserted=false;
-  const refsText=additions.map((r,i)=>`${i+1}. ${r.title}. Disponível em: ${r.url}`).join(" | ");
+  const refsText=additions.map((r,i)=>{
+    const tag=r.status==="verified"?"[FONTE ELETRONICAMENTE VERIFICADA]":"[REQUER CONFERÊNCIA PROFISSIONAL]";
+    return `${i+1}. ${tag} ${r.title}${r.url?`. Disponível em: ${r.url}`:""}`;
+  }).join(" | ");
   const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
     idx++;if(inserted||idx!==sec.headingIndex)return p;inserted=true;
     const newP=`<w:p><w:r><w:t xml:space="preserve">Referências incorporadas na revisão: ${xmlEncode(refsText)}</w:t></w:r></w:p>`;
@@ -314,22 +321,24 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
     if(effective.some(x=>!Array.isArray(x.references)||!x.references.length))throw new Error("A IA propôs alteração técnico-científica sem referência específica. A proposta foi bloqueada para conferência segura.");
     const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&x.url);
-    const unique=await verifyReferenceUrls(candidateSources);
-    if(!unique.length)throw new Error("As referências retornadas pela IA não puderam ser verificadas eletronicamente. A proposta foi bloqueada; o POP vigente permanece inalterado.");
+    const classified=await classifyReferenceUrls(candidateSources);
+    const references=[...classified.verified,...classified.pending];
+    if(!references.length)throw new Error("A IA não retornou referências identificáveis para conferência. A proposta foi bloqueada; o POP vigente permanece inalterado.");
     // Primeiro valida as alterações nos mesmos índices estruturais do Word original.
     // A inserção posterior das referências cria novos parágrafos e desloca índices;
     // por isso não se deve revalidar por índice depois dessa inserção.
     const contentRevised=patchDocx(original,effective);
     const verification=verifyDocxRevision(original,contentRevised,effective);
-    const withRefs=appendVerifiedReferences(contentRevised,unique);
+    const withRefs=appendReviewedReferences(contentRevised,references);
     const revised=withRefs.buffer;
     const finalText=docxParagraphs(revised).map(p=>normalizedText(p.text)).join(" ");
-    const missingRefs=unique.filter(r=>!finalText.includes(normalizedText(r.url)));
+    const missingRefs=references.filter(r=>r.url&&!finalText.includes(normalizedText(r.url)));
     if(missingRefs.length)throw new Error("Falha de integridade ao incorporar as referências verificadas no Word. A proposta não foi liberada.");
     verification.referencesAdded=withRefs.added;
-    verification.referencesVerified=unique.length;
-    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:effective.length,verified:true});
-    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:effective,references:unique,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
+    verification.referencesVerified=classified.verified.length;
+    verification.referencesPending=classified.pending.length;
+    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:effective.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
+    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:effective,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 
