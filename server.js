@@ -199,7 +199,7 @@ async function classifyReferenceUrls(refs){
     if(isGenericReferenceUrl(url)){pending.push({title,url,status:"pending",reason:"O endereço aponta para uma página institucional genérica, não para a publicação citada; requer conferência profissional."});continue;}
     try{
       const c=new AbortController(),t=setTimeout(()=>c.abort(),9000);
-      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.1 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
+      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.2 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
       if(!resp.ok){pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});continue;}
       const finalUrl=resp.url||url,ct=String(resp.headers.get("content-type")||"").toLowerCase();
       if(isGenericReferenceUrl(finalUrl)){pending.push({title,url:finalUrl,status:"pending",reason:"O redirecionamento terminou em página institucional genérica; a publicação específica não foi confirmada."});continue;}
@@ -240,17 +240,48 @@ function extractManagedReferenceTexts(text=""){
     .filter(x=>/^\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\]/i.test(x));
   return parts.length?parts:[t];
 }
-function referenceKeyFromText(text=""){
-  const t=normalizedText(text).replace(/^\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\]\s*/i,"");
-  const m=t.match(/Disponível em:\s*(https?:\/\/\S+)/i);return normalizedText((m&&m[1])||t).toLowerCase();
+function cleanManagedReferenceText(text=""){
+  return normalizedText(text)
+    .replace(/^Refer[eê]ncias?\s+incorporadas?\s+na\s+revis[aã]o\s*:\s*(?:\d+\.\s*)?/i,"")
+    .replace(/^\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\]\s*/i,"")
+    .replace(/\s+—\s+(?:Classificação anterior rebaixada:|O endereço aponta|O redirecionamento terminou|Fonte respondeu HTTP|Não foi possível confirmar|O endereço respondeu)[\s\S]*$/i,"")
+    .trim();
 }
-function sanitizeLegacyManagedReference(text=""){
-  let t=normalizedText(text);const m=t.match(/Disponível em:\s*(https?:\/\/\S+)/i),url=m?normalizeUrl(m[1]):"";
-  if(/^\[FONTE ELETRONICAMENTE VERIFICADA\]/i.test(t)&&(!url||isGenericReferenceUrl(url))){
-    t=t.replace(/^\[FONTE ELETRONICAMENTE VERIFICADA\]/i,"[REQUER CONFERÊNCIA PROFISSIONAL]");
-    if(!/requer conferência profissional/i.test(t.slice(35)))t+=" — Classificação anterior rebaixada: a publicação específica não foi confirmada eletronicamente.";
-  }
-  return t;
+function referenceUrlFromText(text=""){
+  const m=normalizedText(text).match(/Disponível em:\s*(https?:\/\/\S+)/i);
+  return m?normalizeUrl(m[1].replace(/[),.;]+$/,"")):"";
+}
+function referenceTitleFromText(text=""){
+  let t=cleanManagedReferenceText(text).replace(/\s*Disponível em:\s*https?:\/\/\S+[\s\S]*$/i,"").trim();
+  return t.replace(/^\s*\d+\s*[.)-]\s*/,"").trim();
+}
+function referenceVolume(text=""){
+  const t=normalizedText(text).toLowerCase();
+  let m=t.match(/\b(?:v(?:ol(?:ume)?)?\.?\s*|volume\s*)(\d+)\b/i);if(m)return m[1];
+  m=t.match(/(?:[_\/-])v(\d+)(?:[_.\/?#-]|$)/i);return m?m[1]:"";
+}
+function referenceWords(text=""){
+  const stop=new Set(["brasil","ministerio","saude","secretaria","atencao","departamento","acoes","programaticas","estrategicas","brasilia","disponivel","acesso","fonte","requer","conferencia","profissional","edicao","editora"]);
+  return new Set(referenceTokens(referenceTitleFromText(text)).filter(x=>!stop.has(x)));
+}
+function referenceSimilarity(a,b){
+  const va=referenceVolume(a),vb=referenceVolume(b);if(va&&vb&&va!==vb)return 0;
+  if((va&&!vb||vb&&!va)&&String(va||vb)!=="1")return 0;
+  const A=referenceWords(a),B=referenceWords(b);if(!A.size||!B.size)return 0;
+  let inter=0;for(const x of A)if(B.has(x))inter++;
+  return inter/Math.min(A.size,B.size);
+}
+function sameBibliographicWork(a,b){
+  const ua=referenceUrlFromText(a),ub=referenceUrlFromText(b);if(ua&&ub&&ua===ub)return true;
+  return referenceSimilarity(a,b)>=0.72;
+}
+function referenceKeyFromText(text=""){
+  const url=referenceUrlFromText(text);if(url)return url.toLowerCase();
+  const vol=referenceVolume(text),words=[...referenceWords(text)].sort().join(" ");return `${words}|v${vol}`;
+}
+function cleanReferenceForWord(r){
+  const title=referenceTitleFromText(r?.title||"");const url=normalizeUrl(r?.url||"");
+  return normalizedText(`${title}${url?`. Disponível em: ${url}`:""}`);
 }
 function appendReviewedReferences(buf,refs){
   if(!refs?.length)throw new Error("Nenhuma referência foi retornada para conferência. A proposta foi bloqueada para evitar atualização técnico-científica sem fonte rastreável.");
@@ -263,50 +294,60 @@ function appendReviewedReferences(buf,refs){
   if(!heading)throw new Error("A seção de Referências Bibliográficas não foi localizada de forma inequívoca no Word. A proposta foi bloqueada para preservar a estrutura institucional.");
   const stopRx=/^\s*(assinatura(?:\s+e\s+carimbo)?|carimbo|anexo(?:s)?|controle\s+hist[oó]rico)\s*:?\s*$/i;
   const stopIndex=texts.findIndex((t,i)=>i>heading.index&&stopRx.test(normalizedText(t)));
+  const inSection=(i)=>i>heading.index&&(stopIndex<0||i<stopIndex);
 
-  // Normaliza também referências SIASH de versões anteriores que tenham sido inseridas fora da bibliografia.
-  // Elas são removidas de onde estiverem e reinseridas no bloco bibliográfico correto, sem duplicação.
-  const legacyManaged=blocks.map((xmlBlock,index)=>({xmlBlock,index,text:texts[index]})).filter(x=>isManagedReferenceText(x.text));
-  const existingBib=texts.filter((t,i)=>i>heading.index&&(stopIndex<0||i<stopIndex)&&!isManagedReferenceText(t)).map(t=>normalizedText(t).toLowerCase()).join(" ");
-  const managedByKey=new Map();
-  for(const x of legacyManaged)for(const legacyText of extractManagedReferenceTexts(x.text))managedByKey.set(referenceKeyFromText(legacyText),sanitizeLegacyManagedReference(legacyText));
-  for(const r of refs){
-    const tag=r.status==="verified"?"[FONTE ELETRONICAMENTE VERIFICADA]":"[REQUER CONFERÊNCIA PROFISSIONAL]";
-    const reason=r.status==="verified"?"":(r.reason?` — ${r.reason}`:"");
-    const text=`${tag} ${r.title}${r.url?`. Disponível em: ${r.url}`:""}${reason}`;
-    const key=referenceKeyFromText(text);
-    if((r.url&&existingBib.includes(normalizedText(r.url).toLowerCase()))||managedByKey.has(key)){
-      // Se já era referência gerenciada, mantém a versão mais atual do classificador.
-      if(managedByKey.has(key))managedByKey.set(key,text);
-      continue;
-    }
-    managedByKey.set(key,text);
+  // Referências institucionais já existentes permanecem como fonte primária da bibliografia.
+  const institutional=texts.map((text,index)=>({text:normalizedText(text),index})).filter(x=>inSection(x.index)&&x.text&&!isManagedReferenceText(x.text));
+  const managedLegacy=blocks.map((xmlBlock,index)=>({xmlBlock,index,text:texts[index]})).filter(x=>isManagedReferenceText(x.text));
+  const candidates=[];
+  // Legado SIASH é limpo e migrado, mas somente se não duplicar obra institucional já presente.
+  for(const x of managedLegacy)for(const raw of extractManagedReferenceTexts(x.text)){
+    const clean=cleanManagedReferenceText(raw);if(clean)candidates.push({text:clean,source:"legacy"});
   }
-  const managedTexts=[...managedByKey.values()];
-  if(!managedTexts.length)return {buffer:buf,added:0,moved:0,sectionHeadingIndex:heading.index};
-  const managedParagraphs=managedTexts.map(text=>`<w:p><w:r><w:t xml:space="preserve">${xmlEncode(text)}</w:t></w:r></w:p>`).join("");
+  // Novas fontes entram no Word sem rótulos de auditoria. O status permanece apenas na tela/JSON da SIASH.
+  for(const r of refs){const clean=cleanReferenceForWord(r);if(clean)candidates.push({text:clean,source:"current"});}
+
+  const finalManaged=[];
+  for(const c of candidates){
+    if(institutional.some(x=>sameBibliographicWork(c.text,x.text)))continue;
+    const pos=finalManaged.findIndex(x=>sameBibliographicWork(c.text,x.text));
+    if(pos>=0){
+      // Prefere a variante com URL específica e, em empate, a referência da revisão atual.
+      const old=finalManaged[pos],oldUrl=referenceUrlFromText(old.text),newUrl=referenceUrlFromText(c.text);
+      if((!oldUrl&&newUrl)||(c.source==="current"&&old.source!=="current"))finalManaged[pos]=c;
+    }else finalManaged.push(c);
+  }
+  const existingNumbers=institutional.map(x=>{const m=x.text.match(/^\s*(\d+)\s*[.)-]/);return m?Number(m[1]):0}).filter(Boolean);
+  const numberedStyle=existingNumbers.length>0;let nextNumber=numberedStyle?Math.max(...existingNumbers)+1:0;
+  const managedTexts=finalManaged.map(x=>numberedStyle?`${nextNumber++}. ${x.text}`:x.text);
+  // Se a bibliografia usa numeração nativa do Word (w:numPr), replica o pPr da última referência institucional.
+  // Assim o Word continua automaticamente 3, 4... sem gravar números artificiais no texto.
+  const lastInstitutional=institutional.length?institutional[institutional.length-1]:null;
+  const lastInstitutionalBlock=lastInstitutional?blocks[lastInstitutional.index]:"";
+  const pPrMatch=lastInstitutionalBlock.match(/<w:pPr(?:\s[^>]*)?>[\s\S]*?<\/w:pPr>/i);
+  const bibliographyPPr=pPrMatch&&/<w:numPr[\s>]/i.test(pPrMatch[0])?pPrMatch[0]:"";
+  const managedParagraphs=managedTexts.map(text=>`<w:p>${bibliographyPPr}<w:r><w:t xml:space="preserve">${xmlEncode(text)}</w:t></w:r></w:p>`).join("");
 
   let rawIndex=-1,inserted=false;
   const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
-    rawIndex++;
-    const text=paragraphTextFromXml(p);
-    if(isManagedReferenceText(text))return ""; // remove legado/mal posicionado antes de reinserir
+    rawIndex++;const text=paragraphTextFromXml(p);
+    if(isManagedReferenceText(text))return ""; // remove todo legado rotulado, em qualquer posição
     if(!inserted&&stopIndex>=0&&rawIndex===stopIndex){inserted=true;return managedParagraphs+p;}
-    // Sem bloco de assinatura/anexo, insere no fim do corpo do documento após o último parágrafo original.
     if(!inserted&&stopIndex<0&&rawIndex===blocks.length-1){inserted=true;return p+managedParagraphs;}
     return p;
   });
-  if(!inserted)throw new Error("Não foi possível posicionar as referências gerenciadas dentro da seção bibliográfica do Word.");
+  if(!inserted)throw new Error("Não foi possível posicionar as referências dentro da seção bibliográfica do Word.");
   zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));
   const out=zip.toBuffer(),outParas=docxParagraphs(out),outSec=referenceSectionInfo(outParas);
   if(!outSec)throw new Error("Falha de integridade: a seção bibliográfica deixou de ser identificável após a normalização.");
-  const managed=outParas.filter(p=>isManagedReferenceText(p.text));
-  if(managed.length!==managedTexts.length)throw new Error("Falha de integridade: a quantidade de referências gerenciadas gravadas no Word diverge do esperado.");
-  const outside=managed.filter(p=>p.index<=outSec.headingIndex||(outSec.stopIndex!=null&&p.index>=outSec.stopIndex));
-  if(outside.length)throw new Error("Falha de integridade: referência gerenciada permaneceu fora da seção de Referências Bibliográficas.");
-  const keys=new Set(managed.map(p=>referenceKeyFromText(p.text)));
-  if(keys.size!==managed.length)throw new Error("Falha de integridade: foram detectadas referências gerenciadas duplicadas no Word.");
-  return {buffer:out,added:refs.length,moved:legacyManaged.filter(x=>x.index<=heading.index||(stopIndex>=0&&x.index>=stopIndex)).length,sectionHeadingIndex:outSec.headingIndex};
+  const outTexts=outParas.map(p=>p.text);
+  if(outTexts.some(isManagedReferenceText))throw new Error("Falha de integridade: rótulo interno de auditoria permaneceu no Word institucional.");
+  const insertedParas=outParas.filter(p=>p.index>outSec.headingIndex&&(outSec.stopIndex==null||p.index<outSec.stopIndex));
+  for(const text of managedTexts){if(!insertedParas.some(p=>sameBibliographicWork(text,p.text)))throw new Error("Falha de integridade: referência limpa não foi localizada dentro da seção bibliográfica.");}
+  // Auditoria final de duplicidade semântica dentro da bibliografia.
+  const bib=insertedParas.map(p=>p.text).filter(Boolean);
+  for(let i=0;i<bib.length;i++)for(let j=i+1;j<bib.length;j++)if(sameBibliographicWork(bib[i],bib[j]))throw new Error("Falha de integridade: foram detectadas referências bibliográficas semanticamente duplicadas no Word.");
+  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length};
 }
 function effectiveAIUpdates(paragraphs,updates,allowed){
   const originalByIndex=new Map(paragraphs.map(p=>[Number(p.index),String(p.text||"")]));
