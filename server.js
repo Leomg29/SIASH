@@ -176,7 +176,7 @@ async function verifyReferenceUrls(refs){
     const title=String(r?.title||"").trim(),url=normalizeUrl(r?.url);if(!title||!url)continue;
     try{
       const c=new AbortController(),t=setTimeout(()=>c.abort(),7000);
-      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.12.7 reference-check"}});clearTimeout(t);
+      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.12.8 reference-check"}});clearTimeout(t);
       if(resp.ok)out.push({title,url:resp.url||url});
     }catch(_){/* referência inacessível não é aceita automaticamente */}
   }
@@ -316,10 +316,16 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&x.url);
     const unique=await verifyReferenceUrls(candidateSources);
     if(!unique.length)throw new Error("As referências retornadas pela IA não puderam ser verificadas eletronicamente. A proposta foi bloqueada; o POP vigente permanece inalterado.");
+    // Primeiro valida as alterações nos mesmos índices estruturais do Word original.
+    // A inserção posterior das referências cria novos parágrafos e desloca índices;
+    // por isso não se deve revalidar por índice depois dessa inserção.
     const contentRevised=patchDocx(original,effective);
+    const verification=verifyDocxRevision(original,contentRevised,effective);
     const withRefs=appendVerifiedReferences(contentRevised,unique);
     const revised=withRefs.buffer;
-    const verification=verifyDocxRevision(original,revised,effective);
+    const finalText=docxParagraphs(revised).map(p=>normalizedText(p.text)).join(" ");
+    const missingRefs=unique.filter(r=>!finalText.includes(normalizedText(r.url)));
+    if(missingRefs.length)throw new Error("Falha de integridade ao incorporar as referências verificadas no Word. A proposta não foi liberada.");
     verification.referencesAdded=withRefs.added;
     verification.referencesVerified=unique.length;
     await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:effective.length,verified:true});
