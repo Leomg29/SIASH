@@ -184,6 +184,23 @@ function isGenericReferenceUrl(url=""){
     return false;
   }catch(_){return true}
 }
+function isSpecificBibliographicTitle(title=""){
+  const t=normalizedText(title);if(t.length<18)return false;
+  const generic=/^(?:ANVISA|Minist[eé]rio da Sa[uú]de|Sociedade Brasileira de Pediatria|SBP|COFEN|COREN|OMS|WHO|CDC)\s*$/i;
+  return !generic.test(t);
+}
+function wordReferenceEligibility(ref){
+  const title=String(ref?.title||"").trim(),url=normalizeUrl(ref?.url||"");
+  if(!isSpecificBibliographicTitle(title))return {eligible:false,reason:"Título insuficiente para identificar uma publicação técnica específica."};
+  if(!url)return {eligible:false,reason:"URL ausente ou inválida; a fonte fica somente na auditoria da SIASH."};
+  if(isGenericReferenceUrl(url))return {eligible:false,reason:"Página institucional genérica não é referência bibliográfica e não será inserida no Word."};
+  return {eligible:true,reason:"Fonte possui título bibliográfico identificável e endereço específico."};
+}
+function sourceMatchesChangeReference(ref,source){
+  const n=normalizedText(ref).toLowerCase();if(!n)return false;
+  const title=normalizedText(source?.title||"").toLowerCase(),url=normalizedText(source?.url||"").toLowerCase();
+  return !!((title&&(title===n||title.includes(n)||n.includes(title)))||(url&&(url===n||url.includes(n)||n.includes(url))));
+}
 function sourceTitleMatches(title,url,htmlTitle="",bodySample=""){
   const tokens=[...new Set(referenceTokens(title))];if(!tokens.length)return false;
   const hay=normalizedText(`${url} ${htmlTitle} ${bodySample}`).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
@@ -199,7 +216,7 @@ async function classifyReferenceUrls(refs){
     if(isGenericReferenceUrl(url)){pending.push({title,url,status:"pending",reason:"O endereço aponta para uma página institucional genérica, não para a publicação citada; requer conferência profissional."});continue;}
     try{
       const c=new AbortController(),t=setTimeout(()=>c.abort(),9000);
-      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.3 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
+      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.4 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
       if(!resp.ok){pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});continue;}
       const finalUrl=resp.url||url,ct=String(resp.headers.get("content-type")||"").toLowerCase();
       if(isGenericReferenceUrl(finalUrl)){pending.push({title,url:finalUrl,status:"pending",reason:"O redirecionamento terminou em página institucional genérica; a publicação específica não foi confirmada."});continue;}
@@ -213,7 +230,8 @@ async function classifyReferenceUrls(refs){
       else pending.push({title,url:finalUrl,status:"pending",reason:"O endereço respondeu, mas a SIASH não confirmou correspondência suficiente entre a publicação acessada e o título citado."});
     }catch(_){pending.push({title,url,status:"pending",reason:"Não foi possível confirmar eletronicamente a publicação específica; requer conferência profissional."});}
   }
-  const dedup=a=>[...new Map(a.map(x=>[(x.url||x.title).toLowerCase(),x])).values()];
+  const decorate=x=>{const e=wordReferenceEligibility(x);return {...x,wordEligible:e.eligible,wordEligibilityReason:e.reason}};
+  const dedup=a=>[...new Map(a.map(x=>[(x.url||x.title).toLowerCase(),x])).values()].map(decorate);
   return {verified:dedup(verified),pending:dedup(pending)};
 }
 function isReferenceHeading(text=""){
@@ -285,6 +303,8 @@ function cleanReferenceForWord(r){
 }
 function appendReviewedReferences(buf,refs){
   if(!refs?.length)throw new Error("Nenhuma referência foi retornada para conferência. A proposta foi bloqueada para evitar atualização técnico-científica sem fonte rastreável.");
+  const wordRefs=(refs||[]).filter(r=>r?.wordEligible===true);
+  if(!wordRefs.length)throw new Error("Nenhuma fonte bibliográfica específica e elegível foi confirmada para o Word. Páginas institucionais genéricas ficam apenas na auditoria da SIASH; a proposta foi bloqueada.");
   const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)throw new Error("DOCX sem word/document.xml.");
   const xml=entry.getData().toString("utf8");
   const blocks=[...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);
@@ -297,7 +317,10 @@ function appendReviewedReferences(buf,refs){
   const inSection=(i)=>i>heading.index&&(stopIndex<0||i<stopIndex);
 
   // Referências institucionais já existentes permanecem como fonte primária da bibliografia.
-  const institutional=texts.map((text,index)=>({text:normalizedText(text),index})).filter(x=>inSection(x.index)&&x.text&&!isManagedReferenceText(x.text));
+  const genericBibliography=texts.map((text,index)=>({text:normalizedText(text),index})).filter(x=>inSection(x.index)&&x.text&&!!referenceUrlFromText(x.text)&&isGenericReferenceUrl(referenceUrlFromText(x.text)));
+  const genericIndexes=new Set(genericBibliography.map(x=>x.index));
+  // A proposta limpa referências que apontam apenas para homepages/portais genéricos. O vigente original não é alterado.
+  const institutional=texts.map((text,index)=>({text:normalizedText(text),index})).filter(x=>inSection(x.index)&&x.text&&!isManagedReferenceText(x.text)&&!genericIndexes.has(x.index));
   const managedLegacy=blocks.map((xmlBlock,index)=>({xmlBlock,index,text:texts[index]})).filter(x=>isManagedReferenceText(x.text));
   const candidates=[];
   // Legado SIASH é limpo e migrado, mas somente se não duplicar obra institucional já presente.
@@ -305,7 +328,7 @@ function appendReviewedReferences(buf,refs){
     const clean=cleanManagedReferenceText(raw);if(clean)candidates.push({text:clean,source:"legacy"});
   }
   // Novas fontes entram no Word sem rótulos de auditoria. O status permanece apenas na tela/JSON da SIASH.
-  for(const r of refs){const clean=cleanReferenceForWord(r);if(clean)candidates.push({text:clean,source:"current"});}
+  for(const r of wordRefs){const clean=cleanReferenceForWord(r);if(clean)candidates.push({text:clean,source:"current"});}
 
   const finalManaged=[];
   const representedByInstitutional=[];
@@ -334,12 +357,32 @@ function appendReviewedReferences(buf,refs){
   const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
     rawIndex++;const text=paragraphTextFromXml(p);
     if(isManagedReferenceText(text))return ""; // remove todo legado rotulado, em qualquer posição
+    if(genericIndexes.has(rawIndex))return ""; // remove homepage genérica da bibliografia somente na proposta
     if(!inserted&&stopIndex>=0&&rawIndex===stopIndex){inserted=true;return managedParagraphs+p;}
     if(!inserted&&stopIndex<0&&rawIndex===blocks.length-1){inserted=true;return p+managedParagraphs;}
     return p;
   });
   if(!inserted)throw new Error("Não foi possível posicionar as referências dentro da seção bibliográfica do Word.");
   zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));
+  // Se a bibliografia usa números gravados como texto, renumera sequencialmente após remover fontes genéricas.
+  // Isso evita lacunas como 1, 2, 4 quando uma referência imprópria (ex.: homepage) é retirada da proposta.
+  let normalizedXml=zip.getEntry("word/document.xml").getData().toString("utf8");
+  const normBlocks=[...normalizedXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);
+  const normTexts=normBlocks.map(paragraphTextFromXml);
+  const normHeadings=normTexts.map((text,index)=>({text,index})).filter(x=>isReferenceHeading(x.text));
+  const normHeading=normHeadings[normHeadings.length-1];
+  if(normHeading){
+    const normStop=normTexts.findIndex((t,i)=>i>normHeading.index&&stopRx.test(normalizedText(t)));
+    const refIndexes=normTexts.map((t,i)=>({t,i})).filter(x=>x.i>normHeading.index&&(normStop<0||x.i<normStop)&&/^\s*\d+\s*[.)-]\s*/.test(x.t)).map(x=>x.i);
+    if(refIndexes.length>=2){
+      const numberMap=new Map(refIndexes.map((idx,pos)=>[idx,pos+1]));let nidx=-1;
+      normalizedXml=normalizedXml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
+        nidx++;if(!numberMap.has(nidx))return p;const n=numberMap.get(nidx);let changed=false;
+        return p.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{if(changed)return all;const decoded=xmlDecode(b);if(!/^\s*\d+\s*[.)-]\s*/.test(decoded))return all;changed=true;const replaced=decoded.replace(/^\s*\d+\s*[.)-]\s*/,`${n}. `);return a+xmlEncode(replaced)+c});
+      });
+      zip.updateFile("word/document.xml",Buffer.from(normalizedXml,"utf8"));
+    }
+  }
   const out=zip.toBuffer(),outParas=docxParagraphs(out),outSec=referenceSectionInfo(outParas);
   if(!outSec)throw new Error("Falha de integridade: a seção bibliográfica deixou de ser identificável após a normalização.");
   const outTexts=outParas.map(p=>p.text);
@@ -351,7 +394,7 @@ function appendReviewedReferences(buf,refs){
   for(let i=0;i<bib.length;i++)for(let j=i+1;j<bib.length;j++)if(sameBibliographicWork(bib[i],bib[j]))throw new Error("Falha de integridade: foram detectadas referências bibliográficas semanticamente duplicadas no Word.");
   // Cada fonte da revisão precisa estar representada na bibliografia, mas não necessariamente com a mesma URL:
   // quando a obra já existe institucionalmente, a deduplicação semântica é intencional e a referência existente é suficiente.
-  const cleanInputRefs=(refs||[]).map(r=>cleanReferenceForWord(r)).filter(Boolean);
+  const cleanInputRefs=wordRefs.map(r=>cleanReferenceForWord(r)).filter(Boolean);
   const finalBibTexts=insertedParas.map(p=>normalizedText(p.text)).filter(Boolean);
   const coverage=cleanInputRefs.map(refText=>{
     const match=finalBibTexts.find(b=>sameBibliographicWork(refText,b));
@@ -359,7 +402,9 @@ function appendReviewedReferences(buf,refs){
   });
   const uncovered=coverage.filter(x=>!x.represented);
   if(uncovered.length)throw new Error("Falha de integridade: uma ou mais fontes da revisão não ficaram representadas na seção bibliográfica do Word.");
-  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length,coverage,representedByInstitutional:representedByInstitutional.length};
+  const genericRemaining=insertedParas.filter(p=>!!referenceUrlFromText(p.text)&&isGenericReferenceUrl(referenceUrlFromText(p.text)));
+  if(genericRemaining.length)throw new Error("Falha de integridade: referência com URL institucional genérica permaneceu na bibliografia do Word.");
+  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length,coverage,representedByInstitutional:representedByInstitutional.length,genericReferencesRemoved:genericBibliography.length,wordEligibleReferences:wordRefs.length};
 }
 function effectiveAIUpdates(paragraphs,updates,allowed){
   const originalByIndex=new Map(paragraphs.map(p=>[Number(p.index),String(p.text||"")]));
@@ -464,7 +509,8 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const paragraphs=docxParagraphs(original);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text));
-    const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida. Para cada alteração, preencha references com os títulos e/ou URLs das fontes que sustentam aquela alteração; use [] quando não houver fonte específica confiável.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\n9) NÃO mantenha, crie ou altere periodicidade, concentração, diluição, tempo de contato, compatibilidade de equipamento ou outra recomendação operacional específica sem fonte rastreável que sustente exatamente essa afirmação. Se a fonte disponível não sustentar o detalhe, mantenha o texto vigente e sinalize isso no summary.\n10) Cada alteração proposta DEVE possuir pelo menos uma referência específica em references. As referências gerais devem conter título e URL completos e rastreáveis. Não invente URL.\n11) As referências efetivamente utilizadas serão incorporadas pelo SIASH à seção de Referências Bibliográficas do Word, preservando as referências institucionais anteriores.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
+    const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida. Para cada alteração, preencha references com os títulos e/ou URLs das fontes que sustentam aquela alteração; use [] quando não houver fonte específica confiável.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\n9) NÃO mantenha, crie ou altere periodicidade, concentração, diluição, tempo de contato, compatibilidade de equipamento ou outra recomendação operacional específica sem fonte rastreável que sustente exatamente essa afirmação. Se a fonte disponível não sustentar o detalhe, mantenha o texto vigente e sinalize isso no summary.\n10) Cada alteração proposta DEVE possuir pelo menos uma referência específica em references. As referências gerais devem conter título e URL completos e rastreáveis. Não invente URL.\n11) As referências efetivamente utilizadas serão incorporadas pelo SIASH à seção de Referências Bibliográficas do Word, preservando as referências institucionais anteriores.
+12) NUNCA use homepage, portal inicial ou raiz institucional (ex.: gov.br/anvisa/pt-br, sbp.com.br/) como referência bibliográfica. Informe a URL da publicação, diretriz, manual, nota técnica, resolução, artigo ou documento específico. Se não souber a URL específica, não proponha a alteração sustentada apenas por essa homepage.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
     const ai=await runAIRevision(prompt,provider);
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
@@ -477,11 +523,15 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const classified=await classifyReferenceUrls(candidateSources);
     const references=[...classified.verified,...classified.pending];
     if(!references.length)throw new Error("A IA não retornou referências identificáveis para conferência. A proposta foi bloqueada; o POP vigente permanece inalterado.");
+    const traceable=effective.filter(ch=>(ch.references||[]).some(ref=>references.some(src=>src.wordEligible===true&&sourceMatchesChangeReference(ref,src))));
+    const excludedChanges=effective.filter(ch=>!traceable.includes(ch));
+    if(!traceable.length)throw new Error("As alterações propostas ficaram sustentadas apenas por fontes genéricas ou não identificáveis. A SIASH não inseriu essas fontes no Word e bloqueou a proposta para proteger a bibliografia institucional.");
+    // Alterações sem ao menos uma fonte bibliográfica específica são descartadas da proposta; ficam registradas na resposta para auditoria.
     // Primeiro valida as alterações nos mesmos índices estruturais do Word original.
     // A inserção posterior das referências cria novos parágrafos e desloca índices;
     // por isso não se deve revalidar por índice depois dessa inserção.
-    const contentRevised=patchDocx(original,effective);
-    const verification=verifyDocxRevision(original,contentRevised,effective);
+    const contentRevised=patchDocx(original,traceable);
+    const verification=verifyDocxRevision(original,contentRevised,traceable);
     const withRefs=appendReviewedReferences(contentRevised,references);
     const revised=withRefs.buffer;
     // v0.13.3: não exige que toda URL retornada pela IA apareça literalmente no Word.
@@ -491,8 +541,8 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     verification.referencesAdded=withRefs.added;
     verification.referencesVerified=classified.verified.length;
     verification.referencesPending=classified.pending.length;verification.referencePlacement="bibliography_section_verified";
-    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:effective.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
-    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:effective,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
+    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,changes_excluded_unqualified_sources:excludedChanges.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
+    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 
