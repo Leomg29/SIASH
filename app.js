@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.6",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.7",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -434,7 +434,7 @@ async function prepareApprovedWord(d,v,validator){
  if(v.publicationPrepared&&v.preparedInstitutionalRevision)return {updated:true,institutionalRevision:v.preparedInstitutionalRevision,validity:v.institutionalValidity||"",alreadyPrepared:true};
  try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");
    const cleanSummary=String(v.aiSummary||v.note||"Revisão técnico-científica").replace(/^PROPOSTA gerada por IA e verificada pelo SIASH(?:\s*\([^)]*\))?\.?\s*/i,"").trim()||"Revisão técnico-científica";
-   // v0.13.6: primeiro cria o Word FINAL estrutural, incluindo a nova linha do Controle Histórico,
+   // v0.13.7: primeiro cria o Word FINAL estrutural, incluindo a nova linha do Controle Histórico,
    // mas deixa Nº Páginas como "A conferir". Só depois o profissional abre este Word já expandido
    // e informa a paginação real. Isso evita medir 3 páginas antes de a nova linha criar a 4ª página.
    const hist=updateInstitutionalHistoryXml(xml,validator,cleanSummary,"A conferir");if(!hist.ok)return {updated:false,reason:hist.reason};xml=hist.xml;

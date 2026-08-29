@@ -518,13 +518,44 @@ async function runAIRevision(prompt,requested){
   throw new Error(`Nenhum provedor de IA concluiu a revisão. ${errors.join(" | ")}`);
 }
 app.get("/api/ai/status",auth,(req,res)=>res.json({configured:!!(GEMINI_API_KEY||openaiClient),defaultProvider:AI_DEFAULT_PROVIDER,providers:availableAIProviders(),privacyNotice:"No nível gratuito do Gemini, não envie dados identificáveis de pacientes. Referências geradas sem Pesquisa Google devem ser conferidas pelo profissional."}));
+
+function cleanDuplicateSiashHistoryRows(docxBuffer){
+  // v0.13.7: saneia somente duplicatas/intermediárias geradas pelo próprio SIASH no mesmo ciclo.
+  // Regra conservadora: preserva a primeira linha SIASH de cada combinação mês/ano + responsáveis
+  // e remove apenas linhas SIASH posteriores semanticamente equivalentes no mesmo período.
+  // Linhas institucionais humanas/legadas nunca são removidas.
+  const zip=new AdmZip(docxBuffer),entry=zip.getEntry("word/document.xml");
+  if(!entry)return {buffer:docxBuffer,removed:0};
+  let xml=entry.getData().toString("utf8"),removed=0;
+  const tblRe=/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/ig;
+  xml=xml.replace(tblRe,table=>{
+    const rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(m=>m[0]);
+    const seen=new Set();
+    let out=table;
+    for(const row of rows){
+      const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(c=>normalizedText([...c[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(t=>t[1]).join(" ")));
+      if(cells.length<7||!/^\d{1,3}$/.test(cells[0]))continue;
+      const elaboracao=cells[4]||"",verificacao=cells[5]||"",aprovacao=cells[6]||"";
+      if(!/^SIASH Docs\s*\//i.test(elaboracao))continue;
+      const periodo=(cells[1]||"").toLowerCase().replace(/\s+/g,"");
+      const key=[periodo,elaboracao.toLowerCase(),verificacao.toLowerCase(),aprovacao.toLowerCase()].join("|");
+      if(seen.has(key)){out=out.replace(row,"");removed++;}else seen.add(key);
+    }
+    return out;
+  });
+  if(!removed)return {buffer:docxBuffer,removed:0};
+  zip.updateFile("word/document.xml",Buffer.from(xml,"utf8"));
+  return {buffer:zip.toBuffer(),removed};
+}
+
 app.post("/api/ai/revise-pop",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente o Administrador Proprietário pode iniciar revisão com IA."});
   try{
     const {doc_code,doc_title,current_revision,next_revision,file_name,file_base64,provider,correction_request}=req.body||{};
     if(!doc_code||!file_base64)return res.status(400).json({error:"POP/arquivo não informado."});
     const original=Buffer.from(file_base64,"base64");if(original.length>18*1024*1024)return res.status(413).json({error:"Word acima do limite de 18 MB para revisão automática."});
-    const paragraphs=docxParagraphs(original);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});const hygieneBefore=bibliographyHygieneState(original);
+    const historyCleanup=cleanDuplicateSiashHistoryRows(original),baseDocument=historyCleanup.buffer;
+    const paragraphs=docxParagraphs(baseDocument);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});const hygieneBefore=bibliographyHygieneState(baseDocument);
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text));
     const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida. Para cada alteração, preencha references com os títulos e/ou URLs das fontes que sustentam aquela alteração; use [] quando não houver fonte específica confiável.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\n9) NÃO mantenha, crie ou altere periodicidade, concentração, diluição, tempo de contato, compatibilidade de equipamento ou outra recomendação operacional específica sem fonte rastreável que sustente exatamente essa afirmação. Se a fonte disponível não sustentar o detalhe, mantenha o texto vigente e sinalize isso no summary.\n10) Cada alteração proposta DEVE possuir pelo menos uma referência específica em references. As referências gerais devem conter título e URL completos e rastreáveis. Não invente URL.\n11) As referências efetivamente utilizadas serão incorporadas pelo SIASH à seção de Referências Bibliográficas do Word, preservando as referências institucionais anteriores.
@@ -551,12 +582,13 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     // homepages genéricas ou marcadores SIASH legados. Em uma nova atualização, esses resíduos
     // são saneados na PROPOSTA mesmo que a IA conclua que não há mudança técnico-científica necessária.
     if(!traceable.length&&!hygieneBefore.needsHygiene)throw new Error("A revisão não produziu alteração técnico-científica rastreável nem correção bibliográfica necessária. O POP vigente foi preservado.");
-    let contentRevised=original,verification={verified:true,actualChanges:0};
-    if(traceable.length){contentRevised=patchDocx(original,traceable);verification=verifyDocxRevision(original,contentRevised,traceable)}
+    let contentRevised=baseDocument,verification={verified:true,actualChanges:0};
+    if(traceable.length){contentRevised=patchDocx(baseDocument,traceable);verification=verifyDocxRevision(baseDocument,contentRevised,traceable)}
     const withRefs=appendReviewedReferences(contentRevised,references,{allowHygieneOnly:!traceable.length&&hygieneBefore.needsHygiene});
     const hygieneChanges=Number(withRefs.genericReferencesRemoved||0)+Number(withRefs.labelsRemoved||0);
     if(!traceable.length&&hygieneChanges<1)throw new Error("A SIASH não encontrou correção bibliográfica efetiva a aplicar. O POP vigente foi preservado.");
     verification.actualChanges=Number(verification.actualChanges||traceable.length)+hygieneChanges;
+    verification.historyRowsCleaned=Number(historyCleanup.removed||0);
     verification.bibliographyHygieneOnly=!traceable.length&&hygieneChanges>0;
     verification.bibliographyHygieneChanges=hygieneChanges;
     verification.genericReferencesRemoved=Number(withRefs.genericReferencesRemoved||0);
@@ -569,7 +601,7 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     verification.referencesAdded=withRefs.added;
     verification.referencesVerified=classified.verified.length;
     verification.referencesPending=classified.pending.length;verification.referencePlacement="bibliography_section_verified";
-    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
+    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
     res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
