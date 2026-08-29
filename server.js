@@ -199,7 +199,7 @@ async function classifyReferenceUrls(refs){
     if(isGenericReferenceUrl(url)){pending.push({title,url,status:"pending",reason:"O endereço aponta para uma página institucional genérica, não para a publicação citada; requer conferência profissional."});continue;}
     try{
       const c=new AbortController(),t=setTimeout(()=>c.abort(),9000);
-      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.2 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
+      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.3 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
       if(!resp.ok){pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});continue;}
       const finalUrl=resp.url||url,ct=String(resp.headers.get("content-type")||"").toLowerCase();
       if(isGenericReferenceUrl(finalUrl)){pending.push({title,url:finalUrl,status:"pending",reason:"O redirecionamento terminou em página institucional genérica; a publicação específica não foi confirmada."});continue;}
@@ -308,8 +308,10 @@ function appendReviewedReferences(buf,refs){
   for(const r of refs){const clean=cleanReferenceForWord(r);if(clean)candidates.push({text:clean,source:"current"});}
 
   const finalManaged=[];
+  const representedByInstitutional=[];
   for(const c of candidates){
-    if(institutional.some(x=>sameBibliographicWork(c.text,x.text)))continue;
+    const institutionalMatch=institutional.find(x=>sameBibliographicWork(c.text,x.text));
+    if(institutionalMatch){representedByInstitutional.push({candidate:c,matched:institutionalMatch.text});continue;}
     const pos=finalManaged.findIndex(x=>sameBibliographicWork(c.text,x.text));
     if(pos>=0){
       // Prefere a variante com URL específica e, em empate, a referência da revisão atual.
@@ -347,7 +349,17 @@ function appendReviewedReferences(buf,refs){
   // Auditoria final de duplicidade semântica dentro da bibliografia.
   const bib=insertedParas.map(p=>p.text).filter(Boolean);
   for(let i=0;i<bib.length;i++)for(let j=i+1;j<bib.length;j++)if(sameBibliographicWork(bib[i],bib[j]))throw new Error("Falha de integridade: foram detectadas referências bibliográficas semanticamente duplicadas no Word.");
-  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length};
+  // Cada fonte da revisão precisa estar representada na bibliografia, mas não necessariamente com a mesma URL:
+  // quando a obra já existe institucionalmente, a deduplicação semântica é intencional e a referência existente é suficiente.
+  const cleanInputRefs=(refs||[]).map(r=>cleanReferenceForWord(r)).filter(Boolean);
+  const finalBibTexts=insertedParas.map(p=>normalizedText(p.text)).filter(Boolean);
+  const coverage=cleanInputRefs.map(refText=>{
+    const match=finalBibTexts.find(b=>sameBibliographicWork(refText,b));
+    return {reference:refText,represented:!!match,matched:match||""};
+  });
+  const uncovered=coverage.filter(x=>!x.represented);
+  if(uncovered.length)throw new Error("Falha de integridade: uma ou mais fontes da revisão não ficaram representadas na seção bibliográfica do Word.");
+  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length,coverage,representedByInstitutional:representedByInstitutional.length};
 }
 function effectiveAIUpdates(paragraphs,updates,allowed){
   const originalByIndex=new Map(paragraphs.map(p=>[Number(p.index),String(p.text||"")]));
@@ -472,9 +484,10 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const verification=verifyDocxRevision(original,contentRevised,effective);
     const withRefs=appendReviewedReferences(contentRevised,references);
     const revised=withRefs.buffer;
-    const finalText=docxParagraphs(revised).map(p=>normalizedText(p.text)).join(" ");
-    const missingRefs=references.filter(r=>r.url&&!finalText.includes(normalizedText(r.url)));
-    if(missingRefs.length)throw new Error("Falha de integridade ao incorporar as referências verificadas no Word. A proposta não foi liberada.");
+    // v0.13.3: não exige que toda URL retornada pela IA apareça literalmente no Word.
+    // Uma fonte pode já estar representada por uma referência institucional semanticamente equivalente;
+    // nesse caso, repetir a URL criaria justamente a duplicidade que a v0.13.2 passou a impedir.
+    if(!withRefs.coverage?.length||withRefs.coverage.some(x=>!x.represented))throw new Error("Falha de integridade ao consolidar as referências no Word. A proposta não foi liberada.");
     verification.referencesAdded=withRefs.added;
     verification.referencesVerified=classified.verified.length;
     verification.referencesPending=classified.pending.length;verification.referencePlacement="bibliography_section_verified";
