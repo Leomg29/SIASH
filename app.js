@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.7",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.8",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -415,6 +415,22 @@ function nextInstitutionalRevisionFromXml(xml){
 }
 function replaceCellText(tc,text){let first=true,found=false;const escaped=xmlEscapeText(text);let out=tc.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{found=true;if(first){first=false;return a+escaped+c}return a+c});if(!found)out=out.replace(/<w:tcPr[\s\S]*?<\/w:tcPr>/,m=>m+`<w:p><w:r><w:t>${escaped}</w:t></w:r></w:p>`);return out}
 function buildHistoryRowFromTemplate(row,values){let ci=0;return row.replace(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g,tc=>replaceCellText(tc,values[ci++]??""))}
+// v0.13.8: alguns POPs legados terminam a célula "Assinatura e Carimbo" com vários
+// parágrafos vazios. Eles eram invisíveis enquanto havia espaço, mas após inserir uma nova linha
+// no Controle Histórico podiam transbordar sozinhos e criar uma página final vazia com apenas o cabeçalho.
+// Remove SOMENTE parágrafos vazios no final da última célula da última linha da última tabela,
+// e somente quando essa célula contém "Assinatura ... Carimbo". Conteúdo institucional não é removido.
+function trimLegacyTrailingEmptyParagraphs(xml){
+ const tables=[...xml.matchAll(/<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>/g)];if(!tables.length)return xml;
+ const table=tables[tables.length-1][0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)];if(!rows.length)return xml;
+ const row=rows[rows.length-1][0],cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)];if(!cells.length)return xml;
+ const cell=cells[cells.length-1][0],plain=[...cell.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1].replace(/<[^>]+>/g," ")).join(" ").replace(/\s+/g," ").trim();
+ if(!/Assinatura\s+(?:e\s+)?Carimbo/i.test(plain))return xml;
+ let cleaned=cell,previous;
+ const emptyP=/(<w:p(?:\s[^>]*)?>(?:(?!<w:t(?:\s|>))[\s\S])*?<\/w:p>)\s*(?=<\/w:tc>)/;
+ do{previous=cleaned;cleaned=cleaned.replace(emptyP,"")}while(cleaned!==previous);
+ return cleaned===cell?xml:xml.replace(table,table.replace(row,row.replace(cell,cleaned)));
+}
 function updateInstitutionalHistoryXml(xml,validator,summary,pages){
  const tblRe=/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/i,m=xml.match(tblRe);if(!m)return {ok:false,reason:"history-table-not-found"};
  const table=m[0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);
@@ -437,7 +453,7 @@ async function prepareApprovedWord(d,v,validator){
    // v0.13.7: primeiro cria o Word FINAL estrutural, incluindo a nova linha do Controle Histórico,
    // mas deixa Nº Páginas como "A conferir". Só depois o profissional abre este Word já expandido
    // e informa a paginação real. Isso evita medir 3 páginas antes de a nova linha criar a 4ª página.
-   const hist=updateInstitutionalHistoryXml(xml,validator,cleanSummary,"A conferir");if(!hist.ok)return {updated:false,reason:hist.reason};xml=hist.xml;
+   const hist=updateInstitutionalHistoryXml(xml,validator,cleanSummary,"A conferir");if(!hist.ok)return {updated:false,reason:hist.reason};xml=trimLegacyTrailingEmptyParagraphs(hist.xml);
    const placeholder="A preencher automaticamente pelo SIASH após validação",escaped=xmlEscapeText(validator);if(xml.includes(placeholder))xml=xml.replace(placeholder,escaped);
    zip.file("word/document.xml",xml);const prepared=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,prepared);
    v.publicationPrepared=true;v.publicationPreparedAt=nowBR();v.publicationPreparedBy=validator;v.preparedInstitutionalRevision=hist.institutionalRevision;v.institutionalValidity=hist.validity;return {updated:true,institutionalRevision:hist.institutionalRevision,validity:hist.validity};

@@ -1,6 +1,6 @@
 {
   "name": "siash-cloud",
-  "version": "0.13.7",
+  "version": "0.13.8",
   "private": true,
   "scripts": {
     "start": "node server.js"
