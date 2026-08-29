@@ -429,9 +429,9 @@ function updateInstitutionalHistoryXml(xml,validator,summary,pages){
  if(validityRow){const updatedValidity=replaceCellText(validityRow,validity);newTable=newTable.replace(validityRow,updatedValidity)}
  return {ok:true,xml:xml.replace(table,newTable),institutionalRevision,validity};
 }
-async function finalizeApprovedWord(d,v,validator){
+async function finalizeApprovedWord(d,v,validator,confirmedPages){
  if(!v?.wordKey)return {updated:false,reason:"no-word-key"};const blob=await getDocBlob(v.wordKey);if(!blob)return {updated:false,reason:"word-not-found"};const name=(v.wordName||"").toLowerCase();if(!name.endsWith(".docx"))return {updated:false,reason:"not-docx"};
- try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");let pages="";try{const appXml=await zip.file("docProps/app.xml")?.async("string");pages=(appXml?.match(/<Pages>(\d+)<\/Pages>/)||[])[1]||""}catch(_){ }
+ try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");const pages=String(confirmedPages||"").trim();if(!/^\d{1,3}$/.test(pages)||Number(pages)<1)return {updated:false,reason:"page-count-not-confirmed"};
    const cleanSummary=String(v.aiSummary||v.note||"Revisão técnico-científica").replace(/^PROPOSTA gerada por IA e verificada pelo SIASH(?:\s*\([^)]*\))?\.?\s*/i,"").trim()||"Revisão técnico-científica";
    const hist=updateInstitutionalHistoryXml(xml,validator,cleanSummary,pages);if(!hist.ok)return {updated:false,reason:hist.reason};xml=hist.xml;
    const placeholder="A preencher automaticamente pelo SIASH após validação",escaped=xmlEscapeText(validator);if(xml.includes(placeholder))xml=xml.replace(placeholder,escaped);
@@ -445,7 +445,8 @@ window.validateDocProposal=async(i,vi)=>{
  const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");if(!(v.wordKey||v.wordPath))return alert("Validação bloqueada: a publicação institucional exige o Word atualizado para registrar a nova revisão no Controle Histórico.");
  if(!confirm(`Confirma que você abriu, conferiu e aprova a revisão ${v.revision} de ${d.code}?\n\nAo publicar, a SIASH acrescentará automaticamente a PRÓXIMA REVISÃO INSTITUCIONAL no Controle Histórico do Word, com a data atual e nova validade bienal.`))return;
  const validator=(prompt("Profissional responsável pela aprovação:",SESSION.user||"")||"").trim();if(!validator)return alert("A identificação do profissional responsável é obrigatória.");
- const finalization=await finalizeApprovedWord(d,v,validator);if(!finalization.updated)return alert(`Publicação BLOQUEADA: a SIASH não conseguiu atualizar com segurança o Controle Histórico institucional do Word (${finalization.reason}). A versão vigente anterior foi preservada.`);
+ const confirmedPages=(prompt("Confira o Word atualizado e informe o NÚMERO TOTAL DE PÁGINAS do documento que será publicado:","")||"").trim();if(!/^\d{1,3}$/.test(confirmedPages)||Number(confirmedPages)<1)return alert("Publicação interrompida: informe o número total de páginas após conferir o Word atualizado.");
+ const finalization=await finalizeApprovedWord(d,v,validator,confirmedPages);if(!finalization.updated)return alert(`Publicação BLOQUEADA: a SIASH não conseguiu atualizar com segurança o Controle Histórico institucional do Word (${finalization.reason}). A versão vigente anterior foi preservada.`);
  d.versions.forEach((x,xv)=>{if(xv!==vi&&x.workflow==="Vigente")x.workflow="Obsoleto"});v.workflow="Vigente";v.validator=validator;v.approver=validator;v.validationDate=todayISO();v.updatedAt=nowBR();d.reviewRequired=false;
  v.note=`${v.note||"Revisão técnico-científica."} Revisão institucional ${finalization.institutionalRevision} registrada automaticamente no Word em ${dateBR(todayISO())}.`;
  auditAdmin(`SIASH Docs: ${d.code} revisão interna ${v.revision} validada e publicada por ${validator} · revisão institucional ${finalization.institutionalRevision} registrada no Word.`);save();showToast(`Publicado · Word institucional Rev.${finalization.institutionalRevision} atualizado`,2600);renderDocs();

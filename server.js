@@ -170,47 +170,92 @@ function patchDocx(buf,updates){
 }
 function normalizedText(s=""){return String(s||"").replace(/\s+/g," ").trim()}
 function normalizeUrl(u=""){try{const x=new URL(String(u||"").trim());return /^https?:$/.test(x.protocol)?x.toString():""}catch(_){return ""}}
+function referenceTokens(s=""){
+  const stop=new Set(["para","com","sem","das","dos","de","da","do","em","um","uma","e","a","o","as","os","ao","aos","à","às","na","no","nas","nos","por","sobre","the","and","for","of","in","to","on"]);
+  return normalizedText(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^a-z0-9\s]/g," ").split(/\s+/).filter(x=>x.length>=4&&!stop.has(x));
+}
+function isGenericReferenceUrl(url=""){
+  try{
+    const u=new URL(url),path=u.pathname.replace(/\/+$/,""),parts=path.split("/").filter(Boolean);
+    const genericLast=new Set(["pt-br","en","home","inicio","index","portal","site"]);
+    if(!parts.length)return true;
+    if(parts.length===1&&genericLast.has(parts[0].toLowerCase()))return true;
+    if(parts.length<=2&&genericLast.has(parts[parts.length-1].toLowerCase()))return true;
+    return false;
+  }catch(_){return true}
+}
+function sourceTitleMatches(title,url,htmlTitle="",bodySample=""){
+  const tokens=[...new Set(referenceTokens(title))];if(!tokens.length)return false;
+  const hay=normalizedText(`${url} ${htmlTitle} ${bodySample}`).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+  const hits=tokens.filter(t=>hay.includes(t)).length;
+  return hits>=Math.min(2,tokens.length);
+}
 async function classifyReferenceUrls(refs){
   const verified=[],pending=[];
   for(const r of refs||[]){
     const title=String(r?.title||"").trim(),raw=String(r?.url||"").trim(),url=normalizeUrl(raw);
     if(!title)continue;
     if(!url){pending.push({title,url:raw,status:"pending",reason:"URL ausente ou inválida; requer conferência profissional."});continue;}
+    if(isGenericReferenceUrl(url)){pending.push({title,url,status:"pending",reason:"O endereço aponta para uma página institucional genérica, não para a publicação citada; requer conferência profissional."});continue;}
     try{
-      const c=new AbortController(),t=setTimeout(()=>c.abort(),7000);
-      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.12.9 reference-check"}});clearTimeout(t);
-      if(resp.ok)verified.push({title,url:resp.url||url,status:"verified"});
-      else pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});
-    }catch(_){pending.push({title,url,status:"pending",reason:"Não foi possível confirmar eletronicamente a fonte; requer conferência profissional."});}
+      const c=new AbortController(),t=setTimeout(()=>c.abort(),9000);
+      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.0 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
+      if(!resp.ok){pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});continue;}
+      const finalUrl=resp.url||url,ct=String(resp.headers.get("content-type")||"").toLowerCase();
+      if(isGenericReferenceUrl(finalUrl)){pending.push({title,url:finalUrl,status:"pending",reason:"O redirecionamento terminou em página institucional genérica; a publicação específica não foi confirmada."});continue;}
+      let evidence="",htmlTitle="";
+      if(ct.includes("text/html")){
+        const txt=(await resp.text()).slice(0,250000);htmlTitle=((txt.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||"").replace(/<[^>]+>/g," ");evidence=txt.replace(/<script[\s\S]*?<\/script>/gi," ").replace(/<style[\s\S]*?<\/style>/gi," ").replace(/<[^>]+>/g," ").slice(0,120000);
+      }else if(ct.includes("application/pdf")||/\.pdf(?:$|[?#])/i.test(finalUrl)){
+        evidence=decodeURIComponent(finalUrl);
+      }else evidence=decodeURIComponent(finalUrl);
+      if(sourceTitleMatches(title,finalUrl,htmlTitle,evidence))verified.push({title,url:finalUrl,status:"verified",reason:"Publicação específica acessível e título/endereço compatíveis com a referência informada."});
+      else pending.push({title,url:finalUrl,status:"pending",reason:"O endereço respondeu, mas a SIASH não confirmou correspondência suficiente entre a publicação acessada e o título citado."});
+    }catch(_){pending.push({title,url,status:"pending",reason:"Não foi possível confirmar eletronicamente a publicação específica; requer conferência profissional."});}
   }
   const dedup=a=>[...new Map(a.map(x=>[(x.url||x.title).toLowerCase(),x])).values()];
   return {verified:dedup(verified),pending:dedup(pending)};
 }
+function isReferenceHeading(text=""){
+  const t=normalizedText(text).replace(/^[\s\u2022\-]+/,"");
+  return /^(?:\d{1,2}\s*[.)-]?\s*)?refer[eê]ncias?\s+bibliogr[aá]ficas?\s*:?$/i.test(t);
+}
 function referenceSectionInfo(paragraphs){
-  const heading=paragraphs.find(p=>/refer[eê]ncias?\s*(bibliogr[aá]ficas?)?/i.test(p.text));if(!heading)return null;
+  const headings=paragraphs.filter(p=>isReferenceHeading(p.text)),heading=headings[headings.length-1];if(!heading)return null;
   const after=paragraphs.filter(p=>p.index>heading.index);
-  const stop=after.find(p=>/(assinatura|carimbo|anexo|controle\s+hist[oó]rico)/i.test(p.text));
-  return {headingIndex:heading.index,stopIndex:stop?stop.index:Infinity};
+  const stop=after.find(p=>/^\s*(assinatura(?:\s+e\s+carimbo)?|carimbo|anexo(?:s)?|controle\s+hist[oó]rico)\s*:?\s*$/i.test(normalizedText(p.text)));
+  const sectionParas=paragraphs.filter(p=>p.index>heading.index&&(!stop||p.index<stop.index));
+  return {headingIndex:heading.index,stopIndex:stop?stop.index:null,lastSectionIndex:sectionParas.length?sectionParas[sectionParas.length-1].index:heading.index};
 }
 function appendReviewedReferences(buf,refs){
   if(!refs?.length)throw new Error("Nenhuma referência foi retornada para conferência. A proposta foi bloqueada para evitar atualização técnico-científica sem fonte rastreável.");
   const paragraphs=docxParagraphs(buf),sec=referenceSectionInfo(paragraphs);
-  if(!sec)throw new Error("A seção de Referências Bibliográficas não foi localizada no Word. A proposta foi bloqueada para preservar a estrutura institucional.");
-  const existing=paragraphs.filter(p=>p.index>sec.headingIndex&&p.index<sec.stopIndex).map(p=>normalizedText(p.text).toLowerCase()).join(" ");
+  if(!sec)throw new Error("A seção de Referências Bibliográficas não foi localizada de forma inequívoca no Word. A proposta foi bloqueada para preservar a estrutura institucional.");
+  const existing=paragraphs.filter(p=>p.index>sec.headingIndex&&(sec.stopIndex==null||p.index<sec.stopIndex)).map(p=>normalizedText(p.text).toLowerCase()).join(" ");
   const additions=refs.filter(r=>!r.url||!existing.includes(normalizedText(r.url).toLowerCase()));
-  if(!additions.length)return {buffer:buf,added:0};
+  if(!additions.length)return {buffer:buf,added:0,sectionHeadingIndex:sec.headingIndex};
   const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml"),xml=entry.getData().toString("utf8");
-  let idx=-1,inserted=false;
-  const refsText=additions.map((r,i)=>{
+  const newParagraphs=additions.map((r,i)=>{
     const tag=r.status==="verified"?"[FONTE ELETRONICAMENTE VERIFICADA]":"[REQUER CONFERÊNCIA PROFISSIONAL]";
-    return `${i+1}. ${tag} ${r.title}${r.url?`. Disponível em: ${r.url}`:""}`;
-  }).join(" | ");
+    const reason=r.status==="verified"?"":(r.reason?` — ${r.reason}`:"");
+    const text=`${tag} ${r.title}${r.url?`. Disponível em: ${r.url}`:""}${reason}`;
+    return `<w:p><w:r><w:t xml:space="preserve">${xmlEncode(text)}</w:t></w:r></w:p>`;
+  }).join("");
+  let idx=-1,inserted=false;
   const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
-    idx++;if(inserted||idx!==sec.headingIndex)return p;inserted=true;
-    const newP=`<w:p><w:r><w:t xml:space="preserve">Referências incorporadas na revisão: ${xmlEncode(refsText)}</w:t></w:r></w:p>`;
-    return p+newP;
+    idx++;
+    if(inserted)return p;
+    if(sec.stopIndex!=null&&idx===sec.stopIndex){inserted=true;return newParagraphs+p;}
+    if(sec.stopIndex==null&&idx===sec.lastSectionIndex){inserted=true;return p+newParagraphs;}
+    return p;
   });
-  zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return {buffer:zip.toBuffer(),added:additions.length};
+  if(!inserted)throw new Error("Não foi possível posicionar as novas referências dentro da seção bibliográfica do Word.");
+  zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));
+  const out=zip.toBuffer(),outParas=docxParagraphs(out),outSec=referenceSectionInfo(outParas);
+  if(!outSec)throw new Error("Falha de integridade: a seção bibliográfica deixou de ser identificável após a inserção.");
+  const insertedOutside=outParas.filter(p=>/\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\]/.test(p.text)).some(p=>p.index<=outSec.headingIndex||(outSec.stopIndex!=null&&p.index>=outSec.stopIndex));
+  if(insertedOutside)throw new Error("Falha de integridade: referência nova foi posicionada fora da seção de Referências Bibliográficas.");
+  return {buffer:out,added:additions.length,sectionHeadingIndex:outSec.headingIndex};
 }
 function effectiveAIUpdates(paragraphs,updates,allowed){
   const originalByIndex=new Map(paragraphs.map(p=>[Number(p.index),String(p.text||"")]));
@@ -320,7 +365,11 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
     if(effective.some(x=>!Array.isArray(x.references)||!x.references.length))throw new Error("A IA propôs alteração técnico-científica sem referência específica. A proposta foi bloqueada para conferência segura.");
-    const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&x.url);
+    const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&(x.title||x.url));
+    const norm=s=>normalizedText(s).toLowerCase();
+    const sourceKeys=candidateSources.flatMap(x=>[norm(x.title),norm(x.url)]).filter(Boolean);
+    const unlinked=effective.filter(ch=>!(ch.references||[]).some(ref=>{const n=norm(ref);return sourceKeys.some(k=>k===n||k.includes(n)||n.includes(k))}));
+    if(unlinked.length)throw new Error(`A IA citou referência específica em alteração(ões), mas não forneceu os dados bibliográficos correspondentes para rastreamento (parágrafos: ${unlinked.map(x=>x.paragraph_index).join(", ")}). A proposta foi bloqueada.`);
     const classified=await classifyReferenceUrls(candidateSources);
     const references=[...classified.verified,...classified.pending];
     if(!references.length)throw new Error("A IA não retornou referências identificáveis para conferência. A proposta foi bloqueada; o POP vigente permanece inalterado.");
@@ -336,7 +385,7 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     if(missingRefs.length)throw new Error("Falha de integridade ao incorporar as referências verificadas no Word. A proposta não foi liberada.");
     verification.referencesAdded=withRefs.added;
     verification.referencesVerified=classified.verified.length;
-    verification.referencesPending=classified.pending.length;
+    verification.referencesPending=classified.pending.length;verification.referencePlacement="bibliography_section_verified";
     await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:effective.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
     res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:effective,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
