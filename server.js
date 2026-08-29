@@ -216,7 +216,7 @@ async function classifyReferenceUrls(refs){
     if(isGenericReferenceUrl(url)){pending.push({title,url,status:"pending",reason:"O endereço aponta para uma página institucional genérica, não para a publicação citada; requer conferência profissional."});continue;}
     try{
       const c=new AbortController(),t=setTimeout(()=>c.abort(),9000);
-      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.4 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
+      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.5 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
       if(!resp.ok){pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});continue;}
       const finalUrl=resp.url||url,ct=String(resp.headers.get("content-type")||"").toLowerCase();
       if(isGenericReferenceUrl(finalUrl)){pending.push({title,url:finalUrl,status:"pending",reason:"O redirecionamento terminou em página institucional genérica; a publicação específica não foi confirmada."});continue;}
@@ -323,9 +323,18 @@ function appendReviewedReferences(buf,refs){
   const institutional=texts.map((text,index)=>({text:normalizedText(text),index})).filter(x=>inSection(x.index)&&x.text&&!isManagedReferenceText(x.text)&&!genericIndexes.has(x.index));
   const managedLegacy=blocks.map((xmlBlock,index)=>({xmlBlock,index,text:texts[index]})).filter(x=>isManagedReferenceText(x.text));
   const candidates=[];
-  // Legado SIASH é limpo e migrado, mas somente se não duplicar obra institucional já presente.
+  // Legado SIASH é limpo e migrado, mas passa pela MESMA regra de elegibilidade das fontes atuais.
+  // Correção v0.13.5: versões antigas podiam guardar, em um único parágrafo fora da bibliografia,
+  // uma homepage genérica + uma fonte específica. A v0.13.4 removia o parágrafo original, porém
+  // reintroduzia a homepage ao transformar todo legado em candidato sem reclassificá-lo.
+  const legacyRejected=[];
   for(const x of managedLegacy)for(const raw of extractManagedReferenceTexts(x.text)){
-    const clean=cleanManagedReferenceText(raw);if(clean)candidates.push({text:clean,source:"legacy"});
+    const clean=cleanManagedReferenceText(raw);
+    if(!clean)continue;
+    const legacyRef={title:referenceTitleFromText(clean),url:referenceUrlFromText(clean)};
+    const eligibility=wordReferenceEligibility(legacyRef);
+    if(!eligibility.eligible){legacyRejected.push({text:clean,reason:eligibility.reason});continue;}
+    candidates.push({text:clean,source:"legacy"});
   }
   // Novas fontes entram no Word sem rótulos de auditoria. O status permanece apenas na tela/JSON da SIASH.
   for(const r of wordRefs){const clean=cleanReferenceForWord(r);if(clean)candidates.push({text:clean,source:"current"});}
@@ -404,7 +413,7 @@ function appendReviewedReferences(buf,refs){
   if(uncovered.length)throw new Error("Falha de integridade: uma ou mais fontes da revisão não ficaram representadas na seção bibliográfica do Word.");
   const genericRemaining=insertedParas.filter(p=>!!referenceUrlFromText(p.text)&&isGenericReferenceUrl(referenceUrlFromText(p.text)));
   if(genericRemaining.length)throw new Error("Falha de integridade: referência com URL institucional genérica permaneceu na bibliografia do Word.");
-  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length,coverage,representedByInstitutional:representedByInstitutional.length,genericReferencesRemoved:genericBibliography.length,wordEligibleReferences:wordRefs.length};
+  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length,coverage,representedByInstitutional:representedByInstitutional.length,genericReferencesRemoved:genericBibliography.length+legacyRejected.length,legacyGenericReferencesRejected:legacyRejected.length,wordEligibleReferences:wordRefs.length};
 }
 function effectiveAIUpdates(paragraphs,updates,allowed){
   const originalByIndex=new Map(paragraphs.map(p=>[Number(p.index),String(p.text||"")]));
