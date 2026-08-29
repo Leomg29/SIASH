@@ -169,6 +169,42 @@ function patchDocx(buf,updates){
   zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return zip.toBuffer();
 }
 function normalizedText(s=""){return String(s||"").replace(/\s+/g," ").trim()}
+function normalizeUrl(u=""){try{const x=new URL(String(u||"").trim());return /^https?:$/.test(x.protocol)?x.toString():""}catch(_){return ""}}
+async function verifyReferenceUrls(refs){
+  const out=[];
+  for(const r of refs||[]){
+    const title=String(r?.title||"").trim(),url=normalizeUrl(r?.url);if(!title||!url)continue;
+    try{
+      const c=new AbortController(),t=setTimeout(()=>c.abort(),7000);
+      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.12.7 reference-check"}});clearTimeout(t);
+      if(resp.ok)out.push({title,url:resp.url||url});
+    }catch(_){/* referência inacessível não é aceita automaticamente */}
+  }
+  return [...new Map(out.map(x=>[x.url,x])).values()];
+}
+function referenceSectionInfo(paragraphs){
+  const heading=paragraphs.find(p=>/refer[eê]ncias?\s*(bibliogr[aá]ficas?)?/i.test(p.text));if(!heading)return null;
+  const after=paragraphs.filter(p=>p.index>heading.index);
+  const stop=after.find(p=>/(assinatura|carimbo|anexo|controle\s+hist[oó]rico)/i.test(p.text));
+  return {headingIndex:heading.index,stopIndex:stop?stop.index:Infinity};
+}
+function appendVerifiedReferences(buf,verifiedRefs){
+  if(!verifiedRefs?.length)throw new Error("Nenhuma referência eletrônica verificável foi encontrada. A proposta foi bloqueada para evitar atualização técnico-científica sem fonte rastreável.");
+  const paragraphs=docxParagraphs(buf),sec=referenceSectionInfo(paragraphs);
+  if(!sec)throw new Error("A seção de Referências Bibliográficas não foi localizada no Word. A proposta foi bloqueada para preservar a estrutura institucional.");
+  const existing=paragraphs.filter(p=>p.index>sec.headingIndex&&p.index<sec.stopIndex).map(p=>normalizedText(p.text).toLowerCase()).join(" ");
+  const additions=verifiedRefs.filter(r=>!existing.includes(normalizedText(r.url).toLowerCase()));
+  if(!additions.length)return {buffer:buf,added:0};
+  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml"),xml=entry.getData().toString("utf8");
+  let idx=-1,inserted=false;
+  const refsText=additions.map((r,i)=>`${i+1}. ${r.title}. Disponível em: ${r.url}`).join(" | ");
+  const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
+    idx++;if(inserted||idx!==sec.headingIndex)return p;inserted=true;
+    const newP=`<w:p><w:r><w:t xml:space="preserve">Referências incorporadas na revisão: ${xmlEncode(refsText)}</w:t></w:r></w:p>`;
+    return p+newP;
+  });
+  zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return {buffer:zip.toBuffer(),added:additions.length};
+}
 function effectiveAIUpdates(paragraphs,updates,allowed){
   const originalByIndex=new Map(paragraphs.map(p=>[Number(p.index),String(p.text||"")]));
   const dedup=new Map();
@@ -272,13 +308,20 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const paragraphs=docxParagraphs(original);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text));
-    const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida. Para cada alteração, preencha references com os títulos e/ou URLs das fontes que sustentam aquela alteração; use [] quando não houver fonte específica confiável.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
+    const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida. Para cada alteração, preencha references com os títulos e/ou URLs das fontes que sustentam aquela alteração; use [] quando não houver fonte específica confiável.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\n9) NÃO mantenha, crie ou altere periodicidade, concentração, diluição, tempo de contato, compatibilidade de equipamento ou outra recomendação operacional específica sem fonte rastreável que sustente exatamente essa afirmação. Se a fonte disponível não sustentar o detalhe, mantenha o texto vigente e sinalize isso no summary.\n10) Cada alteração proposta DEVE possuir pelo menos uma referência específica em references. As referências gerais devem conter título e URL completos e rastreáveis. Não invente URL.\n11) As referências efetivamente utilizadas serão incorporadas pelo SIASH à seção de Referências Bibliográficas do Word, preservando as referências institucionais anteriores.\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
     const ai=await runAIRevision(prompt,provider);
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
-    const revised=patchDocx(original,effective);
+    if(effective.some(x=>!Array.isArray(x.references)||!x.references.length))throw new Error("A IA propôs alteração técnico-científica sem referência específica. A proposta foi bloqueada para conferência segura.");
+    const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&x.url);
+    const unique=await verifyReferenceUrls(candidateSources);
+    if(!unique.length)throw new Error("As referências retornadas pela IA não puderam ser verificadas eletronicamente. A proposta foi bloqueada; o POP vigente permanece inalterado.");
+    const contentRevised=patchDocx(original,effective);
+    const withRefs=appendVerifiedReferences(contentRevised,unique);
+    const revised=withRefs.buffer;
     const verification=verifyDocxRevision(original,revised,effective);
-    const sources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&x.url),unique=[...new Map(sources.map(x=>[x.url,x])).values()];
+    verification.referencesAdded=withRefs.added;
+    verification.referencesVerified=unique.length;
     await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:effective.length,verified:true});
     res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:effective,references:unique,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
