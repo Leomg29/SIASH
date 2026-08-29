@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.8",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.9",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -325,7 +325,7 @@ async function openDocVersion(docIndex,versionIndex,kind){
  const d=S.docs[docIndex],v=d?.versions?.[versionIndex];if(!v)return alert("Versão não localizada.");
  const key=v[kind+"Key"],path=v[kind+"Path"],name=v[kind+"Name"]||`${d.code}_Rev${v.revision}.${kind==="pdf"?"pdf":"docx"}`;
  try{
-   if(key){const blob=await getDocBlob(key);if(!blob)return alert("Arquivo local não localizado neste navegador.");const url=URL.createObjectURL(blob);if(kind==="pdf"){window.open(url,"_blank");setTimeout(()=>URL.revokeObjectURL(url),60000)}else{const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}return}
+   if(key){let blob=await getDocBlob(key);if(!blob)return alert("Arquivo local não localizado neste navegador.");if(kind==="word"&&v.publicationPrepared){const san=await sanitizePreparedWordBlob(v);if(san.blob)blob=san.blob;if(san.changed)showToast("Word preparado saneado · reabra e confira a paginação",2200)}const url=URL.createObjectURL(blob);if(kind==="pdf"){window.open(url,"_blank");setTimeout(()=>URL.revokeObjectURL(url),60000)}else{const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}return}
    if(path){const url=encodeURI(path);if(kind==="pdf")window.open(url,"_blank");else{const a=document.createElement("a");a.href=url;a.download=name||path.split("/").pop();document.body.appendChild(a);a.click();a.remove();setTimeout(()=>a.remove(),50)}return}
    alert("Esta versão não possui arquivo "+kind.toUpperCase()+".")
  }catch(err){console.error(err);alert("Não foi possível abrir o arquivo. Verifique as permissões do navegador.")}
@@ -415,22 +415,50 @@ function nextInstitutionalRevisionFromXml(xml){
 }
 function replaceCellText(tc,text){let first=true,found=false;const escaped=xmlEscapeText(text);let out=tc.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{found=true;if(first){first=false;return a+escaped+c}return a+c});if(!found)out=out.replace(/<w:tcPr[\s\S]*?<\/w:tcPr>/,m=>m+`<w:p><w:r><w:t>${escaped}</w:t></w:r></w:p>`);return out}
 function buildHistoryRowFromTemplate(row,values){let ci=0;return row.replace(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g,tc=>replaceCellText(tc,values[ci++]??""))}
-// v0.13.8: alguns POPs legados terminam a célula "Assinatura e Carimbo" com vários
-// parágrafos vazios. Eles eram invisíveis enquanto havia espaço, mas após inserir uma nova linha
-// no Controle Histórico podiam transbordar sozinhos e criar uma página final vazia com apenas o cabeçalho.
-// Remove SOMENTE parágrafos vazios no final da última célula da última linha da última tabela,
-// e somente quando essa célula contém "Assinatura ... Carimbo". Conteúdo institucional não é removido.
+// v0.13.9: saneamento estrutural da área final de assinatura.
+// Causa raiz confirmada em Word real: parágrafos vazios invisíveis permaneciam DEPOIS de
+// "Assinatura e Carimbo" dentro da mesma célula. Ao crescer o Controle Histórico, esses
+// parágrafos transbordavam sozinhos para uma página nova, que mostrava apenas o cabeçalho.
+// A rotina procura a célula de assinatura em QUALQUER tabela/linha, remove somente os
+// parágrafos vazios posteriores à assinatura e preserva todo texto, imagem, campo e estrutura.
 function trimLegacyTrailingEmptyParagraphs(xml){
- const tables=[...xml.matchAll(/<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>/g)];if(!tables.length)return xml;
- const table=tables[tables.length-1][0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)];if(!rows.length)return xml;
- const row=rows[rows.length-1][0],cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)];if(!cells.length)return xml;
- const cell=cells[cells.length-1][0],plain=[...cell.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1].replace(/<[^>]+>/g," ")).join(" ").replace(/\s+/g," ").trim();
- if(!/Assinatura\s+(?:e\s+)?Carimbo/i.test(plain))return xml;
- let cleaned=cell,previous;
- const emptyP=/(<w:p(?:\s[^>]*)?>(?:(?!<w:t(?:\s|>))[\s\S])*?<\/w:p>)\s*(?=<\/w:tc>)/;
- do{previous=cleaned;cleaned=cleaned.replace(emptyP,"")}while(cleaned!==previous);
- return cleaned===cell?xml:xml.replace(table,table.replace(row,row.replace(cell,cleaned)));
+ const tables=[...xml.matchAll(/<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>/g)];
+ for(let ti=tables.length-1;ti>=0;ti--){
+  const table=tables[ti][0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)];
+  for(let ri=rows.length-1;ri>=0;ri--){
+   const row=rows[ri][0],cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)];
+   for(let ci=cells.length-1;ci>=0;ci--){
+    const cell=cells[ci][0],plain=[...cell.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1].replace(/<[^>]+>/g," ")).join(" ").replace(/\s+/g," ").trim();
+    if(!/Assinatura\s+(?:e\s+)?Carimbo/i.test(plain))continue;
+    const paras=[...cell.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);
+    if(!paras.length)return xml;
+    let sig=-1;
+    for(let pi=0;pi<paras.length;pi++){const t=[...paras[pi].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1]).join(" ").replace(/\s+/g," ").trim();if(/Assinatura\s+(?:e\s+)?Carimbo/i.test(t))sig=pi}
+    if(sig<0)return xml;
+    const kept=[];let removed=0;
+    for(let pi=0;pi<paras.length;pi++){
+      const para=paras[pi];
+      if(pi<=sig){kept.push(para);continue}
+      const text=[...para.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1]).join("").replace(/&nbsp;/g," ").trim();
+      const hasPayload=/<w:(?:drawing|pict|object|br|fldChar|instrText|hyperlink)(?:\s|>)/.test(para);
+      if(text||hasPayload)kept.push(para);else removed++;
+    }
+    if(!removed)return xml;
+    let rebuilt=cell;for(const para of paras)rebuilt=rebuilt.replace(para,"");
+    rebuilt=rebuilt.replace(/<\/w:tc>$/,kept.join("")+"</w:tc>");
+    return xml.replace(table,table.replace(row,row.replace(cell,rebuilt)));
+   }
+  }
+ }
+ return xml;
 }
+
+async function sanitizePreparedWordBlob(v){
+ if(!v?.wordKey)return {changed:false,reason:"no-word-key",blob:null};
+ const blob=await getDocBlob(v.wordKey);if(!blob)return {changed:false,reason:"word-not-found",blob:null};
+ try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {changed:false,reason:"document-xml-missing",blob};let xml=await file.async("string");const cleaned=trimLegacyTrailingEmptyParagraphs(xml);if(cleaned===xml)return {changed:false,reason:"already-clean",blob};zip.file("word/document.xml",cleaned);const fixed=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,fixed);v.preparedSanitizedAt=nowBR();save();return {changed:true,reason:"trailing-empty-paragraphs-removed",blob:fixed}}catch(err){console.error("Falha ao sanear Word preparado",err);return {changed:false,reason:"docx-sanitize-failed",blob}}
+}
+
 function updateInstitutionalHistoryXml(xml,validator,summary,pages){
  const tblRe=/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/i,m=xml.match(tblRe);if(!m)return {ok:false,reason:"history-table-not-found"};
  const table=m[0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);
@@ -470,6 +498,7 @@ async function finalizePreparedApprovedWord(d,v,confirmedPages){
  if(!v?.publicationPrepared||!v?.preparedInstitutionalRevision)return {updated:false,reason:"publication-not-prepared"};if(!v?.wordKey)return {updated:false,reason:"no-word-key"};const blob=await getDocBlob(v.wordKey);if(!blob)return {updated:false,reason:"word-not-found"};
  const pages=String(confirmedPages||"").trim();if(!/^\d{1,3}$/.test(pages)||Number(pages)<1)return {updated:false,reason:"page-count-not-confirmed"};
  try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");
+   xml=trimLegacyTrailingEmptyParagraphs(xml);
    const upd=updatePreparedHistoryPageCountXml(xml,v.preparedInstitutionalRevision,pages);if(!upd.ok)return {updated:false,reason:upd.reason};xml=upd.xml;zip.file("word/document.xml",xml);
    const approved=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,approved);
    v.approvalEmbedded=true;v.approvalEmbeddedAt=nowBR();v.institutionalRevision=v.preparedInstitutionalRevision;v.institutionalRevisionDate=todayISO();v.confirmedFinalPages=Number(pages);return {updated:true,institutionalRevision:v.preparedInstitutionalRevision,validity:v.institutionalValidity||"",pages:Number(pages)};
