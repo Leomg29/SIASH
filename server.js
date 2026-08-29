@@ -199,7 +199,7 @@ async function classifyReferenceUrls(refs){
     if(isGenericReferenceUrl(url)){pending.push({title,url,status:"pending",reason:"O endereço aponta para uma página institucional genérica, não para a publicação citada; requer conferência profissional."});continue;}
     try{
       const c=new AbortController(),t=setTimeout(()=>c.abort(),9000);
-      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.0 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
+      const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.1 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
       if(!resp.ok){pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});continue;}
       const finalUrl=resp.url||url,ct=String(resp.headers.get("content-type")||"").toLowerCase();
       if(isGenericReferenceUrl(finalUrl)){pending.push({title,url:finalUrl,status:"pending",reason:"O redirecionamento terminou em página institucional genérica; a publicação específica não foi confirmada."});continue;}
@@ -227,35 +227,86 @@ function referenceSectionInfo(paragraphs){
   const sectionParas=paragraphs.filter(p=>p.index>heading.index&&(!stop||p.index<stop.index));
   return {headingIndex:heading.index,stopIndex:stop?stop.index:null,lastSectionIndex:sectionParas.length?sectionParas[sectionParas.length-1].index:heading.index};
 }
+function isManagedReferenceText(text=""){
+  return /\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\]/i.test(normalizedText(text));
+}
+function paragraphTextFromXml(p=""){
+  return [...p.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(x=>xmlDecode(x[1])).join("").trim();
+}
+function extractManagedReferenceTexts(text=""){
+  const t=normalizedText(text);if(!isManagedReferenceText(t))return [];
+  const parts=t.split(/(?=\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\])/i)
+    .map(x=>x.replace(/^Refer[eê]ncias?\s+incorporadas?\s+na\s+revis[aã]o\s*:\s*(?:\d+\.\s*)?/i,"").replace(/^\s*(?:\|\s*)?(?:\d+\.\s*)?/i,"").replace(/\s*\|\s*\d+\.\s*$/," ").trim())
+    .filter(x=>/^\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\]/i.test(x));
+  return parts.length?parts:[t];
+}
+function referenceKeyFromText(text=""){
+  const t=normalizedText(text).replace(/^\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\]\s*/i,"");
+  const m=t.match(/Disponível em:\s*(https?:\/\/\S+)/i);return normalizedText((m&&m[1])||t).toLowerCase();
+}
+function sanitizeLegacyManagedReference(text=""){
+  let t=normalizedText(text);const m=t.match(/Disponível em:\s*(https?:\/\/\S+)/i),url=m?normalizeUrl(m[1]):"";
+  if(/^\[FONTE ELETRONICAMENTE VERIFICADA\]/i.test(t)&&(!url||isGenericReferenceUrl(url))){
+    t=t.replace(/^\[FONTE ELETRONICAMENTE VERIFICADA\]/i,"[REQUER CONFERÊNCIA PROFISSIONAL]");
+    if(!/requer conferência profissional/i.test(t.slice(35)))t+=" — Classificação anterior rebaixada: a publicação específica não foi confirmada eletronicamente.";
+  }
+  return t;
+}
 function appendReviewedReferences(buf,refs){
   if(!refs?.length)throw new Error("Nenhuma referência foi retornada para conferência. A proposta foi bloqueada para evitar atualização técnico-científica sem fonte rastreável.");
-  const paragraphs=docxParagraphs(buf),sec=referenceSectionInfo(paragraphs);
-  if(!sec)throw new Error("A seção de Referências Bibliográficas não foi localizada de forma inequívoca no Word. A proposta foi bloqueada para preservar a estrutura institucional.");
-  const existing=paragraphs.filter(p=>p.index>sec.headingIndex&&(sec.stopIndex==null||p.index<sec.stopIndex)).map(p=>normalizedText(p.text).toLowerCase()).join(" ");
-  const additions=refs.filter(r=>!r.url||!existing.includes(normalizedText(r.url).toLowerCase()));
-  if(!additions.length)return {buffer:buf,added:0,sectionHeadingIndex:sec.headingIndex};
-  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml"),xml=entry.getData().toString("utf8");
-  const newParagraphs=additions.map((r,i)=>{
+  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)throw new Error("DOCX sem word/document.xml.");
+  const xml=entry.getData().toString("utf8");
+  const blocks=[...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);
+  const texts=blocks.map(paragraphTextFromXml);
+  const headingCandidates=texts.map((text,index)=>({index,text})).filter(p=>isReferenceHeading(p.text));
+  const heading=headingCandidates[headingCandidates.length-1];
+  if(!heading)throw new Error("A seção de Referências Bibliográficas não foi localizada de forma inequívoca no Word. A proposta foi bloqueada para preservar a estrutura institucional.");
+  const stopRx=/^\s*(assinatura(?:\s+e\s+carimbo)?|carimbo|anexo(?:s)?|controle\s+hist[oó]rico)\s*:?\s*$/i;
+  const stopIndex=texts.findIndex((t,i)=>i>heading.index&&stopRx.test(normalizedText(t)));
+
+  // Normaliza também referências SIASH de versões anteriores que tenham sido inseridas fora da bibliografia.
+  // Elas são removidas de onde estiverem e reinseridas no bloco bibliográfico correto, sem duplicação.
+  const legacyManaged=blocks.map((xmlBlock,index)=>({xmlBlock,index,text:texts[index]})).filter(x=>isManagedReferenceText(x.text));
+  const existingBib=texts.filter((t,i)=>i>heading.index&&(stopIndex<0||i<stopIndex)&&!isManagedReferenceText(t)).map(t=>normalizedText(t).toLowerCase()).join(" ");
+  const managedByKey=new Map();
+  for(const x of legacyManaged)for(const legacyText of extractManagedReferenceTexts(x.text))managedByKey.set(referenceKeyFromText(legacyText),sanitizeLegacyManagedReference(legacyText));
+  for(const r of refs){
     const tag=r.status==="verified"?"[FONTE ELETRONICAMENTE VERIFICADA]":"[REQUER CONFERÊNCIA PROFISSIONAL]";
     const reason=r.status==="verified"?"":(r.reason?` — ${r.reason}`:"");
     const text=`${tag} ${r.title}${r.url?`. Disponível em: ${r.url}`:""}${reason}`;
-    return `<w:p><w:r><w:t xml:space="preserve">${xmlEncode(text)}</w:t></w:r></w:p>`;
-  }).join("");
-  let idx=-1,inserted=false;
+    const key=referenceKeyFromText(text);
+    if((r.url&&existingBib.includes(normalizedText(r.url).toLowerCase()))||managedByKey.has(key)){
+      // Se já era referência gerenciada, mantém a versão mais atual do classificador.
+      if(managedByKey.has(key))managedByKey.set(key,text);
+      continue;
+    }
+    managedByKey.set(key,text);
+  }
+  const managedTexts=[...managedByKey.values()];
+  if(!managedTexts.length)return {buffer:buf,added:0,moved:0,sectionHeadingIndex:heading.index};
+  const managedParagraphs=managedTexts.map(text=>`<w:p><w:r><w:t xml:space="preserve">${xmlEncode(text)}</w:t></w:r></w:p>`).join("");
+
+  let rawIndex=-1,inserted=false;
   const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
-    idx++;
-    if(inserted)return p;
-    if(sec.stopIndex!=null&&idx===sec.stopIndex){inserted=true;return newParagraphs+p;}
-    if(sec.stopIndex==null&&idx===sec.lastSectionIndex){inserted=true;return p+newParagraphs;}
+    rawIndex++;
+    const text=paragraphTextFromXml(p);
+    if(isManagedReferenceText(text))return ""; // remove legado/mal posicionado antes de reinserir
+    if(!inserted&&stopIndex>=0&&rawIndex===stopIndex){inserted=true;return managedParagraphs+p;}
+    // Sem bloco de assinatura/anexo, insere no fim do corpo do documento após o último parágrafo original.
+    if(!inserted&&stopIndex<0&&rawIndex===blocks.length-1){inserted=true;return p+managedParagraphs;}
     return p;
   });
-  if(!inserted)throw new Error("Não foi possível posicionar as novas referências dentro da seção bibliográfica do Word.");
+  if(!inserted)throw new Error("Não foi possível posicionar as referências gerenciadas dentro da seção bibliográfica do Word.");
   zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));
   const out=zip.toBuffer(),outParas=docxParagraphs(out),outSec=referenceSectionInfo(outParas);
-  if(!outSec)throw new Error("Falha de integridade: a seção bibliográfica deixou de ser identificável após a inserção.");
-  const insertedOutside=outParas.filter(p=>/\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\]/.test(p.text)).some(p=>p.index<=outSec.headingIndex||(outSec.stopIndex!=null&&p.index>=outSec.stopIndex));
-  if(insertedOutside)throw new Error("Falha de integridade: referência nova foi posicionada fora da seção de Referências Bibliográficas.");
-  return {buffer:out,added:additions.length,sectionHeadingIndex:outSec.headingIndex};
+  if(!outSec)throw new Error("Falha de integridade: a seção bibliográfica deixou de ser identificável após a normalização.");
+  const managed=outParas.filter(p=>isManagedReferenceText(p.text));
+  if(managed.length!==managedTexts.length)throw new Error("Falha de integridade: a quantidade de referências gerenciadas gravadas no Word diverge do esperado.");
+  const outside=managed.filter(p=>p.index<=outSec.headingIndex||(outSec.stopIndex!=null&&p.index>=outSec.stopIndex));
+  if(outside.length)throw new Error("Falha de integridade: referência gerenciada permaneceu fora da seção de Referências Bibliográficas.");
+  const keys=new Set(managed.map(p=>referenceKeyFromText(p.text)));
+  if(keys.size!==managed.length)throw new Error("Falha de integridade: foram detectadas referências gerenciadas duplicadas no Word.");
+  return {buffer:out,added:refs.length,moved:legacyManaged.filter(x=>x.index<=heading.index||(stopIndex>=0&&x.index>=stopIndex)).length,sectionHeadingIndex:outSec.headingIndex};
 }
 function effectiveAIUpdates(paragraphs,updates,allowed){
   const originalByIndex=new Map(paragraphs.map(p=>[Number(p.index),String(p.text||"")]));
