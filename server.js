@@ -157,6 +157,7 @@ const CLOUDFLARE_FREE_MODEL_FALLBACKS = [
   "@cf/nvidia/nemotron-3-120b-a12b"
 ];
 const CLOUDFLARE_KNOWN_PAID_MODELS = new Set([
+  "@cf/moonshotai/kimi-k2.5",
   "@cf/moonshotai/kimi-k2.6",
   "@cf/moonshotai/kimi-k2.7-code",
   "@cf/zai-org/glm-5.2"
@@ -526,10 +527,37 @@ async function cloudflareRunModel(model,prompt){
     const err=new Error(detail);err.httpStatus=r.status;err.cloudflareErrors=data?.errors||[];err.model=model;
     throw err;
   }
-  const raw=data?.result?.response ?? data?.result?.output_text ?? data?.result?.text ?? data?.response ?? "";
-  const text=typeof raw==="string"?raw:JSON.stringify(raw||{});
-  if(!text.trim())throw new Error("Cloudflare Workers AI não retornou conteúdo utilizável.");
+  const text=extractCloudflareText(data);
+  if(!text.trim()){
+    const err=new Error("Cloudflare Workers AI não retornou conteúdo utilizável.");
+    err.cloudflareEmptyContent=true;err.model=model;
+    throw err;
+  }
   return {result:parseModelJson(text),sources:[],model,provider:"cloudflare",researchMode:"model_knowledge"};
+}
+function cloudflareContentToText(value){
+  if(typeof value==="string")return value.trim();
+  if(Array.isArray(value))return value.map(item=>{
+    if(typeof item==="string")return item;
+    if(item&&typeof item==="object")return item.text??item.content??item.value??"";
+    return "";
+  }).map(String).join("").trim();
+  if(value&&typeof value==="object")return JSON.stringify(value);
+  return "";
+}
+function extractCloudflareText(data){
+  const r=data?.result;
+  const candidates=[
+    r?.response, r?.output_text, r?.text,
+    r?.choices?.[0]?.message?.content, r?.choices?.[0]?.text,
+    data?.choices?.[0]?.message?.content, data?.choices?.[0]?.text,
+    data?.response
+  ];
+  for(const value of candidates){
+    const text=cloudflareContentToText(value);
+    if(text)return text;
+  }
+  return "";
 }
 function cloudflareModelCandidates(){
   const configured=String(CLOUDFLARE_AI_MODEL||"").trim();
@@ -540,7 +568,7 @@ function cloudflareModelCandidates(){
 }
 function cloudflareModelRetryable(e){
   const msg=String(e?.message||"").toLowerCase();
-  return e?.httpStatus===403||e?.httpStatus===404||e?.httpStatus===429||msg.includes("workers free plan")||msg.includes("not available")||msg.includes("out of capacity")||msg.includes("5035")||msg.includes("3040");
+  return e?.httpStatus===403||e?.httpStatus===404||e?.httpStatus===429||e?.cloudflareEmptyContent===true||msg.includes("workers free plan")||msg.includes("not available")||msg.includes("out of capacity")||msg.includes("5035")||msg.includes("3040")||msg.includes("não retornou conteúdo utilizável");
 }
 async function reviseWithCloudflare(prompt){
   if(!CLOUDFLARE_API_TOKEN||!CLOUDFLARE_ACCOUNT_ID)throw new Error("Cloudflare Workers AI ainda não configurada no servidor.");
@@ -566,7 +594,7 @@ async function reviseWithOpenAI(prompt){
   return {result:JSON.parse(response.output_text||"{}"),sources:collectOpenAISources(response),model:OPENAI_MODEL,provider:"openai"};
 }
 function cloudflareConfigured(){return !!(CLOUDFLARE_API_TOKEN&&CLOUDFLARE_ACCOUNT_ID)}
-function availableAIProviders(){return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL,searchMode:geminiUseSearch()?"google_search":"off"},cloudflare:{configured:cloudflareConfigured(),model:CLOUDFLARE_AI_MODEL,freeModelFallbacks:CLOUDFLARE_FREE_MODEL_FALLBACKS,searchMode:"off"},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
+function availableAIProviders(){const cfCandidates=cloudflareModelCandidates(),cfEffective=cfCandidates[0]||CLOUDFLARE_AI_MODEL;return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL,searchMode:geminiUseSearch()?"google_search":"off"},cloudflare:{configured:cloudflareConfigured(),model:cfEffective,configuredModel:CLOUDFLARE_AI_MODEL,configuredModelIgnored:!!CLOUDFLARE_AI_MODEL&&cfEffective!==CLOUDFLARE_AI_MODEL,freeModelFallbacks:CLOUDFLARE_FREE_MODEL_FALLBACKS,searchMode:"off"},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
 function providerOrder(requested){
   const p=String(requested||AI_DEFAULT_PROVIDER||"auto").toLowerCase();
   if(p==="gemini")return ["gemini","cloudflare","openai"];

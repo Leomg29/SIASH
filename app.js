@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.0",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.1",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -543,7 +543,7 @@ function renderSettings(){
 async function renderAIStatus(){
  const el=$("s-ai-status");if(!el)return;
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token){el.innerHTML="<strong>IA:</strong> status disponível após login na Cloud.";return}
- try{const st=await cloudJson("/api/ai/status");const g=st.providers?.gemini,c=st.providers?.cloudflare,o=st.providers?.openai,gs=g?.searchMode==="google_search"?"Pesquisa Google ativa":"Pesquisa Google desativada (Free Tier)";el.innerHTML=`<strong>IA configurada:</strong> Gemini ${g?.configured?"✓":"—"} (${safe(g?.model||"—")}) · ${gs} · Cloudflare ${c?.configured?"✓":"—"} (${safe(c?.model||"—")})${Array.isArray(c?.freeModelFallbacks)&&c.freeModelFallbacks.length?` · fallback Free automático: ${c.freeModelFallbacks.map(safe).join(" → ")}`:""} · OpenAI ${o?.configured?"✓":"—"} (${safe(o?.model||"—")})`}
+ try{const st=await cloudJson("/api/ai/status");const g=st.providers?.gemini,c=st.providers?.cloudflare,o=st.providers?.openai,gs=g?.searchMode==="google_search"?"Pesquisa Google ativa":"Pesquisa Google desativada (Free Tier)";el.innerHTML=`<strong>IA configurada:</strong> Gemini ${g?.configured?"✓":"—"} (${safe(g?.model||"—")}) · ${gs} · Cloudflare ${c?.configured?"✓":"—"} (${safe(c?.model||"—")})${c?.configuredModelIgnored?` · configuração antiga ignorada: ${safe(c?.configuredModel||"—")}`:""}${Array.isArray(c?.freeModelFallbacks)&&c.freeModelFallbacks.length?` · fallback Free automático: ${c.freeModelFallbacks.map(safe).join(" → ")}`:""} · OpenAI ${o?.configured?"✓":"—"} (${safe(o?.model||"—")})`}
  catch(e){el.innerHTML="<strong>IA:</strong> não foi possível consultar o status dos provedores."}
 }
 async function runCloudflareFallbackDiagnostic(){
