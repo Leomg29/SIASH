@@ -398,7 +398,27 @@ let ACTIVE_DOC_PROPOSAL=null;
 function setActiveDocProposal(i,vi){const d=S.docs?.[i],v=d?.versions?.[vi];ACTIVE_DOC_PROPOSAL=(d&&v)?{docId:String(d.id||""),code:String(d.code||""),revision:String(v.revision||""),wordKey:String(v.wordKey||v.wordPath||"")}:null;return ACTIVE_DOC_PROPOSAL}
 function proposalContextMatches(i,vi){const d=S.docs?.[i],v=d?.versions?.[vi],a=ACTIVE_DOC_PROPOSAL;if(!d||!v||!a)return false;return a.docId===String(d.id||"")&&a.code===String(d.code||"")&&a.revision===String(v.revision||"")&&a.wordKey===String(v.wordKey||v.wordPath||"")}
 function requireProposalContext(i,vi){if(proposalContextMatches(i,vi))return true;const d=S.docs?.[i],v=d?.versions?.[vi];alert(`Ação bloqueada por segurança: a revisão ativa na tela não corresponde ao documento solicitado${d&&v?` (${d.code} · revisão ${v.revision})`:""}. Reabra a revisão proposta antes de continuar.`);return false}
-window.openDocProposal=i=>{const d=S.docs?.[i];if(!d)return alert("Documento não localizado.");const pubI=docPublishedIndex(d),proposalI=(d.versions||[]).findIndex((v,vi)=>vi!==pubI&&v.workflow!=="Obsoleto");if(proposalI<0)return alert("Este documento não possui revisão proposta aberta.");renderProposalReady(i,proposalI);showDocHistory(i);$("doc-proposal-ready")?.scrollIntoView({behavior:"smooth",block:"center"})}
+function openProposalWorkspace(i,proposalI){
+ const d=S.docs?.[i],v=d?.versions?.[proposalI];if(!d||!v)return false;
+ const pubI=docPublishedIndex(d),pub=pubI>=0?d.versions?.[pubI]:null;
+ $("doc-revision-index").value=i;$("doc-revision-name").textContent=`${d.code} · revisão proposta ${v.revision}`;$("doc-selected-title").textContent=d.title;
+ $("doc-revision-number").value=String(v.revision||"");$("doc-revision-date").value=v.reviewDate||todayISO();$("doc-revision-workflow").value=v.workflow||"Em revisão";$("doc-revision-period").value=String(d.period||24);
+ $("doc-revision-note").value=v.note||"";$("doc-revision-sources").value=v.sources||"";$("doc-revision-pdf").value="";$("doc-revision-word").value="";
+ const hasWord=!!(pub?.wordKey||pub?.wordPath),hasPdf=!!(pub?.pdfKey||pub?.pdfPath);
+ $("doc-update-status").textContent=`Revisão proposta aberta: ${d.code} — ${d.title} · revisão ${v.revision}. Versão vigente: ${pub?.revision||"—"}.`;
+ $("doc-open-current").disabled=!(hasWord||hasPdf);$("doc-open-current").onclick=()=>{if(hasWord)return openDocVersion(i,pubI,"word");if(hasPdf)return openDocVersion(i,pubI,"pdf")};
+ $("doc-send-ai").onclick=()=>sendDocToAI(i);
+ $("doc-history-panel")?.classList.add("hidden");$("doc-revision-panel")?.classList.remove("hidden");
+ renderProposalReady(i,proposalI);
+ requestAnimationFrame(()=>$("doc-proposal-ready")?.scrollIntoView({behavior:"smooth",block:"center"}));
+ return true
+}
+window.openDocProposal=i=>{
+ const d=S.docs?.[i];if(!d)return alert("Documento não localizado.");
+ const pubI=docPublishedIndex(d),proposalI=(d.versions||[]).findIndex((v,vi)=>vi!==pubI&&v.workflow!=="Obsoleto");
+ if(proposalI<0)return alert("Este documento não possui revisão proposta aberta.");
+ if(!openProposalWorkspace(i,proposalI))return alert("Não foi possível restaurar o contexto completo desta revisão proposta.");
+}
 function renderProposalReady(i,vi){const box=$("doc-proposal-ready"),actions=$("doc-proposal-actions");if(!box||!actions)return;const d=S.docs[i],v=(vi>=0?d?.versions?.[vi]:null);const hasFile=!!(v&&(v.wordKey||v.wordPath||v.pdfKey||v.pdfPath));box.classList.toggle("hidden",!hasFile);if(!hasFile){ACTIVE_DOC_PROPOSAL=null;actions.innerHTML="";return}setActiveDocProposal(i,vi);const n=Number(v.aiVerification?.actualChanges||v.aiChanges?.length||0),verified=v.aiVerified===true;const aiTrace=v.aiProvider?` IA utilizada: ${aiProviderLabel(v.aiProvider)}${v.aiModel?` · ${v.aiModel}`:""}.`:"";$("doc-proposal-ready-text").textContent=`${d.code} — ${d.title} · revisão ${v.revision}. `+(verified?`SIASH comprovou ${n} alteração(ões) real(is) no Word.${aiTrace} Abra e confira antes de aprovar.`:`Proposta disponível para conferência.${aiTrace} Esta proposta foi criada antes da verificação automática da v0.12.8; confira o Word com atenção.`);const diffBtn=v.aiChanges?.length?`<button class="ghost" type="button" onclick="showAIChanges(${i},${vi})">VER ALTERAÇÕES APLICADAS</button>`:"";actions.innerHTML=`${v.wordKey||v.wordPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'word')">ABRIR WORD ATUALIZADO</button>`:""}${v.pdfKey||v.pdfPath?`<button class="secondary" type="button" onclick="openDocVersion(${i},${vi},'pdf')">ABRIR PDF ATUALIZADO</button>`:""}${diffBtn}${v.publicationPrepared?`<button class="primary" type="button" onclick="finalizePreparedPublication(${i},${vi})">FINALIZAR PUBLICAÇÃO</button>`:`<button class="primary" type="button" onclick="validateDocProposal(${i},${vi})">PREPARAR PUBLICAÇÃO</button>`}<button class="ghost" type="button" onclick="requestDocCorrection(${i},${vi})">SOLICITAR CORREÇÃO</button>`}
 window.showAIChanges=(i,vi)=>{const d=S.docs?.[i],v=d?.versions?.[vi],changes=v?.aiChanges||[];if(!changes.length)return alert("Esta proposta não possui detalhamento das alterações disponível.");const dlg=$("doc-ai-changes-dialog"),list=$("doc-ai-changes-list");if(!dlg||!list)return;$("doc-ai-changes-title").textContent=`${d.code} — ${d.title} · revisão ${v.revision}${v.aiProvider?` · IA: ${aiProviderLabel(v.aiProvider)}${v.aiModel?` (${v.aiModel})`:""}`:""}`;const globalRefs=String(v.sources||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);list.innerHTML=changes.map((c,n)=>{const refs=(c.references||[]).length?c.references:globalRefs;return `<article class="doc-diff-item"><h4>Alteração ${n+1}</h4><div class="doc-diff-grid"><div class="doc-diff-box"><strong>ANTES</strong>${safe(c.before_text||"(não registrado)")}</div><div class="doc-diff-box"><strong>DEPOIS</strong>${safe(c.new_text||"(não registrado)")}</div></div><div class="doc-diff-reason"><strong>JUSTIFICATIVA:</strong> ${safe(c.reason||"—")}</div><div class="doc-diff-ref"><strong>REFERÊNCIA:</strong> ${refs.length?refs.map(r=>safe(typeof r==="string"?r:(r.title?`${r.title}${r.url?`: ${r.url}`:""}`:r.url||"—"))).join("<br>"):"Referência específica não vinculada; conferir as fontes gerais da revisão."}</div></article>`}).join("");dlg.showModal?dlg.showModal():dlg.setAttribute("open","")}
 $("doc-ai-changes-close")?.addEventListener("click",()=>$("doc-ai-changes-dialog")?.close());
@@ -724,7 +744,13 @@ $("doc-restore-single-file")?.addEventListener("change",async e=>{const file=e.t
 $("doc-new-cancel").addEventListener("click",hideDocNewPanel)
 $("doc-search").addEventListener("input",renderDocs)
 $("doc-filter").addEventListener("change",renderDocs); $("doc-sector-filter").addEventListener("change",renderDocs)
-$("doc-history-close").addEventListener("click",()=>$("doc-history-panel").classList.add("hidden"))
+$("doc-history-close").addEventListener("click",()=>{
+ $("doc-history-panel").classList.add("hidden");
+ if(ACTIVE_DOC_PROPOSAL){
+   $("doc-revision-panel")?.classList.remove("hidden");
+   requestAnimationFrame(()=>$("doc-proposal-ready")?.scrollIntoView({behavior:"smooth",block:"center"}));
+ }
+})
 $("doc-revision-cancel").addEventListener("click",cancelDocRevision)
 $("doc-form").addEventListener("submit",async e=>{
  e.preventDefault();if(!canDocEdit())return alert("Seu perfil documental não permite cadastrar documentos.");
