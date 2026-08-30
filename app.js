@@ -420,12 +420,12 @@ function priorPublishedVersion(d,v){return (d?.versions||[]).filter(x=>x!==v&&x.
 function shouldReuseLatestInstitutionalRevision(d,v,rowInfo){
  if(!rowInfo||rowInfo.revision===null)return false;const c=rowInfo.cells||[];
  const authoredBySiash=/SIASH\s*Docs/i.test(c[4]||"");if(!authoredBySiash)return false;
- const prior=priorPublishedVersion(d,v);if(!prior)return false;
- // Regra de causa raiz: várias correções/publicações SIASH no MESMO DIA pertencem ao mesmo
- // ciclo institucional. Rev. interna do SIASH pode avançar, mas não deve criar 04→05→06 no Word.
- const sameDay=String(prior.validationDate||prior.reviewDate||"")===todayISO();if(!sameDay)return false;
- const sameMonth=normalizeMonthYearText(c[1]||"")===normalizeMonthYearText(currentMonthYearPT());
- return sameMonth;
+ // v0.14.3 — idempotência do ciclo institucional:
+ // se a última linha institucional foi criada pelo SIASH Docs na MESMA competência (mês/ano),
+ // ela é a revisão institucional do ciclo e deve ser REUTILIZADA. Revisões internas, correções,
+ // reprocessamentos ou testes do mesmo ciclo não podem gerar 04→05→06 no Word.
+ // Uma nova revisão institucional só é aberta quando muda a competência institucional.
+ return normalizeMonthYearText(c[1]||"")===normalizeMonthYearText(currentMonthYearPT());
 }
 function institutionalRevisionPlan(xml,d,v,{ignorePreparedRevision=""}={}){
  const h=historyTableData(xml);if(!h)return {ok:false,reason:"history-table-not-found"};
@@ -514,7 +514,7 @@ window.validateDocProposal=async(i,vi)=>{
  const _v=S.docs?.[i]?.versions?.[vi];if(_v?.createdBy==="SIASH Docs / IA"&&_v.aiVerified!==true)return alert("Publicação bloqueada: esta proposta de IA não possui verificação automática de integridade. Gere uma nova proposta ou solicite correção antes de publicar.");
  const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");if(!(v.wordKey||v.wordPath))return alert("Validação bloqueada: a publicação institucional exige o Word atualizado.");
  if(v.publicationPrepared)return finalizePreparedPublication(i,vi);
- if(!confirm(`Confirma que você abriu, conferiu e aprova tecnicamente a revisão ${v.revision} de ${d.code}?\n\nA SIASH agora vai PREPARAR o Word final, acrescentando a próxima revisão institucional no Controle Histórico. O documento ainda NÃO será publicado.`))return;
+ if(!confirm(`Confirma que você abriu, conferiu e aprova tecnicamente a revisão ${v.revision} de ${d.code}?\n\nA SIASH agora vai PREPARAR o Word final, reutilizando a revisão institucional do ciclo quando ela já existir; somente um novo ciclo poderá criar nova revisão institucional. O documento ainda NÃO será publicado.`))return;
  const validator=(prompt("Profissional responsável pela aprovação:",SESSION.user||"")||"").trim();if(!validator)return alert("A identificação do profissional responsável é obrigatória.");
  const prep=await prepareApprovedWord(d,v,validator);if(!prep.updated)return alert(`Preparação BLOQUEADA: a SIASH não conseguiu montar com segurança o Word final (${prep.reason}). A versão vigente anterior foi preservada.`);
  save();renderDocs();renderProposalReady(i,vi);alert(`Word final preparado com a Revisão Institucional ${prep.institutionalRevision}${prep.mode==="reuse"?" (consolidada no mesmo ciclo)":""} e o campo Nº Páginas como “A conferir”.\n\nAgora abra o WORD ATUALIZADO novamente. Confira a quantidade REAL de páginas DEPOIS da inclusão do Controle Histórico. Em seguida clique em FINALIZAR PUBLICAÇÃO.`);
