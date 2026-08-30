@@ -148,6 +148,10 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const GEMINI_SEARCH_MODE = String(process.env.GEMINI_SEARCH_MODE || "off").toLowerCase();
 const AI_DEFAULT_PROVIDER = String(process.env.AI_PROVIDER || "auto").toLowerCase();
 const GEMINI_TIMEOUT_MS = Math.max(15000, Number(process.env.GEMINI_TIMEOUT_MS || 90000));
+const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || "";
+const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || "";
+const CLOUDFLARE_AI_MODEL = process.env.CLOUDFLARE_AI_MODEL || "@cf/moonshotai/kimi-k2.5";
+const CLOUDFLARE_TIMEOUT_MS = Math.max(15000, Number(process.env.CLOUDFLARE_TIMEOUT_MS || 90000));
 function xmlDecode(s=""){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&")}
 function xmlEncode(s=""){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;")}
 function docxParagraphs(buf){
@@ -497,27 +501,57 @@ async function reviseWithGemini(prompt){
   const result=parseModelJson(text);
   return {result,sources:useSearch?geminiGroundingSources(data):[],model:GEMINI_MODEL,provider:"gemini",researchMode:useSearch?"google_search":"model_knowledge"};
 }
+async function reviseWithCloudflare(prompt){
+  if(!CLOUDFLARE_API_TOKEN||!CLOUDFLARE_ACCOUNT_ID)throw new Error("Cloudflare Workers AI ainda não configurada no servidor.");
+  const strictPrompt=prompt+`\n\nFORMATO DE SAÍDA OBRIGATÓRIO: responda SOMENTE com JSON válido nas chaves summary, updates e references. Não inclua markdown nem comentários fora do JSON. Em references, forneça título e URL específica do documento quando souber com segurança; nunca invente URL.`;
+  const url=`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/run/${CLOUDFLARE_AI_MODEL}`;
+  const payload={messages:[{role:"system",content:"Você é um revisor técnico-científico hospitalar. Obedeça estritamente às regras do usuário e retorne apenas JSON válido."},{role:"user",content:strictPrompt}],max_tokens:16000,temperature:0.1};
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),CLOUDFLARE_TIMEOUT_MS);
+  let r;
+  try{r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${CLOUDFLARE_API_TOKEN}`},body:JSON.stringify(payload),signal:controller.signal})}
+  catch(e){if(e?.name==="AbortError")throw new Error(`Cloudflare Workers AI excedeu o tempo limite de ${Math.round(CLOUDFLARE_TIMEOUT_MS/1000)} segundos.`);throw e}
+  finally{clearTimeout(timer)}
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok||data?.success===false){
+    const detail=(data?.errors||[]).map(x=>x?.message).filter(Boolean).join("; ")||data?.error?.message||`Cloudflare retornou HTTP ${r.status}.`;
+    if(r.status===429)throw new Error(`Cloudflare Workers AI atingiu o limite temporário. ${detail}`);
+    throw new Error(detail);
+  }
+  const raw=data?.result?.response ?? data?.result?.output_text ?? data?.result?.text ?? data?.response ?? "";
+  const text=typeof raw==="string"?raw:JSON.stringify(raw||{});
+  if(!text.trim())throw new Error("Cloudflare Workers AI não retornou conteúdo utilizável.");
+  return {result:parseModelJson(text),sources:[],model:CLOUDFLARE_AI_MODEL,provider:"cloudflare",researchMode:"model_knowledge"};
+}
 async function reviseWithOpenAI(prompt){
   if(!openaiClient)throw new Error("OPENAI_API_KEY ainda não configurada no servidor.");
   const response=await openaiClient.responses.create({model:OPENAI_MODEL,tools:[{type:"web_search"}],input:prompt,text:{format:{type:"json_schema",name:"siash_pop_revision",strict:true,schema:{type:"object",additionalProperties:false,properties:{summary:{type:"string"},updates:{type:"array",items:{type:"object",additionalProperties:false,properties:{paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"},references:{type:"array",items:{type:"string"}}},required:["paragraph_index","new_text","reason","references"]}},references:{type:"array",items:{type:"object",additionalProperties:false,properties:{title:{type:"string"},url:{type:"string"}},required:["title","url"]}}},required:["summary","updates","references"]}}}});
   return {result:JSON.parse(response.output_text||"{}"),sources:collectOpenAISources(response),model:OPENAI_MODEL,provider:"openai"};
 }
-function availableAIProviders(){return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL,searchMode:geminiUseSearch()?"google_search":"off"},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
+function cloudflareConfigured(){return !!(CLOUDFLARE_API_TOKEN&&CLOUDFLARE_ACCOUNT_ID)}
+function availableAIProviders(){return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL,searchMode:geminiUseSearch()?"google_search":"off"},cloudflare:{configured:cloudflareConfigured(),model:CLOUDFLARE_AI_MODEL,searchMode:"off"},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
 function providerOrder(requested){
   const p=String(requested||AI_DEFAULT_PROVIDER||"auto").toLowerCase();
-  if(p==="gemini")return ["gemini"];
-  if(p==="openai")return ["openai"];
-  return ["gemini","openai"];
+  if(p==="gemini")return ["gemini","cloudflare","openai"];
+  if(p==="cloudflare")return ["cloudflare","gemini","openai"];
+  if(p==="openai")return ["openai","cloudflare","gemini"];
+  return ["gemini","cloudflare","openai"];
 }
 async function runAIRevision(prompt,requested){
   const errors=[];
   for(const p of providerOrder(requested)){
-    try{if(p==="gemini"&&GEMINI_API_KEY)return await reviseWithGemini(prompt);if(p==="openai"&&openaiClient)return await reviseWithOpenAI(prompt);errors.push(`${p}: não configurado`)}
-    catch(e){console.error(`AI provider ${p}:`,e);errors.push(`${p}: ${e?.message||"falha"}`)}
+    try{
+      if(p==="gemini"&&GEMINI_API_KEY)return await reviseWithGemini(prompt);
+      if(p==="cloudflare"&&cloudflareConfigured())return await reviseWithCloudflare(prompt);
+      if(p==="openai"&&openaiClient)return await reviseWithOpenAI(prompt);
+      errors.push(`${p}: não configurado`);
+    }catch(e){console.error(`AI provider ${p}:`,e);errors.push(`${p}: ${e?.message||"falha"}`)}
   }
-  throw new Error(`Nenhum provedor de IA concluiu a revisão. ${errors.join(" | ")}`);
+  console.error("Todos os provedores de IA falharam:",errors.join(" | "));
+  const err=new Error("Serviço de IA temporariamente indisponível. Nenhuma alteração foi realizada no POP. Tente novamente mais tarde.");
+  err.code="AI_PROVIDERS_UNAVAILABLE";
+  throw err;
 }
-app.get("/api/ai/status",auth,(req,res)=>res.json({configured:!!(GEMINI_API_KEY||openaiClient),defaultProvider:AI_DEFAULT_PROVIDER,providers:availableAIProviders(),privacyNotice:"No nível gratuito do Gemini, não envie dados identificáveis de pacientes. Referências geradas sem Pesquisa Google devem ser conferidas pelo profissional."}));
+app.get("/api/ai/status",auth,(req,res)=>res.json({configured:!!(GEMINI_API_KEY||cloudflareConfigured()||openaiClient),defaultProvider:AI_DEFAULT_PROVIDER,providers:availableAIProviders(),privacyNotice:"Não envie dados identificáveis de pacientes aos provedores externos de IA. Toda proposta e referência deve ser conferida pelo profissional antes da publicação."}));
 
 function cleanDuplicateSiashHistoryRows(docxBuffer){
   // v0.13.7: saneia somente duplicatas/intermediárias geradas pelo próprio SIASH no mesmo ciclo.

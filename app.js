@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.11",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.12",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -443,7 +443,7 @@ function trimLegacyTrailingEmptyParagraphs(xml){
  for(let ti=tables.length-1;ti>=0;ti--){const table=tables[ti][0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)];for(let ri=rows.length-1;ri>=0;ri--){const row=rows[ri][0],cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)];for(let ci=cells.length-1;ci>=0;ci--){const cell=cells[ci][0],plain=[...cell.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1].replace(/<[^>]+>/g," ")).join(" ").replace(/\s+/g," ").trim();if(!/Assinatura\s+(?:e\s+)?Carimbo/i.test(plain))continue;const paras=[...cell.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);if(!paras.length)return xml;let sig=-1;for(let pi=0;pi<paras.length;pi++){const t=[...paras[pi].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1]).join(" ").replace(/\s+/g," ").trim();if(/Assinatura\s+(?:e\s+)?Carimbo/i.test(t))sig=pi}if(sig<0)return xml;const kept=[];let removed=0;for(let pi=0;pi<paras.length;pi++){const para=paras[pi];if(pi<=sig){kept.push(para);continue}const text=[...para.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(m=>m[1]).join("").replace(/&nbsp;/g," ").trim();const hasPayload=/<w:(?:drawing|pict|object|br|fldChar|instrText|hyperlink)(?:\s|>)/.test(para);if(text||hasPayload)kept.push(para);else removed++}if(!removed)return xml;let rebuilt=cell;for(const para of paras)rebuilt=rebuilt.replace(para,"");rebuilt=rebuilt.replace(/<\/w:tc>$/,kept.join("")+"</w:tc>");return xml.replace(table,table.replace(row,row.replace(cell,rebuilt)))}}}return xml;
 }
 function removeInstitutionalRevisionRowXml(xml,revision){const h=historyTableData(xml);if(!h)return {ok:false,reason:"history-table-not-found",xml};const target=h.info.find(x=>x.revision!==null&&String(x.revision).padStart(2,"0")===String(revision).padStart(2,"0"));if(!target)return {ok:false,reason:"revision-row-not-found",xml};return {ok:true,xml:xml.replace(h.table,h.table.replace(target.row,""))}}
-// v0.13.11: corrige POPs já contaminados por revisões institucionais intermediárias do mesmo ciclo.
+// v0.13.12: corrige POPs já contaminados por revisões institucionais intermediárias do mesmo ciclo.
 // Se houver 2+ linhas SIASH Docs no mês atual (ex.: 04 e 05 em Agosto/2026), preserva a PRIMEIRA
 // revisão institucional do ciclo e remove somente as posteriores antes de preparar/publicar.
 function collapseDuplicateSiashInstitutionalCycleXml(xml){
