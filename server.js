@@ -4,6 +4,11 @@ const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
+const fs = require("fs");
+const os = require("os");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+const execFileAsync = promisify(execFile);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -137,6 +142,52 @@ app.get("/api/doc/:key",auth,async(req,res)=>{
   res.send(q.rows[0].file_data);
 });
 
+
+
+// v0.14.7 — migração segura de Word legado .doc para .docx.
+// A conversão é estritamente de formato: não cria revisão, não muda vigência, workflow,
+// aprovação ou histórico. O original só é substituído no vínculo após validação do DOCX gerado.
+const LEGACY_DOC_CONVERT_TIMEOUT_MS=Math.max(30000,Number(process.env.LEGACY_DOC_CONVERT_TIMEOUT_MS||120000));
+function isLegacyBinaryDocName(name=""){return /\.doc$/i.test(String(name||"").trim())&&!/\.docx$/i.test(String(name||"").trim())}
+function hasOleCompoundSignature(buf){return Buffer.isBuffer(buf)&&buf.length>=8&&buf.subarray(0,8).equals(Buffer.from([0xD0,0xCF,0x11,0xE0,0xA1,0xB1,0x1A,0xE1]))}
+function validateGeneratedDocx(buf){
+  try{const z=new AdmZip(buf),e=z.getEntry("word/document.xml");return !!(e&&e.getData().length)}catch(_){return false}
+}
+async function convertLegacyDocBufferToDocx(inputBuffer,inputName="documento.doc"){
+  if(!hasOleCompoundSignature(inputBuffer))throw new Error("O arquivo .doc não possui a assinatura binária esperada do Word antigo; nenhuma conversão foi realizada.");
+  const base=String(inputName||"documento.doc").replace(/[\\/:*?"<>|]/g,"_").replace(/\.doc$/i,"")||"documento";
+  const dir=await fs.promises.mkdtemp(path.join(os.tmpdir(),"siash-doc-"));
+  const inPath=path.join(dir,base+".doc"),outPath=path.join(dir,base+".docx");
+  try{
+    await fs.promises.writeFile(inPath,inputBuffer);
+    const commands=[process.env.LIBREOFFICE_BIN,"libreoffice","soffice"].filter(Boolean);
+    let lastErr=null,used="";
+    for(const cmd of [...new Set(commands)]){
+      try{
+        await execFileAsync(cmd,["--headless","--convert-to","docx","--outdir",dir,inPath],{timeout:LEGACY_DOC_CONVERT_TIMEOUT_MS,maxBuffer:1024*1024*4});used=cmd;lastErr=null;break;
+      }catch(e){lastErr=e}
+    }
+    if(lastErr)throw new Error("Conversor LibreOffice indisponível ou falhou ao abrir o .doc legado.");
+    let actualOut=outPath;
+    try{await fs.promises.access(actualOut)}catch(_){const found=(await fs.promises.readdir(dir)).find(x=>/\.docx$/i.test(x));if(found)actualOut=path.join(dir,found);else throw new Error("O conversor não gerou o arquivo .docx esperado.")}
+    const out=await fs.promises.readFile(actualOut);
+    if(!validateGeneratedDocx(out))throw new Error("O .docx gerado não passou na validação estrutural OOXML; o original foi preservado.");
+    return {buffer:out,fileName:base+".docx",converter:used||"libreoffice"};
+  }finally{await fs.promises.rm(dir,{recursive:true,force:true}).catch(()=>{})}
+}
+app.post("/api/docs/convert-legacy-word",auth,async(req,res)=>{
+  if(req.user.r!=="owner")return res.status(403).json({error:"Somente o Administrador Proprietário pode migrar Word legado .doc para .docx."});
+  try{
+    const {file_name,file_base64}=req.body||{};
+    if(!isLegacyBinaryDocName(file_name))return res.status(400).json({error:"Conversão ignorada: somente arquivos Word antigos com extensão .doc são aceitos."});
+    const input=Buffer.from(String(file_base64||""),"base64");
+    if(!input.length)return res.status(400).json({error:"Arquivo .doc vazio ou ausente."});
+    if(input.length>18*1024*1024)return res.status(413).json({error:"Word .doc acima do limite de 18 MB para conversão segura."});
+    const converted=await convertLegacyDocBufferToDocx(input,file_name);
+    await audit(req.user.u,"SIASH Docs: Word legado .doc convertido para .docx sem criação de revisão.",{original_name:String(file_name),new_name:converted.fileName,converter:converted.converter,bytes_in:input.length,bytes_out:converted.buffer.length});
+    res.json({ok:true,file_name:converted.fileName,mime_type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",file_base64:converted.buffer.toString("base64")});
+  }catch(e){console.error("Legacy DOC conversion:",e);res.status(500).json({error:"Falha ao converter Word antigo .doc para .docx: "+(e?.message||"erro interno")})}
+});
 
 // --- SIASH Docs IA: revisão técnico-científica com preservação do OOXML ---
 const OpenAI = require("openai");

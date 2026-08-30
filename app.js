@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.2",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.7",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -64,6 +64,43 @@ async function getDocCloud(key){
  return await res.blob();
 }
 
+
+
+function isLegacyWordName(name=""){return /\.doc$/i.test(String(name||"").trim())&&!/\.docx$/i.test(String(name||"").trim())}
+async function blobToBase64Payload(blob){const buf=await blob.arrayBuffer(),bytes=new Uint8Array(buf);let bin="";for(let o=0;o<bytes.length;o+=0x8000)bin+=String.fromCharCode(...bytes.subarray(o,o+0x8000));return btoa(bin)}
+async function convertLegacyWordBlob(blob,fileName){
+ if(!blob||!isLegacyWordName(fileName))return null;
+ const data=await cloudJson("/api/docs/convert-legacy-word",{method:"POST",body:JSON.stringify({file_name:fileName,file_base64:await blobToBase64Payload(blob)})});
+ if(!data?.ok||!data.file_base64||!data.file_name)throw new Error("O servidor não confirmou a conversão segura do .doc legado.");
+ const out=Uint8Array.from(atob(data.file_base64),c=>c.charCodeAt(0));return new File([out],data.file_name,{type:data.mime_type||"application/vnd.openxmlformats-officedocument.wordprocessingml.document"})
+}
+async function ensureVersionWordIsDocx(d,v,{silent=false}={}){
+ if(!d||!v)return {converted:false,reason:"version-missing"};
+ const name=String(v.wordName||v.wordPath||"");if(!isLegacyWordName(name))return {converted:false,reason:"already-docx-or-not-word"};
+ if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)throw new Error("A conversão automática de Word .doc exige a SIASH Cloud autenticada.");
+ let blob=null;if(v.wordKey)blob=await getDocBlob(v.wordKey);else if(v.wordPath){const r=await fetch(v.wordPath);if(r.ok)blob=await r.blob()}
+ if(!blob)throw new Error(`Word legado não localizado para ${d.code}; o vínculo original foi preservado.`);
+ const converted=await convertLegacyWordBlob(blob,v.wordName||pathBasenameCompat(v.wordPath)||`${d.code}.doc`);
+ const newKey=`${d.id}|${v.revision}|word|docx-migrated-${Date.now()}`;await putDocBlob(newKey,converted);
+ const oldName=v.wordName||pathBasenameCompat(v.wordPath)||"arquivo.doc";
+ v.legacyDocOriginalName=oldName;v.legacyDocOriginalKey=v.wordKey||"";v.wordKey=newKey;v.wordName=converted.name;v.convertedFromLegacyDoc=true;v.legacyDocConvertedAt=new Date().toISOString();v.legacyDocConvertedBy=SESSION.user||"SIASH";
+ auditAdmin(`SIASH Docs: ${d.code} revisão ${v.revision} teve o Word legado ${oldName} convertido para ${converted.name}, sem criar revisão ou alterar vigência.`);
+ if(!silent)showToast(`Word antigo convertido para .docx · ${d.code}`,2200);
+ return {converted:true,oldName,newName:converted.name};
+}
+function pathBasenameCompat(p=""){return String(p||"").split(/[\\/]/).pop()||""}
+let LEGACY_DOC_MIGRATION_RUNNING=false;
+async function migrateLegacyWordDocsIfNeeded(){
+ if(LEGACY_DOC_MIGRATION_RUNNING||!isOwner()||!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
+ const targets=[];(S.docs||[]).forEach(d=>(d.versions||[]).forEach(v=>{if(isLegacyWordName(v.wordName||v.wordPath||""))targets.push({d,v})}));if(!targets.length)return;
+ LEGACY_DOC_MIGRATION_RUNNING=true;updateCloudBadge(`Convertendo ${targets.length} Word .doc…`);
+ let ok=0,failed=[];
+ try{for(const x of targets){try{const r=await ensureVersionWordIsDocx(x.d,x.v,{silent:true});if(r.converted)ok++}catch(e){console.error("Falha na migração .doc",x.d?.code,e);failed.push(`${x.d?.code||"documento"}: ${e.message}`)}}
+   if(ok){save();renderDocs();}
+   updateCloudBadge(failed.length?`Sincronizado · ${ok} .doc convertido(s), ${failed.length} pendente(s)`:"Sincronizado");
+   if(ok||failed.length)alert(`Migração de Word antigo concluída.\n\nConvertidos para .docx: ${ok}\nPendentes: ${failed.length}${failed.length?"\n\n"+failed.slice(0,5).join("\n"):""}\n\nNenhuma revisão, vigência ou aprovação foi alterada.`)
+ }finally{LEGACY_DOC_MIGRATION_RUNNING=false}
+}
 
 async function exportLocalBackup(){
  try{
@@ -382,6 +419,7 @@ window.sendDocToAI=async i=>{
  const rev=$("doc-revision-number").value.trim();if(!confirm(`Gerar com IA a proposta de revisão ${rev} de ${d.code}? A versão vigente NÃO será substituída nem publicada.`))return;
  const btn=$("doc-send-ai"),status=$("doc-update-status");btn.disabled=true;status.textContent="IA analisando o POP e preparando uma proposta técnica... Isso pode levar alguns minutos.";
  try{
+   if(isLegacyWordName(pub.wordName||pub.wordPath||"")){status.textContent="Word antigo .doc identificado. Convertendo com segurança para .docx antes da revisão...";await ensureVersionWordIsDocx(d,pub);save();renderDocs()}
    let blob;if(pub.wordKey)blob=await getDocBlob(pub.wordKey);else{const r=await fetch(pub.wordPath);if(!r.ok)throw new Error("Word vigente não pôde ser aberto.");blob=await r.blob()}
    if(!blob)throw new Error("Arquivo Word vigente não localizado.");const buf=await blob.arrayBuffer(),bytes=new Uint8Array(buf);let bin="";for(let o=0;o<bytes.length;o+=0x8000)bin+=String.fromCharCode(...bytes.subarray(o,o+0x8000));
    const revisionStatus=docStatus(d),periodicReviewRequired=!!d.reviewRequired||["review","expired","priority","soon"].includes(revisionStatus.key);
@@ -610,7 +648,7 @@ $("owner-create-btn").addEventListener("click",async()=>{
    $("owner-pass").value="";$("owner-pass2").value="";initSecurityUI();alert("Administrador Proprietário criado. Faça o login com sua credencial exclusiva.");
  }catch(e){alert(e.message||"Falha na configuração Cloud.")}
 })
-$("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}$("login-view").classList.add("hidden");$("app-view").classList.remove("hidden");$("logged-user").textContent=SESSION.user;applyPermissions();if(role==="owner")auditAdmin("Login do Administrador Proprietário.");renderAll()}catch(e){$("login-feedback").textContent=e.message||"Falha no login."}})
+$("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}$("login-view").classList.add("hidden");$("app-view").classList.remove("hidden");$("logged-user").textContent=SESSION.user;applyPermissions();if(role==="owner")auditAdmin("Login do Administrador Proprietário.");renderAll();if(role==="owner")setTimeout(()=>migrateLegacyWordDocsIfNeeded().catch(e=>console.error("Migração automática .doc",e)),700)}catch(e){$("login-feedback").textContent=e.message||"Falha no login."}})
 $("logout-btn").addEventListener("click",()=>{SIASH_CLOUD.token="";sessionStorage.removeItem("siash_cloud_token");SESSION={authenticated:false,role:null,user:null};$("app-view").classList.add("hidden");$("login-view").classList.remove("hidden");initSecurityUI()})
 $("refresh-dashboard").addEventListener("click",renderAll)
 $("reset-shift").addEventListener("click",()=>{if(confirm("Iniciar novo plantão? O histórico mensal será preservado.")){S.checklist=CHECKS.map(x=>({text:x,status:"Pendente"}));S.events=[];S.pending=[];S.shiftStarted=new Date().toISOString();save()}})
