@@ -358,16 +358,48 @@ function referenceWords(text=""){
   const stop=new Set(["brasil","ministerio","saude","secretaria","atencao","departamento","acoes","programaticas","estrategicas","brasilia","disponivel","acesso","fonte","requer","conferencia","profissional","edicao","editora"]);
   return new Set(referenceTokens(referenceTitleFromText(text)).filter(x=>!stop.has(x)));
 }
-function referenceSimilarity(a,b){
-  const va=referenceVolume(a),vb=referenceVolume(b);if(va&&vb&&va!==vb)return 0;
-  if((va&&!vb||vb&&!va)&&String(va||vb)!=="1")return 0;
-  const A=referenceWords(a),B=referenceWords(b);if(!A.size||!B.size)return 0;
-  let inter=0;for(const x of A)if(B.has(x))inter++;
-  return inter/Math.min(A.size,B.size);
+function referenceYears(text=""){
+  return new Set(
+    normalizedText(text).match(/\b(?:19|20)\d{2}\b/g) || []
+  );
 }
+
+function referenceSimilarity(a,b){
+  const va=referenceVolume(a),vb=referenceVolume(b);
+
+  if(va&&vb&&va!==vb)return 0;
+  if((va&&!vb||!va&&vb)&&String(va||vb)!=="1")return 0;
+
+  const A=referenceWords(a),B=referenceWords(b);
+  if(!A.size||!B.size)return 0;
+
+  let inter=0;
+  for(const x of A)if(B.has(x))inter++;
+
+  const union=new Set([...A,...B]).size;
+  return union ? inter/union : 0;
+}
+
 function sameBibliographicWork(a,b){
-  const ua=referenceUrlFromText(a),ub=referenceUrlFromText(b);if(ua&&ub&&ua===ub)return true;
-  return referenceSimilarity(a,b)>=0.72;
+  const ua=referenceUrlFromText(a),ub=referenceUrlFromText(b);
+
+  // Mesma URL específica é evidência forte da mesma obra.
+  if(ua&&ub&&ua===ub)return true;
+
+  // Anos bibliográficos explicitamente diferentes indicam obras distintas.
+  const ya=referenceYears(a),yb=referenceYears(b);
+  if(ya.size&&yb.size){
+    let sameYear=false;
+    for(const y of ya){
+      if(yb.has(y)){
+        sameYear=true;
+        break;
+      }
+    }
+    if(!sameYear)return false;
+  }
+
+  return referenceSimilarity(a,b)>=0.80;
 }
 function referenceKeyFromText(text=""){
   const url=referenceUrlFromText(text);if(url)return url.toLowerCase();
