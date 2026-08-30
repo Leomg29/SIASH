@@ -700,7 +700,8 @@ function cleanDuplicateSiashHistoryRows(docxBuffer){
 app.post("/api/ai/revise-pop",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente o Administrador Proprietário pode iniciar revisão com IA."});
   try{
-    const {doc_code,doc_title,current_revision,next_revision,file_name,file_base64,provider,correction_request}=req.body||{};
+    const {doc_code,doc_title,current_revision,next_revision,file_name,file_base64,provider,correction_request,periodic_review_required,periodic_review_reason}=req.body||{};
+    const periodicReviewRequired=periodic_review_required===true;
     if(!doc_code||!file_base64)return res.status(400).json({error:"POP/arquivo não informado."});
     const original=Buffer.from(file_base64,"base64");if(original.length>18*1024*1024)return res.status(413).json({error:"Word acima do limite de 18 MB para revisão automática."});
     const historyCleanup=cleanDuplicateSiashHistoryRows(original),baseDocument=historyCleanup.buffer;
@@ -708,7 +709,10 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text));
     const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida. Para cada alteração, preencha references com os títulos e/ou URLs das fontes que sustentam aquela alteração; use [] quando não houver fonte específica confiável.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\n9) NÃO mantenha, crie ou altere periodicidade, concentração, diluição, tempo de contato, compatibilidade de equipamento ou outra recomendação operacional específica sem fonte rastreável que sustente exatamente essa afirmação. Se a fonte disponível não sustentar o detalhe, mantenha o texto vigente e sinalize isso no summary.\n10) Cada alteração proposta DEVE possuir pelo menos uma referência específica em references. As referências gerais devem conter título e URL completos e rastreáveis. Não invente URL.\n11) As referências efetivamente utilizadas serão incorporadas pelo SIASH à seção de Referências Bibliográficas do Word, preservando as referências institucionais anteriores.
-12) NUNCA use homepage, portal inicial ou raiz institucional (ex.: gov.br/anvisa/pt-br, sbp.com.br/) como referência bibliográfica. Informe a URL da publicação, diretriz, manual, nota técnica, resolução, artigo ou documento específico. Se não souber a URL específica, não proponha a alteração sustentada apenas por essa homepage.\n13) Se houver PEDIDO DE CORREÇÃO DO PROFISSIONAL abaixo, ele tem prioridade dentro destas regras e deve ser atendido sem criar alterações técnicas não solicitadas.\nPEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").trim()||"Nenhum"}\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
+12) NUNCA use homepage, portal inicial ou raiz institucional (ex.: gov.br/anvisa/pt-br, sbp.com.br/) como referência bibliográfica. Informe a URL da publicação, diretriz, manual, nota técnica, resolução, artigo ou documento específico. Se não souber a URL específica, não proponha a alteração sustentada apenas por essa homepage.\n13) Se houver PEDIDO DE CORREÇÃO DO PROFISSIONAL abaixo, ele tem prioridade dentro destas regras e deve ser atendido sem criar alterações técnicas não solicitadas.
+14) REVISÃO PERIÓDICA / VIGÊNCIA: se o conteúdo técnico permanecer adequado e não houver alteração técnico-científica necessária, NÃO invente mudança apenas para criar uma revisão. Informe isso claramente no summary. A SIASH poderá registrar uma revisão documental periódica sem mudança de conteúdo, sempre com validação humana e sem publicação automática.
+MOTIVO DA REVISÃO DOCUMENTAL: ${String(periodic_review_reason||"não informado").trim()||"não informado"}
+PEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").trim()||"Nenhum"}\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
     const ai=await runAIRevision(prompt,provider);
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
@@ -727,16 +731,25 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
       excludedChanges=effective.filter(ch=>!traceable.includes(ch));
       if(!traceable.length)throw new Error("As alterações propostas ficaram sustentadas apenas por fontes genéricas ou não identificáveis. A SIASH não inseriu essas fontes no Word e bloqueou a proposta para proteger a bibliografia institucional.");
     }
-    // v0.13.6 — auto-higiene retrocompatível: POPs atualizados nas versões antigas podem carregar
-    // homepages genéricas ou marcadores SIASH legados. Em uma nova atualização, esses resíduos
-    // são saneados na PROPOSTA mesmo que a IA conclua que não há mudança técnico-científica necessária.
-    if(!traceable.length&&!hygieneBefore.needsHygiene)throw new Error("A revisão não produziu alteração técnico-científica rastreável nem correção bibliográfica necessária. O POP vigente foi preservado.");
+    // v0.14.6 — separa revisão documental periódica de alteração técnico-científica.
+    // Se o POP precisa renovar a vigência, a ausência de mudança técnica NÃO é falha: cria-se uma
+    // proposta de revisão periódica, preservando integralmente o conteúdo e exigindo a mesma aprovação humana.
+    // Fora de um ciclo de revisão documental solicitado, permanece a proteção contra falsa revisão.
+    if(!traceable.length&&!hygieneBefore.needsHygiene&&!periodicReviewRequired)throw new Error("A revisão não produziu alteração técnico-científica rastreável nem correção bibliográfica necessária. O POP vigente foi preservado.");
     let contentRevised=baseDocument,verification={verified:true,actualChanges:0};
     if(traceable.length){contentRevised=patchDocx(baseDocument,traceable);verification=verifyDocxRevision(baseDocument,contentRevised,traceable)}
-    const withRefs=appendReviewedReferences(contentRevised,references,{allowHygieneOnly:!traceable.length&&hygieneBefore.needsHygiene});
+    const eligibleReferenceCount=references.filter(x=>x?.wordEligible===true).length;
+    let withRefs={buffer:contentRevised,added:0,moved:0,coverage:[],representedByInstitutional:0,genericReferencesRemoved:0,legacyLabelsRemoved:0,wordEligibleReferences:0};
+    if(traceable.length||hygieneBefore.needsHygiene||(periodicReviewRequired&&eligibleReferenceCount>0)){
+      withRefs=appendReviewedReferences(contentRevised,references,{allowHygieneOnly:!traceable.length});
+    }
     const hygieneChanges=Number(withRefs.genericReferencesRemoved||0)+Number(withRefs.labelsRemoved||0);
-    if(!traceable.length&&hygieneChanges<1)throw new Error("A SIASH não encontrou correção bibliográfica efetiva a aplicar. O POP vigente foi preservado.");
+    const periodicReviewOnly=periodicReviewRequired&&!traceable.length&&hygieneChanges<1;
+    if(!traceable.length&&!periodicReviewRequired&&hygieneChanges<1)throw new Error("A SIASH não encontrou correção bibliográfica efetiva a aplicar. O POP vigente foi preservado.");
     verification.actualChanges=Number(verification.actualChanges||traceable.length)+hygieneChanges;
+    verification.periodicReviewOnly=periodicReviewOnly;
+    verification.periodicReviewRequired=periodicReviewRequired;
+    verification.periodicReviewReason=String(periodic_review_reason||"").trim();
     verification.historyRowsCleaned=Number(historyCleanup.removed||0);
     verification.bibliographyHygieneOnly=!traceable.length&&hygieneChanges>0;
     verification.bibliographyHygieneChanges=hygieneChanges;
@@ -746,11 +759,12 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     // v0.13.3: não exige que toda URL retornada pela IA apareça literalmente no Word.
     // Uma fonte pode já estar representada por uma referência institucional semanticamente equivalente;
     // nesse caso, repetir a URL criaria justamente a duplicidade que a v0.13.2 passou a impedir.
-    if(!withRefs.coverage?.length||withRefs.coverage.some(x=>!x.represented))throw new Error("Falha de integridade ao consolidar as referências no Word. A proposta não foi liberada.");
+    if(!periodicReviewOnly&&(!withRefs.coverage?.length||withRefs.coverage.some(x=>!x.represented)))throw new Error("Falha de integridade ao consolidar as referências no Word. A proposta não foi liberada.");
+    if(periodicReviewOnly&&withRefs.coverage?.some(x=>!x.represented))throw new Error("Falha de integridade ao consolidar as referências da revisão periódica no Word. A proposta não foi liberada.");
     verification.referencesAdded=withRefs.added;
     verification.referencesVerified=classified.verified.length;
     verification.referencesPending=classified.pending.length;verification.referencePlacement="bibliography_section_verified";
-    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
+    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,periodic_review_only:periodicReviewOnly,periodic_review_required:periodicReviewRequired,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
     res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
