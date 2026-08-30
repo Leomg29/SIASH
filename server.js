@@ -538,15 +538,26 @@ function providerOrder(requested){
 }
 async function runAIRevision(prompt,requested){
   const errors=[];
-  for(const p of providerOrder(requested)){
+  const order=providerOrder(requested);
+  console.log(`[SIASH AI] início da revisão | ordem=${order.join(">")}`);
+  for(const p of order){
     try{
-      if(p==="gemini"&&GEMINI_API_KEY)return await reviseWithGemini(prompt);
-      if(p==="cloudflare"&&cloudflareConfigured())return await reviseWithCloudflare(prompt);
-      if(p==="openai"&&openaiClient)return await reviseWithOpenAI(prompt);
-      errors.push(`${p}: não configurado`);
-    }catch(e){console.error(`AI provider ${p}:`,e);errors.push(`${p}: ${e?.message||"falha"}`)}
+      let ai=null;
+      if(p==="gemini"&&GEMINI_API_KEY)ai=await reviseWithGemini(prompt);
+      else if(p==="cloudflare"&&cloudflareConfigured())ai=await reviseWithCloudflare(prompt);
+      else if(p==="openai"&&openaiClient)ai=await reviseWithOpenAI(prompt);
+      else {errors.push(`${p}: não configurado`);console.log(`[SIASH AI] provedor ignorado | provider=${p} | motivo=não_configurado`);continue}
+      console.log(`[SIASH AI] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
+      return ai;
+    }catch(e){
+      const msg=String(e?.message||"falha").replace(/\s+/g," ").slice(0,500);
+      console.warn(`[SIASH AI] provedor indisponível | provider=${p} | motivo=${msg}`);
+      errors.push(`${p}: ${msg}`);
+      const next=order[order.indexOf(p)+1];
+      if(next)console.log(`[SIASH AI] iniciando fallback | de=${p} | para=${next}`);
+    }
   }
-  console.error("Todos os provedores de IA falharam:",errors.join(" | "));
+  console.error(`[SIASH AI] todos os provedores falharam | ${errors.join(" | ")}`);
   const err=new Error("Serviço de IA temporariamente indisponível. Nenhuma alteração foi realizada no POP. Tente novamente mais tarde.");
   err.code="AI_PROVIDERS_UNAVAILABLE";
   throw err;
