@@ -162,7 +162,9 @@ const CLOUDFLARE_KNOWN_PAID_MODELS = new Set([
   "@cf/moonshotai/kimi-k2.7-code",
   "@cf/zai-org/glm-5.2"
 ]);
-const CLOUDFLARE_TIMEOUT_MS = Math.max(15000, Number(process.env.CLOUDFLARE_TIMEOUT_MS || 90000));
+const CLOUDFLARE_TIMEOUT_MS = Math.max(60000, Number(process.env.CLOUDFLARE_TIMEOUT_MS || 240000));
+const CLOUDFLARE_MAX_COMPLETION_TOKENS = Math.max(1000, Number(process.env.CLOUDFLARE_MAX_COMPLETION_TOKENS || 5000));
+const CLOUDFLARE_REASONING_EFFORT = String(process.env.CLOUDFLARE_REASONING_EFFORT || "low").toLowerCase();
 function xmlDecode(s=""){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&")}
 function xmlEncode(s=""){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;")}
 function docxParagraphs(buf){
@@ -515,7 +517,15 @@ async function reviseWithGemini(prompt){
 async function cloudflareRunModel(model,prompt){
   const strictPrompt=prompt+`\n\nFORMATO DE SAÍDA OBRIGATÓRIO: responda SOMENTE com JSON válido nas chaves summary, updates e references. Não inclua markdown nem comentários fora do JSON. Em references, forneça título e URL específica do documento quando souber com segurança; nunca invente URL.`;
   const url=`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/run/${model}`;
-  const payload={messages:[{role:"system",content:"Você é um revisor técnico-científico hospitalar. Obedeça estritamente às regras do usuário e retorne apenas JSON válido."},{role:"user",content:strictPrompt}],max_completion_tokens:12000,temperature:0.1};
+  const payload={
+    messages:[
+      {role:"system",content:"Você é um revisor técnico-científico hospitalar. Obedeça estritamente às regras do usuário e retorne apenas JSON válido."},
+      {role:"user",content:strictPrompt}
+    ],
+    max_completion_tokens:CLOUDFLARE_MAX_COMPLETION_TOKENS,
+    reasoning_effort:["low","medium","high"].includes(CLOUDFLARE_REASONING_EFFORT)?CLOUDFLARE_REASONING_EFFORT:"low",
+    temperature:0.1
+  };
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),CLOUDFLARE_TIMEOUT_MS);
   let r;
   try{r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json","Authorization":`Bearer ${CLOUDFLARE_API_TOKEN}`},body:JSON.stringify(payload),signal:controller.signal})}
@@ -568,14 +578,14 @@ function cloudflareModelCandidates(){
 }
 function cloudflareModelRetryable(e){
   const msg=String(e?.message||"").toLowerCase();
-  return e?.httpStatus===403||e?.httpStatus===404||e?.httpStatus===429||e?.cloudflareEmptyContent===true||msg.includes("workers free plan")||msg.includes("not available")||msg.includes("out of capacity")||msg.includes("5035")||msg.includes("3040")||msg.includes("não retornou conteúdo utilizável");
+  return e?.httpStatus===403||e?.httpStatus===404||e?.httpStatus===429||e?.cloudflareEmptyContent===true||msg.includes("tempo limite")||msg.includes("workers free plan")||msg.includes("not available")||msg.includes("out of capacity")||msg.includes("5035")||msg.includes("3040")||msg.includes("não retornou conteúdo utilizável");
 }
 async function reviseWithCloudflare(prompt){
   if(!CLOUDFLARE_API_TOKEN||!CLOUDFLARE_ACCOUNT_ID)throw new Error("Cloudflare Workers AI ainda não configurada no servidor.");
   const errors=[];
   for(const model of cloudflareModelCandidates()){
     try{
-      console.log(`[SIASH AI] Cloudflare tentativa | model=${model}`);
+      console.log(`[SIASH AI] Cloudflare tentativa | model=${model} | timeout=${Math.round(CLOUDFLARE_TIMEOUT_MS/1000)}s | max_tokens=${CLOUDFLARE_MAX_COMPLETION_TOKENS} | reasoning=${CLOUDFLARE_REASONING_EFFORT}`);
       const ai=await cloudflareRunModel(model,prompt);
       if(model!==CLOUDFLARE_AI_MODEL)console.log(`[SIASH AI] Cloudflare fallback de modelo concluído | configured=${CLOUDFLARE_AI_MODEL} | active=${model}`);
       return ai;
