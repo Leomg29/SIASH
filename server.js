@@ -536,25 +536,32 @@ function providerOrder(requested){
   if(p==="openai")return ["openai","cloudflare","gemini"];
   return ["gemini","cloudflare","openai"];
 }
-async function runAIRevision(prompt,requested){
+async function runAIRevision(prompt,requested,options={}){
   const errors=[];
   const order=providerOrder(requested);
+  const simulatedUnavailable=new Set(Array.isArray(options?.simulateUnavailable)?options.simulateUnavailable.map(x=>String(x).toLowerCase()):[]);
+  const diagnostic=options?.diagnostic===true;
   console.log(`[SIASH AI] início da revisão | ordem=${order.join(">")}`);
   for(const p of order){
     try{
       let ai=null;
+      if(simulatedUnavailable.has(p)){
+        const simulated=new Error(`${p} indisponível por simulação diagnóstica controlada.`);
+        simulated.code="SIASH_DIAGNOSTIC_SIMULATION";
+        throw simulated;
+      }
       if(p==="gemini"&&GEMINI_API_KEY)ai=await reviseWithGemini(prompt);
       else if(p==="cloudflare"&&cloudflareConfigured())ai=await reviseWithCloudflare(prompt);
       else if(p==="openai"&&openaiClient)ai=await reviseWithOpenAI(prompt);
       else {errors.push(`${p}: não configurado`);console.log(`[SIASH AI] provedor ignorado | provider=${p} | motivo=não_configurado`);continue}
-      console.log(`[SIASH AI] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
+      console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
       return ai;
     }catch(e){
       const msg=String(e?.message||"falha").replace(/\s+/g," ").slice(0,500);
-      console.warn(`[SIASH AI] provedor indisponível | provider=${p} | motivo=${msg}`);
+      console.warn(`[SIASH AI${diagnostic?" TEST":""}] provedor indisponível | provider=${p} | motivo=${msg}`);
       errors.push(`${p}: ${msg}`);
       const next=order[order.indexOf(p)+1];
-      if(next)console.log(`[SIASH AI] iniciando fallback | de=${p} | para=${next}`);
+      if(next)console.log(`[SIASH AI${diagnostic?" TEST":""}] iniciando fallback | de=${p} | para=${next}`);
     }
   }
   console.error(`[SIASH AI] todos os provedores falharam | ${errors.join(" | ")}`);
@@ -563,6 +570,27 @@ async function runAIRevision(prompt,requested){
   throw err;
 }
 app.get("/api/ai/status",auth,(req,res)=>res.json({configured:!!(GEMINI_API_KEY||cloudflareConfigured()||openaiClient),defaultProvider:AI_DEFAULT_PROVIDER,providers:availableAIProviders(),privacyNotice:"Não envie dados identificáveis de pacientes aos provedores externos de IA. Toda proposta e referência deve ser conferida pelo profissional antes da publicação."}));
+
+app.post("/api/ai/diagnostic/fallback",auth,async(req,res)=>{
+  const startedAt=Date.now();
+  try{
+    console.log("[SIASH AI TEST] diagnóstico iniciado | cenário=gemini_simulado_indisponível | esperado=cloudflare");
+    const diagnosticPrompt=[
+      "DIAGNÓSTICO TÉCNICO SIASH. Não há dados de paciente nem documento hospitalar neste teste.",
+      "Responda SOMENTE em JSON válido, sem markdown, exatamente com as chaves summary, updates e references.",
+      "Use summary como 'SIASH_CLOUDFLARE_DIAGNOSTIC_OK', updates como [] e references como []."
+    ].join("\n");
+    const ai=await runAIRevision(diagnosticPrompt,"auto",{simulateUnavailable:["gemini"],diagnostic:true});
+    const cloudflareOk=ai?.provider==="cloudflare";
+    console.log(`[SIASH AI TEST] diagnóstico concluído | ok=${cloudflareOk} | provider=${ai?.provider||"—"} | model=${ai?.model||"—"} | ms=${Date.now()-startedAt}`);
+    if(!cloudflareOk)return res.status(502).json({ok:false,expected:"cloudflare",provider:ai?.provider||null,model:ai?.model||null,message:"O fallback respondeu, mas não foi concluído pela Cloudflare Workers AI."});
+    res.json({ok:true,scenario:"gemini_simulado_indisponivel",provider:ai.provider,model:ai.model,elapsedMs:Date.now()-startedAt,message:"Teste aprovado: com Gemini simulado como indisponível, a Cloudflare Workers AI assumiu o processamento pelo mesmo fluxo de fallback do SIASH."});
+  }catch(e){
+    const msg=String(e?.message||"Falha no diagnóstico.").replace(/\s+/g," ").slice(0,500);
+    console.error(`[SIASH AI TEST] diagnóstico falhou | motivo=${msg}`);
+    res.status(502).json({ok:false,scenario:"gemini_simulado_indisponivel",message:"Teste de fallback não concluído pela Cloudflare Workers AI.",detail:msg});
+  }
+});
 
 function cleanDuplicateSiashHistoryRows(docxBuffer){
   // v0.13.7: saneia somente duplicatas/intermediárias geradas pelo próprio SIASH no mesmo ciclo.

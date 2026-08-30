@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>SIASH | HospitalIA UTIN — Alpha Consolidada v0.13.13</title>
+<title>SIASH | HospitalIA UTIN — Alpha Consolidada v0.13.14</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
   <div class="login-card">
     <div class="brand-mark">SIASH</div>
     <h1>HospitalIA</h1>
-    <p class="muted">UTI Neonatal • Alpha Consolidada v0.13.13</p>
+    <p class="muted">UTI Neonatal • Alpha Consolidada v0.13.14</p>
     <div id="owner-setup" class="owner-setup hidden">
       <div class="security-badge">Primeiro acesso do Proprietário</div>
       <p class="muted">Crie aqui a credencial exclusiva do Administrador Proprietário. Esta etapa aparece somente enquanto não houver proprietário configurado neste navegador.</p>
@@ -41,7 +41,7 @@
 
 <div id="app-view" class="app-shell hidden">
 <aside class="sidebar">
-  <div class="sidebar-brand"><div class="brand-mark small">SIASH</div><div><strong>HospitalIA</strong><span>UTIN • v0.13.13</span></div></div>
+  <div class="sidebar-brand"><div class="brand-mark small">SIASH</div><div><strong>HospitalIA</strong><span>UTIN • v0.13.14</span></div></div>
   <nav>
     <button data-view="dashboard" class="nav-item active">Dashboard</button>
     <button data-view="plantao" class="nav-item">Meu Plantão</button>
@@ -548,12 +548,14 @@
       <label>Meta ocupação (%)<input id="s-target" type="number" min="1" max="100"></label><label class="span2">Instituição<input id="s-hospital"></label>
       <label class="span2">Provedor de IA para SIASH Docs
         <select id="s-ai-provider">
-          <option value="auto">Automático — Gemini primeiro, OpenAI como alternativa</option>
-          <option value="gemini">Google Gemini</option>
-          <option value="openai">OpenAI</option>
+          <option value="auto">Automático — Gemini → Cloudflare → OpenAI</option>
+          <option value="gemini">Google Gemini (com fallback)</option>
+          <option value="cloudflare">Cloudflare Workers AI (com fallback)</option>
+          <option value="openai">OpenAI (com fallback)</option>
         </select>
       </label>
       <div class="span2 governance-box compact" id="s-ai-status"><strong>IA:</strong> verificando provedores configurados...</div>
+      <div class="span2 governance-box compact"><strong>Diagnóstico de contingência:</strong> simula somente neste teste a indisponibilidade do Gemini e verifica se a Cloudflare assume pelo fluxo real de fallback. Não usa POP, não cria revisão e não altera chaves.<br><button id="s-test-ai-fallback" class="secondary" type="button">TESTAR FALLBACK CLOUDFLARE</button><div id="s-ai-diagnostic-result" class="muted" style="margin-top:8px"></div></div>
       <div class="full security-warning"><strong>Privacidade:</strong> durante testes com nível gratuito do Gemini, use somente POPs e documentos sem dados identificáveis de pacientes. Para produção hospitalar, a configuração de privacidade/LGPD deverá ser validada antes do uso assistencial.</div>
       <button class="primary" type="submit">Salvar configurações</button>
     </form>

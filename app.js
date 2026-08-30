@@ -23,7 +23,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.13",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.13.14",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -546,6 +546,19 @@ async function renderAIStatus(){
  try{const st=await cloudJson("/api/ai/status");const g=st.providers?.gemini,c=st.providers?.cloudflare,o=st.providers?.openai,gs=g?.searchMode==="google_search"?"Pesquisa Google ativa":"Pesquisa Google desativada (Free Tier)";el.innerHTML=`<strong>IA configurada:</strong> Gemini ${g?.configured?"✓":"—"} (${safe(g?.model||"—")}) · ${gs} · Cloudflare ${c?.configured?"✓":"—"} (${safe(c?.model||"—")}) · OpenAI ${o?.configured?"✓":"—"} (${safe(o?.model||"—")})`}
  catch(e){el.innerHTML="<strong>IA:</strong> não foi possível consultar o status dos provedores."}
 }
+async function runCloudflareFallbackDiagnostic(){
+ const btn=$("s-test-ai-fallback"),out=$("s-ai-diagnostic-result");
+ if(!btn||!out)return;
+ if(!requireOwner("o teste diagnóstico de fallback da IA"))return;
+ btn.disabled=true;out.textContent="Executando teste controlado: Gemini será simulado como indisponível somente nesta requisição...";
+ try{
+   const r=await cloudJson("/api/ai/diagnostic/fallback",{method:"POST",body:"{}"});
+   out.innerHTML=`<strong>APROVADO ✓</strong> Gemini simulado indisponível → ${safe(aiProviderLabel(r.provider))}${r.model?` · ${safe(r.model)}`:""}. Tempo: ${Number(r.elapsedMs||0)} ms. Nenhum POP foi alterado.`;
+   showToast("Fallback Cloudflare aprovado",2200);
+ }catch(e){
+   out.innerHTML=`<strong>FALHOU:</strong> ${safe(e.message||"Não foi possível concluir o diagnóstico.")}`;
+ }finally{btn.disabled=false}
+}
 function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderHuddle();renderRH();renderSettings();renderAdmin();applyPermissions()}
 document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));btn.classList.add("active");document.querySelectorAll(".view").forEach(v=>v.classList.add("hidden"));$("view-"+btn.dataset.view).classList.remove("hidden");$("page-title").textContent=btn.textContent;renderAll()}))
 $("owner-create-btn").addEventListener("click",async()=>{
@@ -724,6 +737,7 @@ $("doc-revision-form").addEventListener("submit",async e=>{
 $("huddle-form").addEventListener("submit",e=>{e.preventDefault();S.huddle.push({sector:$("h-sector").value,problem:$("h-problem").value.trim(),action:$("h-action").value.trim(),owner:$("h-owner").value.trim(),deadline:$("h-deadline").value,priority:$("h-priority").value,done:false});e.target.reset();save()})
 $("swap-form").addEventListener("submit",e=>{e.preventDefault();S.rh.push({type:"Troca de plantão",name:$("swap-a").value.trim(),detail:`Substituto: ${$("swap-b").value.trim()} | ${dateBR($("swap-date-a").value)} ↔ ${dateBR($("swap-date-b").value)} | ${$("swap-reason").value.trim()}`,status:"Aguardando aprovação"});e.target.reset();save()})
 $("point-form").addEventListener("submit",e=>{e.preventDefault();S.rh.push({type:"Inconsistência de ponto",name:$("point-name").value.trim(),detail:`${$("point-type").value} em ${dateBR($("point-date").value)} às ${$("point-time").value} | ${$("point-reason").value.trim()}`,status:"Aguardando aprovação"});e.target.reset();save()})
+$("s-test-ai-fallback")?.addEventListener("click",runCloudflareFallbackDiagnostic);
 $("settings-form").addEventListener("submit",e=>{e.preventDefault();if(!requireOwner("alterações nas Configurações da Unidade"))return;const beds=+$("s-beds").value,intensive=+$("s-intensive").value,intermediate=+$("s-intermediate").value;if(intensive+intermediate!==beds)return alert("Intensivos + intermediários deve ser igual ao total de leitos.");S.settings={unit:$("s-unit").value,beds,intensive,intermediate,target:+$("s-target").value,hospital:$("s-hospital").value,aiProvider:$("s-ai-provider")?.value||"auto"};auditAdmin("Configurações estruturais da unidade alteradas.");save();alert("Configurações salvas pelo Administrador Proprietário.")})
 if($("admin-test-lock"))$("admin-test-lock").addEventListener("click",()=>{if(requireOwner("o teste administrativo")){auditAdmin("Teste de bloqueio estrutural executado com sucesso.");save();alert("Sessão proprietária validada: acesso estrutural autorizado.")}});$("export-local-backup")?.addEventListener("click",exportLocalBackup);
 $("import-local-backup")?.addEventListener("change",async e=>{const f=e.target.files?.[0];if(!f)return;try{await importBackupFile(f,!!(SIASH_CLOUD.enabled&&SIASH_CLOUD.token))}catch(err){alert(err.message)}e.target.value=""});
