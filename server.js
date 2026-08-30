@@ -303,11 +303,19 @@ async function classifyReferenceUrls(refs){
   return {verified:dedup(verified),pending:dedup(pending)};
 }
 function isReferenceHeading(text=""){
-  const t=normalizedText(text).replace(/^[\s\u2022\-]+/,"");
-  return /^(?:\d{1,2}\s*[.)-]?\s*)?refer[eê]ncias?\s+bibliogr[aá]ficas?\s*:?$/i.test(t);
+  const t = normalizedText(text)
+    .replace(/\u00a0/g," ")
+    .replace(/^[\s\u2022\u25CF\u25AA\u25E6\-–—]+/,"")
+    .replace(/\s+/g," ")
+    .trim();
+
+  return /^(?:\d{1,2}(?:\.\d{1,2})?\s*[-–—.)]?\s*)?(?:refer[eê]ncias?(?:\s+bibliogr[aá]ficas?)?|bibliografia)\s*:?\s*$/i.test(t);
 }
+
 function referenceSectionInfo(paragraphs){
-  const headings=paragraphs.filter(p=>isReferenceHeading(p.text)),heading=headings[headings.length-1];if(!heading)return null;
+  const headings = paragraphs.filter(p=>isReferenceHeading(p.text));
+  if(headings.length !== 1) return null;
+  const heading = headings[0];
   const after=paragraphs.filter(p=>p.index>heading.index);
   const stop=after.find(p=>/^\s*(assinatura(?:\s+e\s+carimbo)?|carimbo|anexo(?:s)?|controle\s+hist[oó]rico)\s*:?\s*$/i.test(normalizedText(p.text)));
   const sectionParas=paragraphs.filter(p=>p.index>heading.index&&(!stop||p.index<stop.index));
@@ -379,8 +387,14 @@ function appendReviewedReferences(buf,refs,options={}){
   const blocks=[...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);
   const texts=blocks.map(paragraphTextFromXml);
   const headingCandidates=texts.map((text,index)=>({index,text})).filter(p=>isReferenceHeading(p.text));
-  const heading=headingCandidates[headingCandidates.length-1];
-  if(!heading)throw new Error("A seção de Referências Bibliográficas não foi localizada de forma inequívoca no Word. A proposta foi bloqueada para preservar a estrutura institucional.");
+  if(headingCandidates.length !== 1){
+  throw new Error(
+    headingCandidates.length === 0
+      ? "A seção de Referências não foi localizada de forma inequívoca no Word. A proposta foi bloqueada para preservar a estrutura institucional."
+      : "Foram localizadas múltiplas seções possíveis de Referências no Word. A proposta foi bloqueada para preservar a estrutura institucional."
+  );
+}
+const heading = headingCandidates[0];
   const stopRx=/^\s*(assinatura(?:\s+e\s+carimbo)?|carimbo|anexo(?:s)?|controle\s+hist[oó]rico)\s*:?\s*$/i;
   const stopIndex=texts.findIndex((t,i)=>i>heading.index&&stopRx.test(normalizedText(t)));
   const inSection=(i)=>i>heading.index&&(stopIndex<0||i<stopIndex);
