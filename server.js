@@ -843,7 +843,7 @@ PEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").tri
     const hygieneChanges=Number(withRefs.genericReferencesRemoved||0)+Number(withRefs.labelsRemoved||0);
     const periodicReviewOnly=periodicReviewRequired&&!traceable.length&&hygieneChanges<1;
     if(!traceable.length&&!periodicReviewRequired&&hygieneChanges<1)throw new Error("A SIASH não encontrou correção bibliográfica efetiva a aplicar. O POP vigente foi preservado.");
-    verification.actualChanges=Number(verification.actualChanges||traceable.length)+hygieneChanges;
+    verification.actualChanges=Number(verification.actualChanges??traceable.length)+hygieneChanges;
     verification.periodicReviewOnly=periodicReviewOnly;
     verification.periodicReviewRequired=periodicReviewRequired;
     verification.periodicReviewReason=String(periodic_review_reason||"").trim();
@@ -861,8 +861,18 @@ PEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").tri
     verification.referencesAdded=withRefs.added;
     verification.referencesVerified=classified.verified.length;
     verification.referencesPending=classified.pending.length;verification.referencePlacement="bibliography_section_verified";
+    const validatedSummary=traceable.length
+  ?`Alterações técnico-científicas efetivamente aplicadas e validadas no Word: ${traceable.map((ch,i)=>{
+      const before=String(ch.before_text||"").trim();
+      const after=String(ch.new_text||"").trim();
+      const reason=String(ch.reason||"").trim();
+      return `${i+1}) ${before} → ${after}${reason?` — ${reason}`:""}`;
+    }).join(" | ")}`
+  :periodicReviewOnly
+    ?"Revisão periódica concluída sem alteração técnico-científica do conteúdo. O documento segue para conferência e aprovação profissional."
+    :"Nenhuma alteração técnico-científica efetivamente aplicada e validada no Word.";
     await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,periodic_review_only:periodicReviewOnly,periodic_review_required:periodicReviewRequired,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
-    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:result.summary||"",changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
+    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:validatedSummary,changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 
