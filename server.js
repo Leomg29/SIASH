@@ -698,7 +698,7 @@ async function reviseWithCloudflare(prompt){
 async function reviseWithOpenAI(prompt){
   if(!openaiClient)throw new Error("OPENAI_API_KEY ainda não configurada no servidor.");
   const response=await openaiClient.responses.create({model:OPENAI_MODEL,tools:[{type:"web_search"}],input:prompt,text:{format:{type:"json_schema",name:"siash_pop_revision",strict:true,schema:{type:"object",additionalProperties:false,properties:{summary:{type:"string"},updates:{type:"array",items:{type:"object",additionalProperties:false,properties:{paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"},references:{type:"array",items:{type:"string"}}},required:["paragraph_index","new_text","reason","references"]}},references:{type:"array",items:{type:"object",additionalProperties:false,properties:{title:{type:"string"},url:{type:"string"}},required:["title","url"]}}},required:["summary","updates","references"]}}}});
-  return {result:JSON.parse(response.output_text||"{}"),sources:collectOpenAISources(response),model:OPENAI_MODEL,provider:"openai"};
+  return {result:JSON.parse(response.output_text||"{}"),sources:collectOpenAISources(response),model:OPENAI_MODEL,provider:"openai",researchMode:"web_search"};
 }
 function cloudflareConfigured(){return !!(CLOUDFLARE_API_TOKEN&&CLOUDFLARE_ACCOUNT_ID)}
 function availableAIProviders(){const cfCandidates=cloudflareModelCandidates(),cfEffective=cfCandidates[0]||CLOUDFLARE_AI_MODEL;return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL,searchMode:geminiUseSearch()?"google_search":"off"},cloudflare:{configured:cloudflareConfigured(),model:cfEffective,configuredModel:CLOUDFLARE_AI_MODEL,configuredModelIgnored:!!CLOUDFLARE_AI_MODEL&&cfEffective!==CLOUDFLARE_AI_MODEL,freeModelFallbacks:CLOUDFLARE_FREE_MODEL_FALLBACKS,searchMode:"off"},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
@@ -712,11 +712,16 @@ function providerOrder(requested){
 async function runAIRevision(prompt,requested,options={}){
   const errors=[];
   const order=providerOrder(requested);
+  const requireWebResearch=options?.requireWebResearch===true;
   const simulatedUnavailable=new Set(Array.isArray(options?.simulateUnavailable)?options.simulateUnavailable.map(x=>String(x).toLowerCase()):[]);
   const diagnostic=options?.diagnostic===true;
   console.log(`[SIASH AI] início da revisão | ordem=${order.join(">")}`);
   for(const p of order){
     try{
+      if(requireWebResearch){
+        const webCapable=(p==="openai"&&!!openaiClient)||(p==="gemini"&&!!GEMINI_API_KEY&&geminiUseSearch());
+        if(!webCapable){errors.push(`${p}: pesquisa web atual indisponível`);console.log(`[SIASH AI] provedor ignorado | provider=${p} | motivo=pesquisa_web_obrigatoria`);continue}
+      }
       let ai=null;
       if(simulatedUnavailable.has(p)){
         const simulated=new Error(`${p} indisponível por simulação diagnóstica controlada.`);
@@ -738,6 +743,7 @@ async function runAIRevision(prompt,requested,options={}){
     }
   }
   console.error(`[SIASH AI] todos os provedores falharam | ${errors.join(" | ")}`);
+  if(requireWebResearch){const err=new Error("Esta revisão exige pesquisa web atual, mas nenhum provedor configurado com pesquisa verificável está disponível. Configure Gemini com Google Search ou OpenAI com web_search; o POP vigente permanece inalterado.");err.code="AI_WEB_RESEARCH_REQUIRED";throw err}
   const err=new Error("Serviço de IA temporariamente indisponível. Nenhuma alteração foi realizada no POP. Tente novamente mais tarde.");
   err.code="AI_PROVIDERS_UNAVAILABLE";
   throw err;
@@ -794,23 +800,50 @@ function cleanDuplicateSiashHistoryRows(docxBuffer){
   return {buffer:zip.toBuffer(),removed};
 }
 
+// v0.14.11 — auditoria científica retroativa dos POPs já avaliados no SIASH Docs.
+const SCIENTIFIC_AUDIT_POP={
+  "LEG-UTIN-032":{status:"review",label:"Revisão necessária",findings:["Reavaliar critérios fixos de preparo do box por peso/idade gestacional e condição clínica.","Atualizar requisitos de equipamentos e insumos com referências neonatal/institucionais atuais.","Incluir referências técnico-científicas aplicáveis; o documento auditado não possuía bibliografia técnica suficiente."]},
+  "LEG-UTIN-031":{status:"review",label:"Revisão necessária",findings:["Resolver a inconsistência entre profundidade/coluna do selo d'água descrita no procedimento.","Atualizar montagem, monitorização, segurança e registros do sistema de drenagem torácica neonatal/pediátrica.","Substituir ou complementar referências antigas por fontes atuais e específicas."]},
+  "LEG-UTIN-030":{status:"review",label:"Revisão necessária",findings:["Reavaliar faixas fixas de temperatura ambiente/equipamento e critérios de servo-controle.","Atualizar uso de umidade em incubadora conforme idade gestacional, peso, dias de vida e condição clínica.","Atualizar bibliografia neonatal de termorregulação."]},
+  "LEG-UTIN-027":{status:"review",label:"Revisão necessária",findings:["Revisar horários rígidos de manipulação/pesagem e individualizar o cuidado conforme estabilidade e neuroproteção.","Reconciliar metas conflitantes de saturação e alarmes.","Reavaliar regras fixas de posicionamento, acesso vascular, exames e procedimentos nas primeiras 72 horas.","Atualizar referências muito antigas para sustentar o protocolo em 2026."]},
+  "LEG-UTIN-026":{status:"review",label:"Revisão necessária",findings:["Reavaliar indicação, contraindicações, volumes e técnica de lavagem gástrica no RN/criança.","Rever materiais e terminologia, incluindo uso de sonda apropriada ao procedimento.","Atualizar referências específicas e contemporâneas."]},
+  "LEG-UTIN-024":{status:"review",label:"Revisão necessária",findings:["Atualizar critérios e frequência de banho/higiene conforme idade gestacional e estabilidade clínica.","Reavaliar cuidado do coto umbilical e uso de produtos de limpeza/desinfecção.","Atualizar referências neonatais e de integridade cutânea."]},
+  "LEG-UTIN-023":{status:"review",label:"Revisão necessária",findings:["Alinhar o POP à ANVISA vigente e estratégia multimodal.","Reavaliar a regra universal de volume de 3–5 mL e priorizar quantidade suficiente conforme produto/fabricante.","Explicitar os 5 momentos e esclarecer que preparação alcoólica não é mero complemento da lavagem.","Atualizar referências de 2005–2013 com publicações oficiais recentes."]},
+  "LEG-UTIN-022":{status:"review",label:"Revisão necessária",findings:["Definir com precisão a solução/produto de higiene oral em vez de solução de escolha.","Reavaliar técnica e volumes em RN/criança intubada.","Atualizar frequência, avaliação da mucosa e referências específicas de higiene oral neonatal/pediátrica."]},
+  "LEG-UTIN-020":{status:"review",label:"Revisão necessária",findings:["Vincular produtos desinfetantes e compatibilidade química ao manual do fabricante e protocolo CCIH/SCIRAS.","Reavaliar periodicidade fixa de 7/15 dias.","Atualizar referências de limpeza/desinfecção de incubadoras e equipamentos neonatais."]},
+  "LEG-UTIN-018":{status:"review",label:"Revisão necessária",findings:["Atualizar indicação e monitorização da fototerapia conforme diretrizes neonatais atuais.","Evitar distância universal fixa; usar irradiância efetiva e especificação do fabricante.","Atualizar referências concentradas em 1995–2007."]},
+  "LEG-UTIN-029":{status:"adjust",label:"Ajuste recomendado",findings:["Atualizar bibliografia e cuidados de pele associados aos eletrodos.","Reavaliar uso de pasta/gel conforme equipamento/fabricante.","Reforçar alarmes individualizados e qualidade do traçado."]},
+  "LEG-UTIN-019":{status:"adjust",label:"Ajuste recomendado",findings:["Atualizar fluxo de humanização do luto parental/neonatal e referências normativas vigentes.","Prever exceções para não remoção de dispositivos em situações médico-legais/assistenciais específicas.","Revisar fluxo institucional de identificação, liberação e encaminhamento do corpo."]},
+  "LEG-UTIN-017":{status:"adjust",label:"Ajuste recomendado",findings:["Atualizar referências contemporâneas sobre integridade cutânea neonatal.","Revisar antissépticos, adesivos, umidificação, emolientes e prevenção de lesão por dispositivos.","Confirmar tempos/frequências fixas somente quando sustentados por fonte atual ou fabricante."]},
+  "LEG-UTIN-021":{status:"confirmed",label:"Confirmado",findings:["Conteúdo técnico auditado como adequado; recomenda-se modernização bibliográfica em futura revisão."]},
+  "LEG-UTIN-025":{status:"confirmed",label:"Confirmado",findings:["Revisão ampla auditada como adequada; manter validação profissional."]}
+};
+function auditPop(code){return SCIENTIFIC_AUDIT_POP[String(code||"").trim()]||null}
+function isOfficialScientificReference(ref){try{const host=new URL(String(ref?.url||"")).hostname.toLowerCase().replace(/^www\./,"");return host==="gov.br"||host.endsWith(".gov.br")||host==="cofen.gov.br"||host.endsWith(".cofen.gov.br")||host.includes("coren-")||host==="sbp.com.br"||host.endsWith(".sbp.com.br")||host==="who.int"||host.endsWith(".who.int")||host==="cdc.gov"||host.endsWith(".cdc.gov");}catch{return false}}
+function latestReferenceYearInDoc(paragraphs){const sec=referenceSectionInfo(paragraphs);if(!sec)return null;const years=[];for(const p of paragraphs){if(p.index<=sec.headingIndex||(sec.stopIndex!=null&&p.index>=sec.stopIndex))continue;for(const y of normalizedText(p.text).match(/(?:19|20)\d{2}/g)||[])years.push(Number(y));}return years.length?Math.max(...years):null;}
 app.post("/api/ai/revise-pop",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente o Administrador Proprietário pode iniciar revisão com IA."});
   try{
     const {doc_code,doc_title,current_revision,next_revision,file_name,file_base64,provider,correction_request,periodic_review_required,periodic_review_reason}=req.body||{};
     const periodicReviewRequired=periodic_review_required===true;
+    const scientificAudit=auditPop(doc_code);
+    const requiresCurrentWebResearch=periodicReviewRequired||scientificAudit?.status==="review"||scientificAudit?.status==="adjust";
     if(!doc_code||!file_base64)return res.status(400).json({error:"POP/arquivo não informado."});
     const original=Buffer.from(file_base64,"base64");if(original.length>18*1024*1024)return res.status(413).json({error:"Word acima do limite de 18 MB para revisão automática."});
     const historyCleanup=cleanDuplicateSiashHistoryRows(original),baseDocument=historyCleanup.buffer;
-    const paragraphs=docxParagraphs(baseDocument);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});const hygieneBefore=bibliographyHygieneState(baseDocument);
+    const paragraphs=docxParagraphs(baseDocument);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});const hygieneBefore=bibliographyHygieneState(baseDocument);const latestReferenceYear=latestReferenceYearInDoc(paragraphs);
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text));
     const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, COFEN/COREN, SBP, OMS/WHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida. Para cada alteração, preencha references com os títulos e/ou URLs das fontes que sustentam aquela alteração; use [] quando não houver fonte específica confiável.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\n9) NÃO mantenha, crie ou altere periodicidade, concentração, diluição, tempo de contato, compatibilidade de equipamento ou outra recomendação operacional específica sem fonte rastreável que sustente exatamente essa afirmação. Se a fonte disponível não sustentar o detalhe, mantenha o texto vigente e sinalize isso no summary.\n10) Cada alteração proposta DEVE possuir pelo menos uma referência específica em references. As referências gerais devem conter título e URL completos e rastreáveis. Não invente URL.\n11) As referências efetivamente utilizadas serão incorporadas pelo SIASH à seção de Referências Bibliográficas do Word, preservando as referências institucionais anteriores.
 12) NUNCA use homepage, portal inicial ou raiz institucional (ex.: gov.br/anvisa/pt-br, sbp.com.br/) como referência bibliográfica. Informe a URL da publicação, diretriz, manual, nota técnica, resolução, artigo ou documento específico. Se não souber a URL específica, não proponha a alteração sustentada apenas por essa homepage.\n13) Se houver PEDIDO DE CORREÇÃO DO PROFISSIONAL abaixo, ele tem prioridade dentro destas regras e deve ser atendido sem criar alterações técnicas não solicitadas.
 14) REVISÃO PERIÓDICA / VIGÊNCIA: se o conteúdo técnico permanecer adequado e não houver alteração técnico-científica necessária, NÃO invente mudança apenas para criar uma revisão. Informe isso claramente no summary. A SIASH poderá registrar uma revisão documental periódica sem mudança de conteúdo, sempre com validação humana e sem publicação automática.
+15) Quando esta revisão exigir PESQUISA ATUAL, confronte deliberadamente o conteúdo com publicações posteriores ao ano mais recente da bibliografia detectada no POP (${latestReferenceYear||"não identificado"}) e priorize documentos oficiais vigentes.
+16) Para concluir que NÃO há alteração técnico-científica necessária em revisão periódica, sustente a conclusão com pelo menos 2 referências específicas elegíveis e ao menos 1 fonte oficial/autoridade reconhecida consultada na pesquisa atual.
+17) Se a AUDITORIA CIENTÍFICA SIASH estiver classificada como REVISÃO NECESSÁRIA, trate os achados como pontos obrigatórios de verificação e não encerre a análise como simples renovação de vigência.
 MOTIVO DA REVISÃO DOCUMENTAL: ${String(periodic_review_reason||"não informado").trim()||"não informado"}
-PEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").trim()||"Nenhum"}\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
-    const ai=await runAIRevision(prompt,provider);
+AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scientificAudit.findings.join(" | ")}`:"Sem apontamento retroativo específico."}\nPEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").trim()||"Nenhum"}\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
+    const ai=await runAIRevision(prompt,provider,{requireWebResearch:requiresCurrentWebResearch});
+    if(requiresCurrentWebResearch&&!(["web_search","google_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
     if(effective.some(x=>!Array.isArray(x.references)||!x.references.length))throw new Error("A IA propôs alteração técnico-científica sem referência específica. A proposta foi bloqueada para conferência segura.");
@@ -821,6 +854,8 @@ PEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").tri
     if(unlinked.length)throw new Error(`A IA citou referência específica em alteração(ões), mas não forneceu os dados bibliográficos correspondentes para rastreamento (parágrafos: ${unlinked.map(x=>x.paragraph_index).join(", ")}). A proposta foi bloqueada.`);
     const classified=candidateSources.length?await classifyReferenceUrls(candidateSources):{verified:[],pending:[]};
     const references=[...classified.verified,...classified.pending];
+    const eligibleReferenceCount=references.filter(x=>x?.wordEligible===true).length;
+    const officialEligibleReferenceCount=references.filter(x=>x?.wordEligible===true&&isOfficialScientificReference(x)).length;
     let traceable=[],excludedChanges=[];
     if(effective.length){
       if(!references.length)throw new Error("A IA não retornou referências identificáveis para conferência. A proposta foi bloqueada; o POP vigente permanece inalterado.");
@@ -828,6 +863,8 @@ PEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").tri
       excludedChanges=effective.filter(ch=>!traceable.includes(ch));
       if(!traceable.length)throw new Error("As alterações propostas ficaram sustentadas apenas por fontes genéricas ou não identificáveis. A SIASH não inseriu essas fontes no Word e bloqueou a proposta para proteger a bibliografia institucional.");
     }
+    if(scientificAudit?.status==="review"&&!traceable.length)throw new Error("Este POP foi classificado pela auditoria científica como REVISÃO NECESSÁRIA. A simples renovação de vigência foi bloqueada; os pontos auditados precisam ser corrigidos com fontes atuais.");
+    if(periodicReviewRequired&&!traceable.length&&(eligibleReferenceCount<2||officialEligibleReferenceCount<1))throw new Error(`Revisão periódica sem alteração bloqueada: são necessárias pelo menos 2 referências específicas elegíveis e 1 fonte oficial/autoridade reconhecida. Recebidas: ${eligibleReferenceCount} elegível(is), ${officialEligibleReferenceCount} oficial(is).`);
     // v0.14.6 — separa revisão documental periódica de alteração técnico-científica.
     // Se o POP precisa renovar a vigência, a ausência de mudança técnica NÃO é falha: cria-se uma
     // proposta de revisão periódica, preservando integralmente o conteúdo e exigindo a mesma aprovação humana.
@@ -835,7 +872,6 @@ PEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").tri
     if(!traceable.length&&!hygieneBefore.needsHygiene&&!periodicReviewRequired)throw new Error("A revisão não produziu alteração técnico-científica rastreável nem correção bibliográfica necessária. O POP vigente foi preservado.");
     let contentRevised=baseDocument,verification={verified:true,actualChanges:0};
     if(traceable.length){contentRevised=patchDocx(baseDocument,traceable);verification=verifyDocxRevision(baseDocument,contentRevised,traceable)}
-    const eligibleReferenceCount=references.filter(x=>x?.wordEligible===true).length;
     let withRefs={buffer:contentRevised,added:0,moved:0,coverage:[],representedByInstitutional:0,genericReferencesRemoved:0,legacyLabelsRemoved:0,wordEligibleReferences:0};
     if(traceable.length||hygieneBefore.needsHygiene||(periodicReviewRequired&&eligibleReferenceCount>0)){
       withRefs=appendReviewedReferences(contentRevised,references,{allowHygieneOnly:!traceable.length});
@@ -846,7 +882,7 @@ PEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").tri
     verification.actualChanges=Number(verification.actualChanges??traceable.length)+hygieneChanges;
     verification.periodicReviewOnly=periodicReviewOnly;
     verification.periodicReviewRequired=periodicReviewRequired;
-    verification.periodicReviewReason=String(periodic_review_reason||"").trim();
+    verification.periodicReviewReason=String(periodic_review_reason||"").trim();verification.researchMode=ai.researchMode||"provider_default";verification.currentWebResearchRequired=requiresCurrentWebResearch;verification.eligibleReferenceCount=eligibleReferenceCount;verification.officialEligibleReferenceCount=officialEligibleReferenceCount;verification.latestReferenceYear=latestReferenceYear;verification.scientificAuditStatus=scientificAudit?.status||"none";verification.scientificAuditLabel=scientificAudit?.label||"";
     verification.historyRowsCleaned=Number(historyCleanup.removed||0);
     verification.bibliographyHygieneOnly=!traceable.length&&hygieneChanges>0;
     verification.bibliographyHygieneChanges=hygieneChanges;
