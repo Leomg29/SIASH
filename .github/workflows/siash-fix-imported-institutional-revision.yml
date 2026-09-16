@@ -1,0 +1,58 @@
+name: SIASH fix imported institutional revision
+
+on:
+  push:
+    branches:
+      - fix/revisao-institucional-leg-utin-033
+    paths:
+      - .github/workflows/siash-fix-imported-institutional-revision.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/revisao-institucional-leg-utin-033
+      - name: Apply safe patch
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('app.js')
+          s = p.read_text(encoding='utf-8')
+          old = '''function shouldReuseLatestInstitutionalRevision(d,v,rowInfo){\n if(!rowInfo||rowInfo.revision===null)return false;const c=rowInfo.cells||[];\n const authoredBySiash=/SIASH\\s*Docs/i.test(c[4]||"");if(!authoredBySiash)return false;\n // v0.14.3 — idempotência do ciclo institucional:\n // se a última linha institucional foi criada pelo SIASH Docs na MESMA competência (mês/ano),\n // ela é a revisão institucional do ciclo e deve ser REUTILIZADA. Revisões internas, correções,\n // reprocessamentos ou testes do mesmo ciclo não podem gerar 04→05→06 no Word.\n // Uma nova revisão institucional só é aberta quando muda a competência institucional.\n return normalizeMonthYearText(c[1]||"")===normalizeMonthYearText(currentMonthYearPT());\n}'''
+          new = '''function shouldReuseLatestInstitutionalRevision(d,v,rowInfo){\n if(!rowInfo||rowInfo.revision===null)return false;const c=rowInfo.cells||[];\n const sameCompetence=normalizeMonthYearText(c[1]||"")===normalizeMonthYearText(currentMonthYearPT());\n // v0.14.12 — uma proposta DOCX importada manualmente pode já trazer a revisão institucional\n // correta no Controle Histórico (ex.: Rev.02), embora a revisão interna da SIASH seja Rev.01.\n // Quando a importação registrou explicitamente essa revisão e ela continua sendo a última linha\n // da mesma competência, reutilizamos a linha existente. Isso impede criar Rev.03 indevidamente.\n const importedRevision=String(v?.importedInstitutionalRevision||"").padStart(2,"0");\n const rowRevision=String(rowInfo.revision).padStart(2,"0");\n if(importedRevision&&importedRevision===rowRevision&&sameCompetence)return true;\n const authoredBySiash=/SIASH\\s*Docs/i.test(c[4]||"");if(!authoredBySiash)return false;\n // v0.14.3 — idempotência do ciclo institucional:\n // se a última linha institucional foi criada pelo SIASH Docs na MESMA competência (mês/ano),\n // ela é a revisão institucional do ciclo e deve ser REUTILIZADA. Revisões internas, correções,\n // reprocessamentos ou testes do mesmo ciclo não podem gerar 04→05→06 no Word.\n // Uma nova revisão institucional só é aberta quando muda a competência institucional.\n return sameCompetence;\n}'''
+          if old not in s:
+              raise SystemExit('Bloco shouldReuseLatestInstitutionalRevision não localizado; patch abortado sem alterar app.js')
+          s = s.replace(old, new, 1)
+          old2 = ''' try{if(pdf){version.pdfKey=`${d.id}|${revision}|pdf|${Date.now()}`;version.pdfName=pdf.name;await putDocBlob(version.pdfKey,pdf)}if(word){version.wordKey=`${d.id}|${revision}|word|${Date.now()}`;version.wordName=word.name;await putDocBlob(version.wordKey,word)}}catch(err){console.error(err);return alert("Não foi possível armazenar o arquivo desta revisão. Verifique as permissões do navegador.")}\n d.period=period;auditAdmin(`SIASH Docs: ${d.code} revisão ${revision} importada para conferência.`);save();showToast(`Revisão ${revision} pronta para conferência`,1500);renderProposalReady(i,vi);renderDocs();'''
+          new2 = ''' try{if(pdf){version.pdfKey=`${d.id}|${revision}|pdf|${Date.now()}`;version.pdfName=pdf.name;await putDocBlob(version.pdfKey,pdf)}if(word){version.wordKey=`${d.id}|${revision}|word|${Date.now()}`;version.wordName=word.name;await putDocBlob(version.wordKey,word);if(/\\.docx$/i.test(word.name)){try{const z=await JSZip.loadAsync(word),f=z.file("word/document.xml");if(f){const x=await f.async("string"),h=historyTableData(x),rows=h?.info?.filter(r=>r.revision!==null)||[];if(rows.length){const latest=rows.reduce((a,b)=>a.revision>b.revision?a:b);version.importedInstitutionalRevision=String(latest.revision).padStart(2,"0");version.importedInstitutionalMonthYear=String(latest.cells?.[1]||"").trim();version.importedInstitutionalDetectedAt=nowBR();}}}catch(metaErr){console.warn("Não foi possível detectar a revisão institucional do Word importado",metaErr)}}}}catch(err){console.error(err);return alert("Não foi possível armazenar o arquivo desta revisão. Verifique as permissões do navegador.")}\n d.period=period;auditAdmin(`SIASH Docs: ${d.code} revisão ${revision} importada para conferência${version.importedInstitutionalRevision?` · Word institucional Rev.${version.importedInstitutionalRevision} detectado e preservado`:""}.`);save();showToast(`Revisão ${revision} pronta para conferência`,1500);renderProposalReady(i,vi);renderDocs();'''
+          if old2 not in s:
+              raise SystemExit('Bloco de importação manual não localizado; patch abortado sem alterar app.js')
+          s = s.replace(old2, new2, 1)
+          p.write_text(s, encoding='utf-8')
+      - name: Syntax check
+        run: node --check app.js && node --check server.js && node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')"
+      - name: Regression assertions
+        shell: python
+        run: |
+          from pathlib import Path
+          s=Path('app.js').read_text(encoding='utf-8')
+          assert 'importedInstitutionalRevision' in s
+          assert 'importedRevision===rowRevision&&sameCompetence' in s
+          assert 'Word institucional Rev.${version.importedInstitutionalRevision} detectado e preservado' in s
+          print('Regression assertions OK')
+      - name: Commit patch
+        run: |
+          if git diff --quiet -- app.js; then
+            echo "No changes required"
+            exit 0
+          fi
+          git config user.name "SIASH automated fix"
+          git config user.email "actions@users.noreply.github.com"
+          git add app.js
+          git commit -m "SIASH v0.14.12: preserve imported institutional revision"
+          git push origin HEAD:fix/revisao-institucional-leg-utin-033
