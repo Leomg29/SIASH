@@ -4,6 +4,7 @@ on:
     branches: [fix/v0.14.19-docx-safe-finalization]
     paths:
       - 'scripts/patch_v01419.py'
+      - 'scripts/test_v01419_static.js'
       - '.github/workflows/siash-v01419-docx-safe-finalization.yml'
   workflow_dispatch:
 permissions:
@@ -20,12 +21,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Apply patch
-        run: python3 scripts/patch_v01419.py
+      - name: Apply patch only when needed
+        run: |
+          if grep -q 'siash-0.14.19' app.js; then echo 'Patch already applied'; else python3 scripts/patch_v01419.py; fi
       - name: Static JavaScript checks
         run: |
           node --check app.js
           node --check server.js
+          node scripts/test_v01419_static.js
       - name: Verify safeguards and version
         run: |
           grep -q 'validateDocxBlobIntegrity' app.js
