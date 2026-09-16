@@ -1,0 +1,71 @@
+name: SIASH v0.14.13 consolidation
+on:
+  push:
+    branches: [fix/v0.14.13-consolidacao-docs-login]
+    paths: [.github/workflows/siash-v0.14.13-consolidation.yml]
+permissions:
+  contents: write
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v0.14.13-consolidacao-docs-login
+      - name: Apply consolidated fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('index.html'); h=p.read_text(encoding='utf-8')
+          h=h.replace('Alpha Consolidada v0.14.11','Alpha Consolidada v0.14.13').replace('UTIN • v0.14.11','UTIN • v0.14.13')
+          h=h.replace('<label>Usuário</label><input id="login-user" value="coordenacao.utin" autocomplete="username">','<label>Usuário</label><input id="login-user" autocomplete="username">')
+          import re
+          h,n=re.subn(r'<button id="doc-restore-batch"[^>]*>Restaurar 8 POPs migrados</button><input id="doc-restore-files"[^>]*>', '', h, count=1)
+          if n!=1: raise SystemExit('botão Restaurar 8 POPs não localizado exatamente uma vez')
+          p.write_text(h,encoding='utf-8')
+
+          p=Path('app.js'); s=p.read_text(encoding='utf-8')
+          s=s.replace('schema:"siash-0.14.11"','schema:"siash-0.14.13"')
+          anchor='const OPERATIONAL_USERS={"coordenacao.utin":"siash"};'
+          remember='''const OPERATIONAL_USERS={"coordenacao.utin":"siash"};\nconst LAST_LOGIN_STORE="siash_last_login";\nfunction rememberedLogin(){try{return localStorage.getItem(LAST_LOGIN_STORE)||""}catch(e){return ""}}\nfunction rememberLogin(user=""){try{if(String(user).trim())localStorage.setItem(LAST_LOGIN_STORE,String(user).trim())}catch(e){}}'''
+          if anchor not in s: raise SystemExit('âncora OPERATIONAL_USERS ausente')
+          s=s.replace(anchor,remember,1)
+          old='''$("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}'''
+          new='''$("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}rememberLogin(SESSION.user||user);'''
+          if old not in s: raise SystemExit('handler login não localizado')
+          s=s.replace(old,new,1)
+          init_anchor='function initSecurityUI(){'
+          init_new='''function initRememberedLogin(){const el=$("login-user");if(el&&!el.value)el.value=rememberedLogin()||"leomg29"}\nfunction initSecurityUI(){initRememberedLogin();'''
+          if init_anchor not in s: raise SystemExit('initSecurityUI ausente')
+          s=s.replace(init_anchor,init_new,1)
+
+          finalize='''window.finalizePreparedPublication=async(i,vi)=>{\n if(!requireProposalContext(i,vi))return;\n const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");'''
+          guard='''window.finalizePreparedPublication=async(i,vi)=>{\n if(!requireProposalContext(i,vi))return;\n const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");\n // v0.14.13 — antes de finalizar, reconcilia o metadado preparado com o Word realmente armazenado.\n // Recupera com segurança propostas legadas em que Rev.03 ficou persistida após reimportar Word Rev.02.\n if(v.publicationPrepared&&(v.wordKey||v.wordPath)){try{const blob=await getDocBlob(v.wordKey||v.wordPath);if(blob&&/\\.docx$/i.test(v.wordName||"")){const z=await JSZip.loadAsync(blob),f=z.file("word/document.xml");if(f){const x=await f.async("string"),hist=historyTableData(x),rows=hist?.info?.filter(r=>r.revision!==null)||[];if(rows.length){const latest=rows.reduce((a,b)=>a.revision>b.revision?a:b),actual=String(latest.revision).padStart(2,"0"),prepared=String(v.preparedInstitutionalRevision||v.institutionalRevision||"").padStart(2,"0");if(prepared&&actual!==prepared){v.publicationPrepared=false;v.publicationPreparedAt="";v.publicationPreparedBy="";v.preparedInstitutionalRevision="";v.institutionalValidity="";v.institutionalPreparationMode="";v.confirmedFinalPages=null;v.approvalEmbedded=false;v.approvalEmbeddedAt="";v.institutionalRevision="";v.institutionalRevisionDate="";v.importedInstitutionalRevision=actual;v.importedInstitutionalMonthYear=String(latest.cells?.[1]||"").trim();v.importedInstitutionalDetectedAt=nowBR();save();renderDocs();renderProposalReady(i,vi);return alert(`A SIASH detectou que o Word armazenado está na Revisão Institucional ${actual}, diferente da preparação transitória ${prepared}. A preparação antiga foi descartada com segurança. Clique em PREPARAR PUBLICAÇÃO para continuar com a Rev.${actual}.`)}}}}}catch(e){console.error("Falha na reconciliação pré-publicação",e);return alert("Publicação bloqueada: não foi possível reconciliar com segurança a revisão institucional do Word. O vigente foi preservado.")}}'''
+          if finalize not in s: raise SystemExit('finalizePreparedPublication não localizado')
+          s=s.replace(finalize,guard,1)
+          p.write_text(s,encoding='utf-8')
+      - name: Static and regression tests
+        run: |
+          node --check app.js
+          node --check server.js
+          node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package OK')"
+          python - <<'PY'
+          from pathlib import Path
+          h=Path('index.html').read_text(); s=Path('app.js').read_text()
+          assert 'Restaurar 8 POPs migrados' not in h
+          assert 'v0.14.13' in h and 'v0.14.11' not in h
+          assert 'LAST_LOGIN_STORE="siash_last_login"' in s
+          assert 'rememberLogin(SESSION.user||user)' in s
+          assert 'rememberedLogin()||"leomg29"' in s
+          assert 'actual!==prepared' in s
+          assert 'A preparação antiga foi descartada com segurança' in s
+          assert 'schema:"siash-0.14.13"' in s
+          print('SIASH v0.14.13 regression assertions OK')
+          PY
+      - name: Commit tested files
+        run: |
+          git config user.name "SIASH automated fix"
+          git config user.email "actions@users.noreply.github.com"
+          git add app.js index.html
+          git commit -m "SIASH v0.14.13: consolidate Docs recovery, UI version and remembered login"
+          git push origin HEAD:fix/v0.14.13-consolidacao-docs-login
