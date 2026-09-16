@@ -1,77 +1,23 @@
 name: SIASH v01418 final Word sanitization
-on:
-  push:
-    branches: [fix/v0.14.18-final-word-sanitization]
-    paths: ['.github/workflows/siash-v01418-final-word-sanitization.yml']
+on: [push]
 permissions:
   contents: write
 jobs:
-  patch-and-test:
+  patch:
+    if: github.ref == 'refs/heads/fix/v0.14.18-final-word-sanitization'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: fix/v0.14.18-final-word-sanitization
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Patch final Word sanitization
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re, json
-          p=Path('app.js'); s=p.read_text(encoding='utf-8')
-          start=s.find('function removeProposalStatusParagraphs(xml){')
-          if start<0: raise SystemExit('removeProposalStatusParagraphs not found')
-          end=s.find('\nfunction ',start+10)
-          if end<0: raise SystemExit('end of removeProposalStatusParagraphs not found')
-          old=s[start:end]
-          new=r'''function removeProposalStatusParagraphs(xml){
- // v0.14.18 — remove marcadores transitórios de proposta de forma tolerante a caixa, pontuação e texto em runs separados.
- let changed=false;let out=String(xml||"").replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{const text=xmlPlainText(p);const proposal=/^proposta\s+de\s+revis[aã]o\s+\d{1,3}\b/i.test(text)&&/(vig[eê]ncia|valida[cç][aã]o|publica[cç][aã]o|confer[eê]ncia)/i.test(text);if(proposal){changed=true;return "<w:p/>"}return p});const structural=ensureWordTableCellParagraphs(out);out=structural.xml;return {xml:out,changed:changed||structural.changed};
-}
-function finalizePublishedHistoryStatusXml(xml,institutionalRevision){
- // v0.14.18 — no Word final, a linha do ciclo publicado não pode continuar dizendo que aguarda conferência.
- const hist=historyTableData(xml);if(!hist)return {xml:String(xml||""),changed:false};
- const wanted=Number(institutionalRevision);let changed=false;
- const rows=hist.rows||[];let table=hist.table;
- for(const row of rows){const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>x[0]);if(!cells.length)continue;const rev=Number((xmlPlainText(cells[0]).match(/\d{1,3}/)||[])[0]);if(!Number.isFinite(rev)||rev!==wanted)continue;let updated=row;updated=updated.replace(/aguardando\s+confer[eê]ncia\s+profissional\.?/gi,()=>{changed=true;return 'validada e publicada após conferência profissional.'});if(updated!==row)table=table.replace(row,updated);break}
- if(!changed)return {xml:String(xml||""),changed:false};return {xml:String(xml||"").replace(hist.table,table),changed:true};
-}'''
-          s=s[:start]+new+s[end:]
-          needle='const statusClean=removeProposalStatusParagraphs(xml);xml=statusClean.xml;zip.file("word/document.xml",xml);'
-          repl='const statusClean=removeProposalStatusParagraphs(xml);xml=statusClean.xml;const historyClean=finalizePublishedHistoryStatusXml(xml,v.preparedInstitutionalRevision);xml=historyClean.xml;zip.file("word/document.xml",xml);'
-          if needle not in s: raise SystemExit('finalization chain not found')
-          s=s.replace(needle,repl,1)
-          s=s.replace('siash-0.14.17','siash-0.14.18')
-          p.write_text(s,encoding='utf-8')
-          # package version
-          pp=Path('package.json'); data=json.loads(pp.read_text()); data['version']='0.14.18'; pp.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-          # visible version strings where present
-          for fn in ['index.html','server.js']:
-              q=Path(fn)
-              if q.exists():
-                  x=q.read_text(encoding='utf-8').replace('v0.14.17','v0.14.18').replace('0.14.17','0.14.18')
-                  q.write_text(x,encoding='utf-8')
-          PY
-      - name: Static validation
-        run: |
-          node --check app.js
-          node --check server.js
-          node -e "const p=require('./package.json'); if(p.version!=='0.14.18') process.exit(1)"
-          python3 - <<'PY'
-          from pathlib import Path
-          s=Path('app.js').read_text()
-          assert 'function finalizePublishedHistoryStatusXml' in s
-          assert 'historyClean=finalizePublishedHistoryStatusXml' in s
-          assert 'validada e publicada após conferência profissional.' in s
-          assert 'const proposal=/^proposta' in s
-          print('v0.14.18 static checks: PASS')
-          PY
-      - name: Commit patch
-        run: |
-          git config user.name 'Leomg29'
-          git config user.email 'leomg29@yahoo.com.br'
+      - run: python3 scripts/patch_v01418.py
+      - run: node --check app.js
+      - run: node --check server.js
+      - run: node -e "const p=require('./package.json'); if(p.version!=='0.14.18') process.exit(1)"
+      - run: |
+          git config user.name Leomg29
+          git config user.email leomg29@yahoo.com.br
           git add app.js server.js index.html package.json
           git commit -m 'SIASH v0.14.18 sanitize final published Word' || exit 0
           git push origin HEAD:fix/v0.14.18-final-word-sanitization
