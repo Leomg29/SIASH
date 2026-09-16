@@ -26,7 +26,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.17",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.18",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -616,9 +616,12 @@ function ensureWordTableCellParagraphs(xml){
  let changed=false;const out=String(xml||"").replace(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g,tc=>{if(/<w:p(?:\s|>|\/)/.test(tc))return tc;changed=true;return tc.replace(/<\/w:tc>$/,"<w:p/></w:tc>")});return {xml:out,changed};
 }
 function removeProposalStatusParagraphs(xml){
- // v0.14.16 — nunca remova fisicamente o único parágrafo de uma célula Word.
- // Um <w:tc> sem <w:p> é XML OpenXML estruturalmente inválido e faz o Word pedir recuperação.
- let changed=false;let out=String(xml||"").replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{const text=xmlPlainText(p);if(/^Proposta\s+de\s+Revis[aã]o\s+\d{1,3}\s*[–—-]\s*vig[eê]ncia\s+ap[oó]s\s+valida[cç][aã]o\s+e\s+publica[cç][aã]o\s+institucional\.?$/i.test(text)){changed=true;return "<w:p/>"}return p});const structural=ensureWordTableCellParagraphs(out);out=structural.xml;return {xml:out,changed:changed||structural.changed};
+ let changed=false;let out=String(xml||"").replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{const text=xmlPlainText(p);const proposal=/^proposta\s+de\s+revis[aã]o\s+\d{1,3}\b/i.test(text)&&/(vig[eê]ncia|valida[cç][aã]o|publica[cç][aã]o|confer[eê]ncia)/i.test(text);if(proposal){changed=true;return "<w:p/>"}return p});const structural=ensureWordTableCellParagraphs(out);out=structural.xml;return {xml:out,changed:changed||structural.changed};
+}
+function finalizePublishedHistoryStatusXml(xml,institutionalRevision){
+ const hist=historyTableData(xml);if(!hist)return {xml:String(xml||""),changed:false};const wanted=Number(institutionalRevision);let changed=false;const rows=hist.rows||[];let table=hist.table;
+ for(const row of rows){const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>x[0]);if(!cells.length)continue;const rev=Number((xmlPlainText(cells[0]).match(/\d{1,3}/)||[])[0]);if(!Number.isFinite(rev)||rev!==wanted)continue;let updated=row;updated=updated.replace(/aguardando\s+confer[eê]ncia\s+profissional\.?/gi,()=>{changed=true;return 'validada e publicada após conferência profissional.'});if(updated!==row)table=table.replace(row,updated);break}
+ if(!changed)return {xml:String(xml||""),changed:false};return {xml:String(xml||"").replace(hist.table,table),changed:true};
 }
 function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){
  const hist=historyTableData(xml);if(!hist)return {ok:false,reason:"history-table-not-found"};
@@ -632,7 +635,7 @@ async function finalizePreparedApprovedWord(d,v,confirmedPages){
  const pages=String(confirmedPages||"").trim();if(!/^\d{1,3}$/.test(pages)||Number(pages)<1)return {updated:false,reason:"page-count-not-confirmed"};
  try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");
    xml=trimLegacyTrailingEmptyParagraphs(xml);
-   const upd=updatePreparedHistoryPageCountXml(xml,v.preparedInstitutionalRevision,pages);if(!upd.ok)return {updated:false,reason:upd.reason};xml=upd.xml;const statusClean=removeProposalStatusParagraphs(xml);xml=statusClean.xml;zip.file("word/document.xml",xml);
+   const upd=updatePreparedHistoryPageCountXml(xml,v.preparedInstitutionalRevision,pages);if(!upd.ok)return {updated:false,reason:upd.reason};xml=upd.xml;const statusClean=removeProposalStatusParagraphs(xml);xml=statusClean.xml;const historyClean=finalizePublishedHistoryStatusXml(xml,v.preparedInstitutionalRevision);xml=historyClean.xml;zip.file("word/document.xml",xml);
    const approved=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,approved);
    v.approvalEmbedded=true;v.approvalEmbeddedAt=nowBR();v.institutionalRevision=v.preparedInstitutionalRevision;v.institutionalRevisionDate=todayISO();v.confirmedFinalPages=Number(pages);return {updated:true,institutionalRevision:v.preparedInstitutionalRevision,validity:v.institutionalValidity||"",pages:Number(pages)};
  }catch(err){console.error("Falha ao confirmar paginação do Word preparado",err);return {updated:false,reason:"docx-page-confirmation-failed"}}
