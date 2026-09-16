@@ -26,7 +26,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.14",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.15",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -362,11 +362,15 @@ function docWorkingVersion(d){const i=docWorkingIndex(d);return i>=0?d.versions[
 function docStatus(d){const v=docPublishedVersion(d);const review=v?.reviewDate||"";if(d.reviewRequired&&!review)return{key:"review",text:"Revisão necessária",cls:"status-priority",next:"",days:null};if(!review)return{key:"unknown",text:"Sem data de revisão",cls:"status-warn",next:"",days:null};const next=addMonths(review,+d.period),now=new Date(todayISO()+"T12:00:00"),nd=new Date(next+"T12:00:00"),days=Math.ceil((nd-now)/86400000);if(days<0)return{key:"expired",text:"Revisão vencida",cls:"status-bad",next,days};if(days<=30)return{key:"priority",text:"Revisão prioritária",cls:"status-priority",next,days};if(days<=90)return{key:"soon",text:"Revisão próxima",cls:"status-warn",next,days};return{key:"valid",text:"Vigente",cls:"status-ok",next,days}}
 function workflowClass(w){return w==="Vigente"?"status-ok":w==="Obsoleto"?"muted":"status-warn"}
 function docsVersionButtons(docIndex,versionIndex){const d=S.docs[docIndex],v=d?.versions?.[versionIndex];if(!v)return"—";const buttons=[];if(v.pdfKey||v.pdfPath)buttons.push(`<button class="ghost compact-btn" onclick="openDocVersion(${docIndex},${versionIndex},'pdf')">PDF</button>`);if(v.wordKey||v.wordPath)buttons.push(`<button class="ghost compact-btn" onclick="openDocVersion(${docIndex},${versionIndex},'word')">Word</button>`);return buttons.join(" ")||"—"}
+async function sanitizePublishedWordStatus(d,v,blob){
+ if(!blob||v?.workflow!=="Vigente"||!v?.wordKey||!/\.docx$/i.test(v?.wordName||""))return {changed:false,blob};
+ try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {changed:false,blob};const xml=await file.async("string"),clean=removeProposalStatusParagraphs(xml);if(!clean.changed)return {changed:false,blob};zip.file("word/document.xml",clean.xml);const fixed=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,fixed);v.publishedStatusCleanedAt=nowBR();auditAdmin(`SIASH Docs: ${d.code} Word vigente saneado: removida marca textual de proposta após publicação, sem criar revisão ou alterar vigência.`);save();return {changed:true,blob:fixed}}catch(err){console.error("Falha ao sanear marca de proposta do Word vigente",err);return {changed:false,blob}}
+}
 async function openDocVersion(docIndex,versionIndex,kind){
  const d=S.docs[docIndex],v=d?.versions?.[versionIndex];if(!v)return alert("Versão não localizada.");
  const key=v[kind+"Key"],path=v[kind+"Path"],name=v[kind+"Name"]||`${d.code}_Rev${v.revision}.${kind==="pdf"?"pdf":"docx"}`;
  try{
-   if(key){let blob=await getDocBlob(key);if(!blob)return alert("Arquivo local não localizado neste navegador.");if(kind==="word"&&v.publicationPrepared){const san=await sanitizePreparedWordBlob(d,v);if(san.blob)blob=san.blob;if(san.changed)showToast("Word preparado saneado · reabra e confira a paginação",2200)}const url=URL.createObjectURL(blob);if(kind==="pdf"){window.open(url,"_blank");setTimeout(()=>URL.revokeObjectURL(url),60000)}else{const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}return}
+   if(key){let blob=await getDocBlob(key);if(!blob)return alert("Arquivo local não localizado neste navegador.");if(kind==="word"&&v.workflow==="Vigente"){const pubSan=await sanitizePublishedWordStatus(d,v,blob);if(pubSan.blob)blob=pubSan.blob;if(pubSan.changed)showToast("Word vigente saneado · marca de proposta removida",2200)}if(kind==="word"&&v.publicationPrepared){const san=await sanitizePreparedWordBlob(d,v);if(san.blob)blob=san.blob;if(san.changed)showToast("Word preparado saneado · reabra e confira a paginação",2200)}const url=URL.createObjectURL(blob);if(kind==="pdf"){window.open(url,"_blank");setTimeout(()=>URL.revokeObjectURL(url),60000)}else{const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000)}return}
    if(path){const url=encodeURI(path);if(kind==="pdf")window.open(url,"_blank");else{const a=document.createElement("a");a.href=url;a.download=name||path.split("/").pop();document.body.appendChild(a);a.click();a.remove();setTimeout(()=>a.remove(),50)}return}
    alert("Esta versão não possui arquivo "+kind.toUpperCase()+".")
  }catch(err){console.error(err);alert("Não foi possível abrir o arquivo. Verifique as permissões do navegador.")}
@@ -599,6 +603,9 @@ async function prepareApprovedWord(d,v,validator){
    v.publicationPrepared=true;v.publicationPreparedAt=nowBR();v.publicationPreparedBy=validator;v.preparedInstitutionalRevision=hist.institutionalRevision;v.institutionalValidity=hist.validity;v.institutionalPreparationMode=hist.mode||"append";if(cycleClean.changed){v.institutionalCycleCleanup={at:nowBR(),kept:cycleClean.keptRevision,removed:cycleClean.removedRevisions||[]}}return {updated:true,institutionalRevision:hist.institutionalRevision,validity:hist.validity,mode:hist.mode||"append",cycleCleanup:cycleClean.changed?cycleClean:null};
  }catch(err){console.error("Falha ao preparar Word final para conferência de paginação",err);return {updated:false,reason:"docx-prepare-failed"}}
 }
+function removeProposalStatusParagraphs(xml){
+ let changed=false;const out=String(xml||"").replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{const text=xmlPlainText(p);if(/^Proposta\s+de\s+Revis[aã]o\s+\d{1,3}\s*[–—-]\s*vig[eê]ncia\s+ap[oó]s\s+valida[cç][aã]o\s+e\s+publica[cç][aã]o\s+institucional\.?$/i.test(text)){changed=true;return ""}return p});return {xml:out,changed};
+}
 function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){
  const hist=historyTableData(xml);if(!hist)return {ok:false,reason:"history-table-not-found"};
  const table=hist.table,rows=hist.rows||[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);let target=null;
@@ -611,7 +618,7 @@ async function finalizePreparedApprovedWord(d,v,confirmedPages){
  const pages=String(confirmedPages||"").trim();if(!/^\d{1,3}$/.test(pages)||Number(pages)<1)return {updated:false,reason:"page-count-not-confirmed"};
  try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");
    xml=trimLegacyTrailingEmptyParagraphs(xml);
-   const upd=updatePreparedHistoryPageCountXml(xml,v.preparedInstitutionalRevision,pages);if(!upd.ok)return {updated:false,reason:upd.reason};xml=upd.xml;zip.file("word/document.xml",xml);
+   const upd=updatePreparedHistoryPageCountXml(xml,v.preparedInstitutionalRevision,pages);if(!upd.ok)return {updated:false,reason:upd.reason};xml=upd.xml;const statusClean=removeProposalStatusParagraphs(xml);xml=statusClean.xml;zip.file("word/document.xml",xml);
    const approved=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,approved);
    v.approvalEmbedded=true;v.approvalEmbeddedAt=nowBR();v.institutionalRevision=v.preparedInstitutionalRevision;v.institutionalRevisionDate=todayISO();v.confirmedFinalPages=Number(pages);return {updated:true,institutionalRevision:v.preparedInstitutionalRevision,validity:v.institutionalValidity||"",pages:Number(pages)};
  }catch(err){console.error("Falha ao confirmar paginação do Word preparado",err);return {updated:false,reason:"docx-page-confirmation-failed"}}
