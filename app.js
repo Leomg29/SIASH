@@ -499,11 +499,19 @@ window.advanceDocVersion=(i,vi)=>{
 
 function xmlEscapeText(s=""){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function currentMonthYearPT(){const m=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];const d=new Date();return `${m[d.getMonth()]}/${d.getFullYear()}`}
+function xmlPlainText(fragment=""){return String(fragment||"").replace(/<w:tab\/?[^>]*>/gi," ").replace(/<w:br\/?[^>]*>/gi," ").replace(/<[^>]+>/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/\s+/g," ").trim()}
 function historyTableData(xml){
- const m=xml.match(/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/i);if(!m)return null;
- const table=m[0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);
- const info=rows.map(row=>{const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>[...x[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(y=>y[1].replace(/<[^>]+>/g,"")).join("").replace(/\s+/g," ").trim());return {row,cells,revision:(cells.length>=7&&/^\d{1,3}$/.test(cells[0]))?Number(cells[0]):null}});
- return {table,rows,info};
+ // v0.14.12b — não presume que o texto "Controle Histórico" esteja no início da tabela.
+ // Examina cada tabela completa e aceita apenas a que tenha evidência estrutural de histórico:
+ // título/cabeçalho de revisão OU ao menos uma linha numérica com >= 7 células.
+ const tables=[...String(xml||"").matchAll(/<w:tbl(?:\s[^>]*)?>[\s\S]*?<\/w:tbl>/g)].map(x=>x[0]);
+ for(const table of tables){
+   const rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);
+   const info=rows.map(row=>{const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>xmlPlainText(x[0]));return {row,cells,revision:(cells.length>=7&&/^\d{1,3}$/.test(cells[0]))?Number(cells[0]):null}});
+   const plain=xmlPlainText(table),hasTitle=/Controle\s+Hist[óo]rico/i.test(plain),hasHeader=/(?:^|\s)Revis[aã]o(?:\s|$)/i.test(plain)&&/(?:Data|Hist[óo]rico|Elabora[cç][aã]o|Verifica[cç][aã]o|Aprova[cç][aã]o)/i.test(plain),hasRevision=info.some(x=>x.revision!==null);
+   if((hasTitle||hasHeader)&&hasRevision)return {table,rows,info};
+ }
+ return null;
 }
 function nextInstitutionalRevisionFromXml(xml){const h=historyTableData(xml);if(!h)return null;const nums=h.info.filter(x=>x.revision!==null).map(x=>x.revision);if(!nums.length)return null;return String(Math.max(...nums)+1).padStart(2,"0")}
 function normalizeMonthYearText(s=""){return String(s).normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g,"").replace(/\//g,"/").toLowerCase()}

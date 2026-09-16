@@ -1,0 +1,57 @@
+name: SIASH fix history table detection
+
+on:
+  push:
+    branches:
+      - fix/history-table-detection-v0.14.12
+    paths:
+      - .github/workflows/siash-fix-history-table-detection.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/history-table-detection-v0.14.12
+      - name: Apply robust institutional history detector
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('app.js')
+          s=p.read_text(encoding='utf-8')
+          old='''function historyTableData(xml){\n const m=xml.match(/<w:tbl(?:\\s[^>]*)?>[\\s\\S]*?Controle Hist[óo]rico[\\s\\S]*?<\\/w:tbl>/i);if(!m)return null;\n const table=m[0],rows=[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);\n const info=rows.map(row=>{const cells=[...row.matchAll(/<w:tc(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tc>/g)].map(x=>[...x[0].matchAll(/<w:t(?:\\s[^>]*)?>([\\s\\S]*?)<\\/w:t>/g)].map(y=>y[1].replace(/<[^>]+>/g,"")) .join("").replace(/\\s+/g," ").trim());return {row,cells,revision:(cells.length>=7&&/^\\d{1,3}$/.test(cells[0]))?Number(cells[0]):null}});\n return {table,rows,info};\n}'''.replace(')) .join',')).join')
+          new='''function xmlPlainText(fragment=""){return String(fragment||"").replace(/<w:tab\\/?[^>]*>/gi," ").replace(/<w:br\\/?[^>]*>/gi," ").replace(/<[^>]+>/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/\\s+/g," ").trim()}\nfunction historyTableData(xml){\n // v0.14.12b — não presume que o texto "Controle Histórico" esteja no início da tabela.\n // Examina cada tabela completa e aceita apenas a que tenha evidência estrutural de histórico:\n // título/cabeçalho de revisão OU ao menos uma linha numérica com >= 7 células.\n const tables=[...String(xml||"").matchAll(/<w:tbl(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tbl>/g)].map(x=>x[0]);\n for(const table of tables){\n   const rows=[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);\n   const info=rows.map(row=>{const cells=[...row.matchAll(/<w:tc(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tc>/g)].map(x=>xmlPlainText(x[0]));return {row,cells,revision:(cells.length>=7&&/^\\d{1,3}$/.test(cells[0]))?Number(cells[0]):null}});\n   const plain=xmlPlainText(table),hasTitle=/Controle\\s+Hist[óo]rico/i.test(plain),hasHeader=/(?:^|\\s)Revis[aã]o(?:\\s|$)/i.test(plain)&&/(?:Data|Hist[óo]rico|Elabora[cç][aã]o|Verifica[cç][aã]o|Aprova[cç][aã]o)/i.test(plain),hasRevision=info.some(x=>x.revision!==null);\n   if((hasTitle||hasHeader)&&hasRevision)return {table,rows,info};\n }\n return null;\n}'''
+          if old not in s:
+              raise SystemExit('historyTableData original não localizado; abortando sem alterar app.js')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+      - name: Syntax and regression checks
+        run: |
+          node --check app.js
+          node --check server.js
+          node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package.json OK')"
+          node - <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          const s=fs.readFileSync('app.js','utf8');
+          const a=s.indexOf('function xmlPlainText'),b=s.indexOf('function nextInstitutionalRevisionFromXml');
+          if(a<0||b<a) throw new Error('detector não localizado');
+          const ctx={};vm.createContext(ctx);vm.runInContext(s.slice(a,b),ctx);
+          const row=(cells)=>'<w:tr>'+cells.map(c=>'<w:tc><w:p><w:r><w:t>'+c+'</w:t></w:r></w:p></w:tc>').join('')+'</w:tr>';
+          const hist='<w:tbl>'+row(['CONTROLE','HISTÓRICO','','','','',''])+row(['Revisão','Data','Nº páginas','Histórico','Elaboração','Verificação','Aprovação'])+row(['02','Setembro/2026','04','Revisão técnica','Leandro Martins','A definir','A definir'])+'</w:tbl>';
+          const other='<w:tbl>'+row(['Campo','Valor'])+'</w:tbl>';
+          const h=ctx.historyTableData('<w:document>'+other+hist+'</w:document>');
+          if(!h||!h.info.some(x=>x.revision===2)) throw new Error('falha no modelo institucional fragmentado');
+          if(ctx.historyTableData('<w:document>'+other+'</w:document>')) throw new Error('falso positivo em tabela comum');
+          console.log('history detector regression OK');
+          NODE
+      - name: Commit tested patch
+        run: |
+          if git diff --quiet -- app.js; then echo "No changes"; exit 0; fi
+          git config user.name "SIASH automated fix"
+          git config user.email "actions@users.noreply.github.com"
+          git add app.js
+          git commit -m "SIASH v0.14.12b: robust institutional history detection"
+          git push origin HEAD:fix/history-table-detection-v0.14.12
