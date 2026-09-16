@@ -197,6 +197,7 @@ const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 const GEMINI_SEARCH_MODE = String(process.env.GEMINI_SEARCH_MODE || "off").toLowerCase();
+const TAVILY_API_KEY = String(process.env.TAVILY_API_KEY || "").trim();
 const AI_DEFAULT_PROVIDER = String(process.env.AI_PROVIDER || "auto").toLowerCase();
 const GEMINI_TIMEOUT_MS = Math.max(15000, Number(process.env.GEMINI_TIMEOUT_MS || 90000));
 const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || "";
@@ -708,6 +709,75 @@ function providerOrder(requested){
   if(p==="cloudflare")return ["cloudflare","gemini","openai"];
   if(p==="openai")return ["openai","cloudflare","gemini"];
   return ["gemini","cloudflare","openai"];
+}
+
+async function researchWithTavily(prompt){
+  if(!TAVILY_API_KEY) throw new Error("TAVILY_API_KEY não configurada no servidor.");
+
+  const query=String(prompt||"")
+    .replace(/\s+/g," ")
+    .trim()
+    .slice(0,400);
+
+  if(!query) throw new Error("Não foi possível montar a consulta científica para o Tavily.");
+
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),30000);
+
+  let response;
+  try{
+    response=await fetch("https://api.tavily.com/search",{
+      method:"POST",
+      headers:{
+        "Content-Type":"application/json",
+        "Authorization":`Bearer ${TAVILY_API_KEY}`
+      },
+      body:JSON.stringify({
+        query,
+        search_depth:"basic",
+        topic:"general",
+        max_results:5,
+        include_answer:false,
+        include_raw_content:false
+      }),
+      signal:controller.signal
+    });
+  }finally{
+    clearTimeout(timer);
+  }
+
+  if(!response.ok){
+    const detail=await response.text().catch(()=> "");
+    throw new Error(`Tavily indisponível (${response.status}). ${detail.slice(0,200)}`);
+  }
+
+  const data=await response.json();
+  const results=Array.isArray(data.results)?data.results:[];
+
+  const sources=results
+    .filter(r=>r&&/^https?:\/\//i.test(String(r.url||"")))
+    .map(r=>({
+      title:String(r.title||"Fonte web").trim(),
+      url:String(r.url||"").trim(),
+      content:String(r.content||"").trim()
+    }))
+    .filter(r=>r.url&&r.content);
+
+  if(sources.length<2){
+    throw new Error("Tavily não retornou fontes web verificáveis suficientes para a revisão científica.");
+  }
+
+  const evidence=sources.map((s,i)=>
+    `[FONTE ${i+1}]\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`
+  ).join("\n\n");
+
+  console.log(`[SIASH AI] pesquisa Tavily concluída | fontes=${sources.length}`);
+
+  return {
+    sources,
+    evidence,
+    researchMode:"tavily_search"
+  };
 }
 async function runAIRevision(prompt,requested,options={}){
   const errors=[];
