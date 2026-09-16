@@ -26,7 +26,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.18",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -623,6 +623,30 @@ function finalizePublishedHistoryStatusXml(xml,institutionalRevision){
  for(const row of rows){const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>x[0]);if(!cells.length)continue;const rev=Number((xmlPlainText(cells[0]).match(/\d{1,3}/)||[])[0]);if(!Number.isFinite(rev)||rev!==wanted)continue;let updated=row;updated=updated.replace(/aguardando\s+confer[eê]ncia\s+profissional\.?/gi,()=>{changed=true;return 'validada e publicada após conferência profissional.'});if(updated!==row)table=table.replace(row,updated);break}
  if(!changed)return {xml:String(xml||""),changed:false};return {xml:String(xml||"").replace(hist.table,table),changed:true};
 }
+function validateWordprocessingPackageXml(xml,name="XML"){
+ const text=String(xml||"");if(!text.trim())return {ok:false,reason:`${name}: vazio`};
+ try{const parsed=new DOMParser().parseFromString(text,"application/xml");if(parsed.getElementsByTagName("parsererror").length)return {ok:false,reason:`${name}: XML inválido`};return {ok:true}}catch(e){return {ok:false,reason:`${name}: ${e.message}`}}
+}
+async function validateDocxBlobIntegrity(blob){
+ if(!blob||!blob.size)return {ok:false,reason:"arquivo-vazio"};
+ try{
+  const zip=await JSZip.loadAsync(blob,{checkCRC32:true});
+  const required=["[Content_Types].xml","_rels/.rels","word/document.xml"];
+  for(const name of required)if(!zip.file(name))return {ok:false,reason:`parte-obrigatória-ausente:${name}`};
+  const xmlNames=Object.keys(zip.files).filter(n=>/\.xml$/i.test(n)&&!zip.files[n].dir);
+  for(const name of xmlNames){const text=await zip.file(name).async("string"),chk=validateWordprocessingPackageXml(text,name);if(!chk.ok)return chk}
+  const documentXml=await zip.file("word/document.xml").async("string");
+  if(!/<w:document(?:\s|>)/.test(documentXml)||!/<w:body(?:\s|>)/.test(documentXml))return {ok:false,reason:"word/document.xml sem document/body"};
+  const badCell=[...documentXml.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].find(m=>!/<w:p(?:\s|>|\/)/.test(m[0]));
+  if(badCell)return {ok:false,reason:"célula-de-tabela-sem-parágrafo"};
+  return {ok:true,zip};
+ }catch(e){return {ok:false,reason:`pacote-docx-inválido:${e.message}`}}
+}
+function finalizePublishedHistoryStatusXmlSafe(xml,institutionalRevision){
+ const hist=historyTableData(xml);if(!hist)return {xml:String(xml||""),changed:false};const wanted=Number(institutionalRevision);let table=hist.table,changed=false;
+ for(const info of hist.info||[]){if(info.revision!==wanted)continue;const row=info.row,cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>x[0]);if(cells.length<4)break;const oldText=xmlPlainText(cells[3]);const newText=oldText.replace(/aguardando\s+confer[eê]ncia\s+profissional\.?/gi,"validada e publicada após conferência profissional.");if(newText!==oldText){const newCell=replaceCellText(cells[3],newText),newRow=row.replace(cells[3],newCell);table=table.replace(row,newRow);changed=true}break}
+ return {xml:changed?String(xml||"").replace(hist.table,table):String(xml||""),changed};
+}
 function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){
  const hist=historyTableData(xml);if(!hist)return {ok:false,reason:"history-table-not-found"};
  const table=hist.table,rows=hist.rows||[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);let target=null;
@@ -633,13 +657,23 @@ function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){
 async function finalizePreparedApprovedWord(d,v,confirmedPages){
  if(!v?.publicationPrepared||!v?.preparedInstitutionalRevision)return {updated:false,reason:"publication-not-prepared"};if(!v?.wordKey)return {updated:false,reason:"no-word-key"};const blob=await getDocBlob(v.wordKey);if(!blob)return {updated:false,reason:"word-not-found"};
  const pages=String(confirmedPages||"").trim();if(!/^\d{1,3}$/.test(pages)||Number(pages)<1)return {updated:false,reason:"page-count-not-confirmed"};
- try{const zip=await JSZip.loadAsync(blob),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");
+ const before=await validateDocxBlobIntegrity(blob);if(!before.ok){console.error("Word preparado inválido antes da finalização",before.reason);return {updated:false,reason:"docx-source-invalid",detail:before.reason}}
+ try{const zip=await JSZip.loadAsync(blob,{checkCRC32:true}),file=zip.file("word/document.xml");if(!file)return {updated:false,reason:"document-xml-missing"};let xml=await file.async("string");
    xml=trimLegacyTrailingEmptyParagraphs(xml);
-   const upd=updatePreparedHistoryPageCountXml(xml,v.preparedInstitutionalRevision,pages);if(!upd.ok)return {updated:false,reason:upd.reason};xml=upd.xml;const statusClean=removeProposalStatusParagraphs(xml);xml=statusClean.xml;const historyClean=finalizePublishedHistoryStatusXml(xml,v.preparedInstitutionalRevision);xml=historyClean.xml;zip.file("word/document.xml",xml);
-   const approved=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});await putDocBlob(v.wordKey,approved);
-   v.approvalEmbedded=true;v.approvalEmbeddedAt=nowBR();v.institutionalRevision=v.preparedInstitutionalRevision;v.institutionalRevisionDate=todayISO();v.confirmedFinalPages=Number(pages);return {updated:true,institutionalRevision:v.preparedInstitutionalRevision,validity:v.institutionalValidity||"",pages:Number(pages)};
- }catch(err){console.error("Falha ao confirmar paginação do Word preparado",err);return {updated:false,reason:"docx-page-confirmation-failed"}}
+   const upd=updatePreparedHistoryPageCountXml(xml,v.preparedInstitutionalRevision,pages);if(!upd.ok)return {updated:false,reason:upd.reason};xml=upd.xml;
+   const statusClean=removeProposalStatusParagraphs(xml);xml=statusClean.xml;
+   const historyClean=finalizePublishedHistoryStatusXmlSafe(xml,v.preparedInstitutionalRevision);xml=historyClean.xml;
+   const structural=ensureWordTableCellParagraphs(xml);xml=structural.xml;
+   const xmlCheck=validateWordprocessingPackageXml(xml,"word/document.xml final");if(!xmlCheck.ok)return {updated:false,reason:"docx-final-xml-invalid",detail:xmlCheck.reason};
+   zip.file("word/document.xml",xml);
+   const approved=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",compression:"DEFLATE"});
+   const after=await validateDocxBlobIntegrity(approved);if(!after.ok){console.error("Publicação bloqueada: DOCX final inválido",after.reason);return {updated:false,reason:"docx-final-validation-failed",detail:after.reason}}
+   const backupKey=`${v.wordKey}|pre-finalize-${Date.now()}`;await putDocBlob(backupKey,blob);v.preFinalizationBackupKey=backupKey;v.preFinalizationBackupAt=nowBR();
+   await putDocBlob(v.wordKey,approved);
+   v.approvalEmbedded=true;v.approvalEmbeddedAt=nowBR();v.institutionalRevision=v.preparedInstitutionalRevision;v.institutionalRevisionDate=todayISO();v.confirmedFinalPages=Number(pages);v.docxIntegrityValidated=true;v.docxIntegrityValidatedAt=nowBR();return {updated:true,institutionalRevision:v.preparedInstitutionalRevision,validity:v.institutionalValidity||"",pages:Number(pages)};
+ }catch(err){console.error("Falha ao confirmar paginação do Word preparado",err);return {updated:false,reason:"docx-page-confirmation-failed",detail:err.message}}
 }
+
 function completePublication(i,vi,d,v,validator,finalization){
  d.versions.forEach((x,xv)=>{if(xv!==vi&&x.workflow==="Vigente")x.workflow="Obsoleto"});v.workflow="Vigente";v.validator=validator;v.approver=validator;v.validationDate=todayISO();v.updatedAt=nowBR();d.reviewRequired=false;
  v.note=`${v.note||"Revisão técnico-científica."} Revisão institucional ${finalization.institutionalRevision} registrada automaticamente no Word em ${dateBR(todayISO())}, com ${finalization.pages} página(s) confirmada(s) após a montagem final do Controle Histórico.`;
