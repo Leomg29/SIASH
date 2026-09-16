@@ -19,15 +19,13 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
           p=Path('app.js'); s=p.read_text()
-          marker='function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){'
-          start=s.find(marker)
+          marker='function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){'; start=s.find(marker)
           if start < 0: raise SystemExit('function not found')
           old='const tblRe=/<w:tbl(?:\\s[^>]*)?>[\\s\\S]*?Controle Hist[óo]rico[\\s\\S]*?<\\/w:tbl>/i,m=xml.match(tblRe);if(!m)return {ok:false,reason:"history-table-not-found"};\n const table=m[0],rows=[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);let target=null;'
           pos=s.find(old,start,start+1600)
           if pos < 0: raise SystemExit('rigid detector not found')
           new='const hist=historyTableData(xml);if(!hist)return {ok:false,reason:"history-table-not-found"};\n const table=hist.table,rows=hist.rows||[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);let target=null;'
           s=s[:pos]+new+s[pos+len(old):]
-          s=s.replace('Alpha Consolidada v0.14.13','Alpha Consolidada v0.14.14')
           s=s.replace('schema:"siash-0.14.13"','schema:"siash-0.14.14"')
           p.write_text(s)
           PY
@@ -40,7 +38,6 @@ jobs:
           assert 'historyTableData(xml)' in block
           assert 'tblRe=' not in block[:600]
           assert 'prepared-history-row-not-found' in block
-          assert 'Alpha Consolidada v0.14.14' in s
           assert 'schema:"siash-0.14.14"' in s
           print('PASS v0.14.14 detector robusto e fail-closed')
           PY
