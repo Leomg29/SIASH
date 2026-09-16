@@ -3,6 +3,9 @@ const STORE="siash_utin_consolidada_v08";
 const SECURITY_STORE="siash_security_v09";
 let SESSION={authenticated:false,role:null,user:null};
 const OPERATIONAL_USERS={"coordenacao.utin":"siash"};
+const LAST_LOGIN_STORE="siash_last_login";
+function rememberedLogin(){try{return localStorage.getItem(LAST_LOGIN_STORE)||""}catch(e){return ""}}
+function rememberLogin(user=""){try{if(String(user).trim())localStorage.setItem(LAST_LOGIN_STORE,String(user).trim())}catch(e){}}
 
 const SIASH_CLOUD={
  enabled:location.protocol==="http:"||location.protocol==="https:",
@@ -23,7 +26,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.11",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.13",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -165,7 +168,8 @@ function applyPermissions(){
  if(owner&&$("admin-owner-name"))$("admin-owner-name").textContent=SESSION.user||"Proprietário";
  if($("doc-access-badge"))$("doc-access-badge").textContent=owner?"Super Admin · todos os setores":`${a.sector} · ${a.level==="validator"?"Validador":a.level==="editor"?"Editor/Revisor":"Leitor"}`;
 }
-function initSecurityUI(){
+function initRememberedLogin(){const el=$("login-user");if(el&&!el.value)el.value=rememberedLogin()||"leomg29"}
+function initSecurityUI(){initRememberedLogin();
  if(SIASH_CLOUD.enabled){
    $("owner-setup").classList.add("hidden");$("normal-login").classList.remove("hidden");
    cloudHealth().then(h=>{if(h.ok&&!h.configured){$("owner-setup").classList.remove("hidden");$("normal-login").classList.add("hidden");updateCloudBadge("Configuração inicial")}else if(h.ok)updateCloudBadge("Servidor disponível");else updateCloudBadge("Servidor indisponível",true)});
@@ -629,7 +633,10 @@ window.validateDocProposal=async(i,vi)=>{
 }
 window.finalizePreparedPublication=async(i,vi)=>{
  if(!requireProposalContext(i,vi))return;
- const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");if(v.publicationPrepared){const norm=await normalizePreparedInstitutionalCycle(d,v);if(norm.changed){renderDocs();renderProposalReady(i,vi);return alert(`A SIASH corrigiu automaticamente uma revisão institucional intermediária do mesmo ciclo (alvo: Rev.${norm.targetRevision}). Abra o Word novamente e clique em PREPARAR PUBLICAÇÃO para consolidar a revisão correta.`)}}if(!v.publicationPrepared)return validateDocProposal(i,vi);
+ const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");
+ // v0.14.13 — antes de finalizar, reconcilia o metadado preparado com o Word realmente armazenado.
+ // Recupera com segurança propostas legadas em que Rev.03 ficou persistida após reimportar Word Rev.02.
+ if(v.publicationPrepared&&(v.wordKey||v.wordPath)){try{const blob=await getDocBlob(v.wordKey||v.wordPath);if(blob&&/\.docx$/i.test(v.wordName||"")){const z=await JSZip.loadAsync(blob),f=z.file("word/document.xml");if(f){const x=await f.async("string"),hist=historyTableData(x),rows=hist?.info?.filter(r=>r.revision!==null)||[];if(rows.length){const latest=rows.reduce((a,b)=>a.revision>b.revision?a:b),actual=String(latest.revision).padStart(2,"0"),prepared=String(v.preparedInstitutionalRevision||v.institutionalRevision||"").padStart(2,"0");if(prepared&&actual!==prepared){v.publicationPrepared=false;v.publicationPreparedAt="";v.publicationPreparedBy="";v.preparedInstitutionalRevision="";v.institutionalValidity="";v.institutionalPreparationMode="";v.confirmedFinalPages=null;v.approvalEmbedded=false;v.approvalEmbeddedAt="";v.institutionalRevision="";v.institutionalRevisionDate="";v.importedInstitutionalRevision=actual;v.importedInstitutionalMonthYear=String(latest.cells?.[1]||"").trim();v.importedInstitutionalDetectedAt=nowBR();save();renderDocs();renderProposalReady(i,vi);return alert(`A SIASH detectou que o Word armazenado está na Revisão Institucional ${actual}, diferente da preparação transitória ${prepared}. A preparação antiga foi descartada com segurança. Clique em PREPARAR PUBLICAÇÃO para continuar com a Rev.${actual}.`)}}}}}catch(e){console.error("Falha na reconciliação pré-publicação",e);return alert("Publicação bloqueada: não foi possível reconciliar com segurança a revisão institucional do Word. O vigente foi preservado.")}}if(v.publicationPrepared){const norm=await normalizePreparedInstitutionalCycle(d,v);if(norm.changed){renderDocs();renderProposalReady(i,vi);return alert(`A SIASH corrigiu automaticamente uma revisão institucional intermediária do mesmo ciclo (alvo: Rev.${norm.targetRevision}). Abra o Word novamente e clique em PREPARAR PUBLICAÇÃO para consolidar a revisão correta.`)}}if(!v.publicationPrepared)return validateDocProposal(i,vi);
  const validator=(v.publicationPreparedBy||v.validator||SESSION.user||"").trim();if(!validator)return alert("A identificação do profissional responsável não foi preservada. Solicite nova preparação.");
  if(!confirm(`Confirma que você ABRIU o Word preparado da revisão ${v.revision} e conferiu a paginação após a inclusão da nova linha do Controle Histórico?`))return;
  const confirmedPages=(prompt("Informe o NÚMERO TOTAL DE PÁGINAS do Word FINAL que você acabou de conferir:",v.confirmedFinalPages?String(v.confirmedFinalPages):"")||"").trim();if(!/^\d{1,3}$/.test(confirmedPages)||Number(confirmedPages)<1)return alert("Publicação interrompida: informe o número total de páginas do Word final preparado.");
@@ -685,7 +692,7 @@ $("owner-create-btn").addEventListener("click",async()=>{
    $("owner-pass").value="";$("owner-pass2").value="";initSecurityUI();alert("Administrador Proprietário criado. Faça o login com sua credencial exclusiva.");
  }catch(e){alert(e.message||"Falha na configuração Cloud.")}
 })
-$("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}$("login-view").classList.add("hidden");$("app-view").classList.remove("hidden");$("logged-user").textContent=SESSION.user;applyPermissions();if(role==="owner")auditAdmin("Login do Administrador Proprietário.");renderAll();if(role==="owner")setTimeout(()=>migrateLegacyWordDocsIfNeeded().catch(e=>console.error("Migração automática .doc",e)),700)}catch(e){$("login-feedback").textContent=e.message||"Falha no login."}})
+$("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}rememberLogin(SESSION.user||user);$("login-view").classList.add("hidden");$("app-view").classList.remove("hidden");$("logged-user").textContent=SESSION.user;applyPermissions();if(role==="owner")auditAdmin("Login do Administrador Proprietário.");renderAll();if(role==="owner")setTimeout(()=>migrateLegacyWordDocsIfNeeded().catch(e=>console.error("Migração automática .doc",e)),700)}catch(e){$("login-feedback").textContent=e.message||"Falha no login."}})
 $("logout-btn").addEventListener("click",()=>{SIASH_CLOUD.token="";sessionStorage.removeItem("siash_cloud_token");SESSION={authenticated:false,role:null,user:null};$("app-view").classList.add("hidden");$("login-view").classList.remove("hidden");initSecurityUI()})
 $("refresh-dashboard").addEventListener("click",renderAll)
 $("reset-shift").addEventListener("click",()=>{if(confirm("Iniciar novo plantão? O histórico mensal será preservado.")){S.checklist=CHECKS.map(x=>({text:x,status:"Pendente"}));S.events=[];S.pending=[];S.shiftStarted=new Date().toISOString();save()}})
