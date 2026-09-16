@@ -26,7 +26,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.15",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.16",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -603,8 +603,13 @@ async function prepareApprovedWord(d,v,validator){
    v.publicationPrepared=true;v.publicationPreparedAt=nowBR();v.publicationPreparedBy=validator;v.preparedInstitutionalRevision=hist.institutionalRevision;v.institutionalValidity=hist.validity;v.institutionalPreparationMode=hist.mode||"append";if(cycleClean.changed){v.institutionalCycleCleanup={at:nowBR(),kept:cycleClean.keptRevision,removed:cycleClean.removedRevisions||[]}}return {updated:true,institutionalRevision:hist.institutionalRevision,validity:hist.validity,mode:hist.mode||"append",cycleCleanup:cycleClean.changed?cycleClean:null};
  }catch(err){console.error("Falha ao preparar Word final para conferência de paginação",err);return {updated:false,reason:"docx-prepare-failed"}}
 }
+function ensureWordTableCellParagraphs(xml){
+ let changed=false;const out=String(xml||"").replace(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g,tc=>{if(/<w:p(?:\s|>|\/)/.test(tc))return tc;changed=true;return tc.replace(/<\/w:tc>$/,"<w:p/></w:tc>")});return {xml:out,changed};
+}
 function removeProposalStatusParagraphs(xml){
- let changed=false;const out=String(xml||"").replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{const text=xmlPlainText(p);if(/^Proposta\s+de\s+Revis[aã]o\s+\d{1,3}\s*[–—-]\s*vig[eê]ncia\s+ap[oó]s\s+valida[cç][aã]o\s+e\s+publica[cç][aã]o\s+institucional\.?$/i.test(text)){changed=true;return ""}return p});return {xml:out,changed};
+ // v0.14.16 — nunca remova fisicamente o único parágrafo de uma célula Word.
+ // Um <w:tc> sem <w:p> é XML OpenXML estruturalmente inválido e faz o Word pedir recuperação.
+ let changed=false;let out=String(xml||"").replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{const text=xmlPlainText(p);if(/^Proposta\s+de\s+Revis[aã]o\s+\d{1,3}\s*[–—-]\s*vig[eê]ncia\s+ap[oó]s\s+valida[cç][aã]o\s+e\s+publica[cç][aã]o\s+institucional\.?$/i.test(text)){changed=true;return "<w:p/>"}return p});const structural=ensureWordTableCellParagraphs(out);out=structural.xml;return {xml:out,changed:changed||structural.changed};
 }
 function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){
  const hist=historyTableData(xml);if(!hist)return {ok:false,reason:"history-table-not-found"};
