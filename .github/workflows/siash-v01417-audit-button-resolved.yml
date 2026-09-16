@@ -1,0 +1,44 @@
+name: SIASH v01417 audit button resolved
+on:
+  push:
+    branches: [fix/v0.14.17-audit-button-resolved]
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Patch SIASH
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app.js')
+          s=p.read_text()
+          old='function scientificAuditForDoc(d){return SCIENTIFIC_AUDIT_UI[String(d?.code||"").trim()]||null}'
+          new='''const SCIENTIFIC_AUDIT_UI_BASELINE="2026-09-08";\nfunction scientificAuditForDoc(d){\n const audit=SCIENTIFIC_AUDIT_UI[String(d?.code||"").trim()]||null;if(!audit)return null;\n // v0.14.17 — a auditoria v0.14.11 é um retrato retroativo. Depois que uma nova revisão\n // é validada/publicada após essa auditoria, seus achados deixam de ser uma pendência ativa.\n // Assim o selo e o botão "Revisar agora/Ajustar" não reaparecem em um POP já atualizado.\n const pub=docPublishedVersion(d),reviewDate=String(pub?.reviewDate||"").trim();\n if(pub?.workflow==="Vigente"&&/^\\d{4}-\\d{2}-\\d{2}$/.test(reviewDate)&&reviewDate>SCIENTIFIC_AUDIT_UI_BASELINE)return null;\n return audit;\n}'''
+          if old not in s: raise SystemExit('scientificAuditForDoc block not found')
+          s=s.replace(old,new,1)
+          s=s.replace('schema:"siash-0.14.16"','schema:"siash-0.14.17"')
+          p.write_text(s)
+
+          p=Path('index.html'); s=p.read_text(); s=s.replace('v0.14.16','v0.14.17'); p.write_text(s)
+          p=Path('package.json'); s=p.read_text(); s=s.replace('"version": "0.14.16"','"version": "0.14.17"'); p.write_text(s)
+          Path('SIASH_v0.14.17_AUDITORIA_RESOLVIDA.md').write_text('''# SIASH v0.14.17 — Auditoria resolvida após publicação\n\n- Corrige a permanência do botão `Revisar agora`/`Ajustar` após uma revisão ter sido validada e publicada.\n- A auditoria científica da v0.14.11 é tratada como um retrato retroativo com data-base 08/09/2026.\n- Se o POP possui versão Vigente publicada após essa data, os achados daquela auditoria são considerados atendidos para a interface e o selo/botão deixam de aparecer.\n- Não altera Word, revisão institucional, histórico, datas, aprovação ou conteúdo técnico dos documentos.\n- POPs ainda não revisados após a auditoria continuam exibindo normalmente seus botões de ação.\n''')
+          PY
+          node --check app.js
+          node --check server.js
+          python3 -m json.tool package.json >/dev/null
+          grep -q 'SCIENTIFIC_AUDIT_UI_BASELINE="2026-09-08"' app.js
+          grep -q 'v0.14.17' index.html
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js index.html package.json SIASH_v0.14.17_AUDITORIA_RESOLVIDA.md
+          git commit -m "Fix resolved scientific audit actions after publication"
+          git push

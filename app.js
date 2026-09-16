@@ -26,7 +26,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.16",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.17",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -401,7 +401,16 @@ const SCIENTIFIC_AUDIT_UI={
  "LEG-UTIN-021":{status:"confirmed",label:"Confirmado",button:"",findings:["Conteúdo técnico auditado como adequado; modernização bibliográfica futura recomendada."]},
  "LEG-UTIN-025":{status:"confirmed",label:"Confirmado",button:"",findings:["Revisão ampla auditada como adequada; manter validação profissional."]}
 };
-function scientificAuditForDoc(d){return SCIENTIFIC_AUDIT_UI[String(d?.code||"").trim()]||null}
+const SCIENTIFIC_AUDIT_UI_BASELINE="2026-09-08";
+function scientificAuditForDoc(d){
+ const audit=SCIENTIFIC_AUDIT_UI[String(d?.code||"").trim()]||null;if(!audit)return null;
+ // v0.14.17 — a auditoria v0.14.11 é um retrato retroativo. Depois que uma nova revisão
+ // é validada/publicada após essa auditoria, seus achados deixam de ser uma pendência ativa.
+ // Assim o selo e o botão "Revisar agora/Ajustar" não reaparecem em um POP já atualizado.
+ const pub=docPublishedVersion(d),reviewDate=String(pub?.reviewDate||"").trim();
+ if(pub?.workflow==="Vigente"&&/^\d{4}-\d{2}-\d{2}$/.test(reviewDate)&&reviewDate>SCIENTIFIC_AUDIT_UI_BASELINE)return null;
+ return audit;
+}
 function auditedRevisionButton(i,d){const a=scientificAuditForDoc(d);if(!a||a.status==="confirmed"||!canDocEdit(d))return"";const cls=a.status==="review"?"primary":"secondary";return `<button class="${cls} compact-btn" onclick="startAuditedDocRevision(${i})">${safe(a.button)}</button>`}
 window.startAuditedDocRevision=i=>{const d=S.docs?.[i],a=scientificAuditForDoc(d);if(!d||!a)return window.startDocRevision(i);window.startDocRevision(i);const box=$("doc-ai-request-text");if(box)box.value+=`\n\nAUDITORIA CIENTÍFICA SIASH (${a.label.toUpperCase()}):\n- ${a.findings.join("\n- ")}\nA revisão deve confrontar obrigatoriamente estes pontos com pesquisa web atual e fontes específicas oficiais/técnicas. Não renovar a vigência apenas por ausência de mudança aparente.`;const st=$("doc-update-status");if(st)st.textContent=`${d.code} — ${d.title}: ${a.label}. Os achados da auditoria foram incorporados como pontos obrigatórios da revisão.`}
 function renderDocs(){
