@@ -510,13 +510,21 @@ function normalizeMonthYearText(s=""){return String(s).normalize("NFD").replace(
 function priorPublishedVersion(d,v){return (d?.versions||[]).filter(x=>x!==v&&x.workflow==="Vigente").slice(-1)[0]||null}
 function shouldReuseLatestInstitutionalRevision(d,v,rowInfo){
  if(!rowInfo||rowInfo.revision===null)return false;const c=rowInfo.cells||[];
+ const sameCompetence=normalizeMonthYearText(c[1]||"")===normalizeMonthYearText(currentMonthYearPT());
+ // v0.14.12 — uma proposta DOCX importada manualmente pode já trazer a revisão institucional
+ // correta no Controle Histórico (ex.: Rev.02), embora a revisão interna da SIASH seja Rev.01.
+ // Quando a importação registrou explicitamente essa revisão e ela continua sendo a última linha
+ // da mesma competência, reutilizamos a linha existente. Isso impede criar Rev.03 indevidamente.
+ const importedRevision=String(v?.importedInstitutionalRevision||"").padStart(2,"0");
+ const rowRevision=String(rowInfo.revision).padStart(2,"0");
+ if(importedRevision&&importedRevision===rowRevision&&sameCompetence)return true;
  const authoredBySiash=/SIASH\s*Docs/i.test(c[4]||"");if(!authoredBySiash)return false;
  // v0.14.3 — idempotência do ciclo institucional:
  // se a última linha institucional foi criada pelo SIASH Docs na MESMA competência (mês/ano),
  // ela é a revisão institucional do ciclo e deve ser REUTILIZADA. Revisões internas, correções,
  // reprocessamentos ou testes do mesmo ciclo não podem gerar 04→05→06 no Word.
  // Uma nova revisão institucional só é aberta quando muda a competência institucional.
- return normalizeMonthYearText(c[1]||"")===normalizeMonthYearText(currentMonthYearPT());
+ return sameCompetence;
 }
 function institutionalRevisionPlan(xml,d,v,{ignorePreparedRevision=""}={}){
  const h=historyTableData(xml);if(!h)return {ok:false,reason:"history-table-not-found"};
@@ -830,8 +838,8 @@ $("doc-revision-form").addEventListener("submit",async e=>{
  const revision=$("doc-revision-number").value.trim(),reviewDate=$("doc-revision-date").value||todayISO(),period=+$("doc-revision-period").value||d.period||24,note=$("doc-revision-note").value.trim(),sources=$("doc-revision-sources").value.trim(),pdf=$("doc-revision-pdf").files[0],word=$("doc-revision-word").files[0];if(!pdf&&!word)return alert("Selecione o Word ou PDF atualizado recebido da IA.");
  let vi=d.versions.findIndex(v=>String(v.revision).toLowerCase()===revision.toLowerCase()&&v.workflow!=="Vigente"&&v.workflow!=="Obsoleto"),version=vi>=0?d.versions[vi]:null;
  if(!version){version={revision,reviewDate,workflow:"Aguardando aprovação",note:note||"Revisão produzida com apoio de IA — aguardando conferência profissional.",sources,createdBy:SESSION.user||"Administrador Proprietário",createdAt:nowBR()};d.versions.push(version);vi=d.versions.length-1}else{version.reviewDate=reviewDate;version.workflow="Aguardando aprovação";if(note)version.note=note;if(sources)version.sources=sources;version.updatedAt=nowBR()}
- try{if(pdf){version.pdfKey=`${d.id}|${revision}|pdf|${Date.now()}`;version.pdfName=pdf.name;await putDocBlob(version.pdfKey,pdf)}if(word){version.wordKey=`${d.id}|${revision}|word|${Date.now()}`;version.wordName=word.name;await putDocBlob(version.wordKey,word)}}catch(err){console.error(err);return alert("Não foi possível armazenar o arquivo desta revisão. Verifique as permissões do navegador.")}
- d.period=period;auditAdmin(`SIASH Docs: ${d.code} revisão ${revision} importada para conferência.`);save();showToast(`Revisão ${revision} pronta para conferência`,1500);renderProposalReady(i,vi);renderDocs();
+ try{if(pdf){version.pdfKey=`${d.id}|${revision}|pdf|${Date.now()}`;version.pdfName=pdf.name;await putDocBlob(version.pdfKey,pdf)}if(word){version.wordKey=`${d.id}|${revision}|word|${Date.now()}`;version.wordName=word.name;await putDocBlob(version.wordKey,word);if(/\.docx$/i.test(word.name)){try{const z=await JSZip.loadAsync(word),f=z.file("word/document.xml");if(f){const x=await f.async("string"),h=historyTableData(x),rows=h?.info?.filter(r=>r.revision!==null)||[];if(rows.length){const latest=rows.reduce((a,b)=>a.revision>b.revision?a:b);version.importedInstitutionalRevision=String(latest.revision).padStart(2,"0");version.importedInstitutionalMonthYear=String(latest.cells?.[1]||"").trim();version.importedInstitutionalDetectedAt=nowBR();}}}catch(metaErr){console.warn("Não foi possível detectar a revisão institucional do Word importado",metaErr)}}}}catch(err){console.error(err);return alert("Não foi possível armazenar o arquivo desta revisão. Verifique as permissões do navegador.")}
+ d.period=period;auditAdmin(`SIASH Docs: ${d.code} revisão ${revision} importada para conferência${version.importedInstitutionalRevision?` · Word institucional Rev.${version.importedInstitutionalRevision} detectado e preservado`:""}.`);save();showToast(`Revisão ${revision} pronta para conferência`,1500);renderProposalReady(i,vi);renderDocs();
 })
 $("huddle-form").addEventListener("submit",e=>{e.preventDefault();S.huddle.push({sector:$("h-sector").value,problem:$("h-problem").value.trim(),action:$("h-action").value.trim(),owner:$("h-owner").value.trim(),deadline:$("h-deadline").value,priority:$("h-priority").value,done:false});e.target.reset();save()})
 $("swap-form").addEventListener("submit",e=>{e.preventDefault();S.rh.push({type:"Troca de plantão",name:$("swap-a").value.trim(),detail:`Substituto: ${$("swap-b").value.trim()} | ${dateBR($("swap-date-a").value)} ↔ ${dateBR($("swap-date-b").value)} | ${$("swap-reason").value.trim()}`,status:"Aguardando aprovação"});e.target.reset();save()})
