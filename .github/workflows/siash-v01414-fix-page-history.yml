@@ -1,0 +1,52 @@
+name: SIASH v01414 page history fix
+on:
+  push:
+    branches:
+      - fix/v0.14.14-confirmar-paginacao
+permissions:
+  contents: write
+jobs:
+  fix_and_test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v0.14.14-confirmar-paginacao
+      - name: Apply fix and test
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p=Path('app.js'); s=p.read_text()
+          marker='function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){'; start=s.find(marker)
+          if start < 0: raise SystemExit('function not found')
+          old='const tblRe=/<w:tbl(?:\\s[^>]*)?>[\\s\\S]*?Controle Hist[óo]rico[\\s\\S]*?<\\/w:tbl>/i,m=xml.match(tblRe);if(!m)return {ok:false,reason:"history-table-not-found"};\n const table=m[0],rows=[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);let target=null;'
+          pos=s.find(old,start,start+1600)
+          if pos < 0: raise SystemExit('rigid detector not found')
+          new='const hist=historyTableData(xml);if(!hist)return {ok:false,reason:"history-table-not-found"};\n const table=hist.table,rows=hist.rows||[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);let target=null;'
+          s=s[:pos]+new+s[pos+len(old):]
+          s=s.replace('schema:"siash-0.14.13"','schema:"siash-0.14.14"')
+          p.write_text(s)
+          PY
+          node --check app.js
+          node --check server.js
+          node -e "JSON.parse(require('fs').readFileSync('package.json','utf8'))"
+          python3 <<'PY'
+          from pathlib import Path
+          s=Path('app.js').read_text(); start=s.index('function updatePreparedHistoryPageCountXml'); block=s[start:start+1600]
+          assert 'historyTableData(xml)' in block
+          assert 'tblRe=' not in block[:600]
+          assert 'prepared-history-row-not-found' in block
+          assert 'schema:"siash-0.14.14"' in s
+          print('PASS v0.14.14 detector robusto e fail-closed')
+          PY
+      - name: Commit
+        shell: bash
+        run: |
+          git config user.name github-actions-bot
+          git config user.email github-actions-bot@users.noreply.github.com
+          git add app.js
+          git diff --cached --check
+          git commit -m 'SIASH v0.14.14 fix final page history detection'
+          git push origin HEAD:fix/v0.14.14-confirmar-paginacao
