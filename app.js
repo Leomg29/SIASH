@@ -26,7 +26,7 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  const data=await cloudJson(bootstrap?"/api/bootstrap":"/api/login",{method:"POST",body:JSON.stringify({username,password})});
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
-function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.13",savedAt:new Date().toISOString()}}
+function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.14",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
@@ -600,8 +600,8 @@ async function prepareApprovedWord(d,v,validator){
  }catch(err){console.error("Falha ao preparar Word final para conferência de paginação",err);return {updated:false,reason:"docx-prepare-failed"}}
 }
 function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){
- const tblRe=/<w:tbl(?:\s[^>]*)?>[\s\S]*?Controle Hist[óo]rico[\s\S]*?<\/w:tbl>/i,m=xml.match(tblRe);if(!m)return {ok:false,reason:"history-table-not-found"};
- const table=m[0],rows=[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);let target=null;
+ const hist=historyTableData(xml);if(!hist)return {ok:false,reason:"history-table-not-found"};
+ const table=hist.table,rows=hist.rows||[...table.matchAll(/<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g)].map(x=>x[0]);let target=null;
  for(const row of rows){const cells=[...row.matchAll(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g)].map(x=>[...x[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(y=>y[1].replace(/<[^>]+>/g,"")).join("").trim());if(cells.length>=7&&cells[0]===String(institutionalRevision)){target=row;break}}
  if(!target)return {ok:false,reason:"prepared-history-row-not-found"};let ci=0;const updated=target.replace(/<w:tc(?:\s[^>]*)?>[\s\S]*?<\/w:tc>/g,tc=>{const out=ci===2?replaceCellText(tc,String(pages)):tc;ci++;return out});
  return {ok:true,xml:xml.replace(table,table.replace(target,updated))};
