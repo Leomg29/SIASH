@@ -13,44 +13,36 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/v0.14.14-confirmar-paginacao
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Apply fix
+      - name: Apply fix and test
         shell: bash
         run: |
           python3 <<'PY'
           from pathlib import Path
-          p=Path('app.js')
-          s=p.read_text()
-          marker='function updatePreparedHistoryPageCountXml(xml,revision,pages){'
+          p=Path('app.js'); s=p.read_text()
+          marker='function updatePreparedHistoryPageCountXml(xml,institutionalRevision,pages){'
           start=s.find(marker)
           if start < 0: raise SystemExit('function not found')
-          old='const m=xml.match(/<w:tbl(?:\\s[^>]*)?>[\\s\\S]*?Controle Hist[óo]rico[\\s\\S]*?<\\/w:tbl>/i);if(!m)return {ok:false,reason:"history-table-not-found"};const table=m[0],rows=[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);'
-          pos=s.find(old,start,start+1500)
-          if pos < 0: raise SystemExit('old rigid detector not found near function')
-          new='const hist=historyTableData(xml);if(!hist)return {ok:false,reason:"history-table-not-found"};const table=hist.table,rows=hist.rows||[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);'
+          old='const tblRe=/<w:tbl(?:\\s[^>]*)?>[\\s\\S]*?Controle Hist[óo]rico[\\s\\S]*?<\\/w:tbl>/i,m=xml.match(tblRe);if(!m)return {ok:false,reason:"history-table-not-found"};\n const table=m[0],rows=[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);let target=null;'
+          pos=s.find(old,start,start+1600)
+          if pos < 0: raise SystemExit('rigid detector not found')
+          new='const hist=historyTableData(xml);if(!hist)return {ok:false,reason:"history-table-not-found"};\n const table=hist.table,rows=hist.rows||[...table.matchAll(/<w:tr(?:\\s[^>]*)?>[\\s\\S]*?<\\/w:tr>/g)].map(x=>x[0]);let target=null;'
           s=s[:pos]+new+s[pos+len(old):]
           s=s.replace('Alpha Consolidada v0.14.13','Alpha Consolidada v0.14.14')
           s=s.replace('schema:"siash-0.14.13"','schema:"siash-0.14.14"')
           p.write_text(s)
           PY
-      - name: Test
-        shell: bash
-        run: |
           node --check app.js
           node --check server.js
           node -e "JSON.parse(require('fs').readFileSync('package.json','utf8'))"
           python3 <<'PY'
           from pathlib import Path
-          s=Path('app.js').read_text()
-          start=s.index('function updatePreparedHistoryPageCountXml')
-          block=s[start:start+1600]
+          s=Path('app.js').read_text(); start=s.index('function updatePreparedHistoryPageCountXml'); block=s[start:start+1600]
           assert 'historyTableData(xml)' in block
-          assert 'history-table-not-found' in block
+          assert 'tblRe=' not in block[:600]
+          assert 'prepared-history-row-not-found' in block
           assert 'Alpha Consolidada v0.14.14' in s
           assert 'schema:"siash-0.14.14"' in s
-          print('PASS v0.14.14')
+          print('PASS v0.14.14 detector robusto e fail-closed')
           PY
       - name: Commit
         shell: bash
