@@ -785,11 +785,31 @@ async function runAIRevision(prompt,requested,options={}){
   const requireWebResearch=options?.requireWebResearch===true;
   const simulatedUnavailable=new Set(Array.isArray(options?.simulateUnavailable)?options.simulateUnavailable.map(x=>String(x).toLowerCase()):[]);
   const diagnostic=options?.diagnostic===true;
+  let webResearch=null;
+  let revisionPrompt=prompt;
+  if(requireWebResearch&&TAVILY_API_KEY){
+    try{
+      webResearch=await researchWithTavily(prompt);
+      revisionPrompt=[
+        prompt,
+        "",
+        "PESQUISA WEB ATUAL E VERIFICÁVEL FORNECIDA PELO TAVILY:",
+        webResearch.evidence,
+        "",
+        "REGRA DE EVIDÊNCIA: use somente as fontes acima para sustentar afirmações que dependam de pesquisa web atual. Preserve os URLs das fontes utilizadas nas referências. Não invente fontes, títulos, normas, datas ou URLs."
+      ].join("\n");
+      console.log(`[SIASH AI] Tavily habilitou pesquisa web verificável | fontes=${webResearch.sources.length}`);
+    }catch(e){
+      const msg=String(e?.message||"falha").replace(/\s+/g," ").slice(0,500);
+      errors.push(`tavily: ${msg}`);
+      console.warn(`[SIASH AI] Tavily indisponível | motivo=${msg}`);
+    }
+  }
   console.log(`[SIASH AI] início da revisão | ordem=${order.join(">")}`);
   for(const p of order){
     try{
       if(requireWebResearch){
-        const webCapable=(p==="openai"&&!!openaiClient)||(p==="gemini"&&!!GEMINI_API_KEY&&geminiUseSearch());
+        const webCapable=!!webResearch||(p==="openai"&&!!openaiClient)||(p==="gemini"&&!!GEMINI_API_KEY&&geminiUseSearch());
         if(!webCapable){errors.push(`${p}: pesquisa web atual indisponível`);console.log(`[SIASH AI] provedor ignorado | provider=${p} | motivo=pesquisa_web_obrigatoria`);continue}
       }
       let ai=null;
@@ -798,10 +818,15 @@ async function runAIRevision(prompt,requested,options={}){
         simulated.code="SIASH_DIAGNOSTIC_SIMULATION";
         throw simulated;
       }
-      if(p==="gemini"&&GEMINI_API_KEY)ai=await reviseWithGemini(prompt);
-      else if(p==="cloudflare"&&cloudflareConfigured())ai=await reviseWithCloudflare(prompt);
-      else if(p==="openai"&&openaiClient)ai=await reviseWithOpenAI(prompt);
+      if(p==="gemini"&&GEMINI_API_KEY)ai=await reviseWithGemini(revisionPrompt);
+      else if(p==="cloudflare"&&cloudflareConfigured())ai=await reviseWithCloudflare(revisionPrompt);
+      else if(p==="openai"&&openaiClient)ai=await reviseWithOpenAI(revisionPrompt);
       else {errors.push(`${p}: não configurado`);console.log(`[SIASH AI] provedor ignorado | provider=${p} | motivo=não_configurado`);continue}
+      if(webResearch){
+        const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
+        ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
+        ai.researchMode="tavily_search";
+      }
       console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
       return ai;
     }catch(e){
@@ -813,12 +838,12 @@ async function runAIRevision(prompt,requested,options={}){
     }
   }
   console.error(`[SIASH AI] todos os provedores falharam | ${errors.join(" | ")}`);
-  if(requireWebResearch){const err=new Error("Esta revisão exige pesquisa web atual, mas nenhum provedor configurado com pesquisa verificável está disponível. Configure Gemini com Google Search ou OpenAI com web_search; o POP vigente permanece inalterado.");err.code="AI_WEB_RESEARCH_REQUIRED";throw err}
+  if(requireWebResearch){const err=new Error("Esta revisão exige pesquisa web atual, mas a pesquisa verificável não ficou disponível. Verifique Tavily, Gemini com Google Search ou OpenAI com web_search; o POP vigente permanece inalterado.");err.code="AI_WEB_RESEARCH_REQUIRED";throw err}
   const err=new Error("Serviço de IA temporariamente indisponível. Nenhuma alteração foi realizada no POP. Tente novamente mais tarde.");
   err.code="AI_PROVIDERS_UNAVAILABLE";
   throw err;
 }
-app.get("/api/ai/status",auth,(req,res)=>res.json({configured:!!(GEMINI_API_KEY||cloudflareConfigured()||openaiClient),defaultProvider:AI_DEFAULT_PROVIDER,providers:availableAIProviders(),privacyNotice:"Não envie dados identificáveis de pacientes aos provedores externos de IA. Toda proposta e referência deve ser conferida pelo profissional antes da publicação."}));
+app.get("/api/ai/status",auth,(req,res)=>res.json({configured:!!(GEMINI_API_KEY||cloudflareConfigured()||openaiClient),webResearch:{tavilyConfigured:!!TAVILY_API_KEY},defaultProvider:AI_DEFAULT_PROVIDER,providers:availableAIProviders(),privacyNotice:"Não envie dados identificáveis de pacientes aos provedores externos de IA. Toda proposta e referência deve ser conferida pelo profissional antes da publicação."}));
 
 app.post("/api/ai/diagnostic/fallback",auth,async(req,res)=>{
   const startedAt=Date.now();
