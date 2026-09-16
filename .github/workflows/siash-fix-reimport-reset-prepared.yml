@@ -1,0 +1,40 @@
+name: SIASH fix reimport prepared state
+on:
+  push:
+    branches: [fix/reimport-reset-prepared-v0.14.12c]
+    paths: [.github/workflows/siash-fix-reimport-reset-prepared.yml]
+permissions:
+  contents: write
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/reimport-reset-prepared-v0.14.12c
+      - name: Patch import lifecycle
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('app.js'); s=p.read_text(encoding='utf-8')
+          old='''if(!version){version={revision,reviewDate,workflow:"Aguardando aprovação",note:note||"Revisão produzida com apoio de IA — aguardando conferência profissional.",sources,createdBy:SESSION.user||"Administrador Proprietário",createdAt:nowBR()};d.versions.push(version);vi=d.versions.length-1}else{version.reviewDate=reviewDate;version.workflow="Aguardando aprovação";if(note)version.note=note;if(sources)version.sources=sources;version.updatedAt=nowBR()}'''
+          new='''if(!version){version={revision,reviewDate,workflow:"Aguardando aprovação",note:note||"Revisão produzida com apoio de IA — aguardando conferência profissional.",sources,createdBy:SESSION.user||"Administrador Proprietário",createdAt:nowBR()};d.versions.push(version);vi=d.versions.length-1}else{version.reviewDate=reviewDate;version.workflow="Aguardando aprovação";if(note)version.note=note;if(sources)version.sources=sources;version.updatedAt=nowBR()}\n // v0.14.12c — reimportar um Word é uma nova proposta documental e invalida qualquer\n // preparação anterior. Sem este reset, um Word preparado indevidamente como Rev.03 poderia\n // permanecer marcado para FINALIZAR mesmo após a reimportação do Word correto Rev.02.\n if(word){version.publicationPrepared=false;version.publicationPreparedAt="";version.publicationPreparedBy="";version.preparedInstitutionalRevision="";version.institutionalValidity="";version.institutionalPreparationMode="";version.confirmedFinalPages=null;version.approvalEmbedded=false;version.approvalEmbeddedAt="";version.institutionalRevision="";version.institutionalRevisionDate="";version.importedInstitutionalRevision="";version.importedInstitutionalMonthYear="";version.importedInstitutionalDetectedAt=""}'''
+          if old not in s: raise SystemExit('bloco de importação não localizado; abortado')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+      - name: Checks
+        run: |
+          node --check app.js
+          node --check server.js
+          node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('package OK')"
+          node - <<'NODE'
+          const s=require('fs').readFileSync('app.js','utf8');
+          for(const x of ['version.publicationPrepared=false','version.preparedInstitutionalRevision=""','version.importedInstitutionalRevision=""','historyTableData(x)']) if(!s.includes(x)) throw new Error('missing '+x);
+          console.log('reimport lifecycle assertions OK');
+          NODE
+      - name: Commit
+        run: |
+          git config user.name "SIASH automated fix"
+          git config user.email "actions@users.noreply.github.com"
+          git add app.js
+          git commit -m "SIASH v0.14.12c: reset prepared state on Word reimport"
+          git push origin HEAD:fix/reimport-reset-prepared-v0.14.12c
