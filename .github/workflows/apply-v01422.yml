@@ -1,0 +1,30 @@
+name: Apply SIASH v0.14.22 patch
+on:
+  push:
+    branches: [fix/v0.14.22-tavily-cloudflare-runtime]
+    paths: ['scripts/apply-v0.14.22.js']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v0.14.22-tavily-cloudflare-runtime
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node scripts/apply-v0.14.22.js
+      - run: node --check server.js
+      - name: Assert v0.14.22 safeguards
+        run: |
+          grep -q 'AI_GENERATION_UNAVAILABLE_AFTER_WEB_RESEARCH' server.js
+          grep -A4 'const CLOUDFLARE_FREE_MODEL_FALLBACKS' server.js | head -5 | grep -q '@cf/nvidia/nemotron-3-120b-a12b'
+      - name: Commit patched server
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server.js
+          git diff --cached --quiet || git commit -m 'SIASH v0.14.22 prioritize proven Cloudflare fallback'
+          git push
