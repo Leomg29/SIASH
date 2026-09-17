@@ -20,7 +20,7 @@ jobs:
       - name: Assert v0.14.22 safeguards
         run: |
           grep -q 'AI_GENERATION_UNAVAILABLE_AFTER_WEB_RESEARCH' server.js
-          node -e "const s=require('fs').readFileSync('server.js','utf8'); const a=s.indexOf('@cf/nvidia/nemotron-3-120b-a12b'), b=s.indexOf('@cf/zai-org/glm-4.7-flash'); if(a<0||b<0||a>b) process.exit(1)"
+          grep -A4 'const CLOUDFLARE_FREE_MODEL_FALLBACKS' server.js | head -5 | grep -q '@cf/nvidia/nemotron-3-120b-a12b'
       - name: Commit patched server
         run: |
           git config user.name 'github-actions[bot]'
