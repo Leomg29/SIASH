@@ -1,3 +1,4 @@
+// SIASH v0.14.22 patch — validated through GitHub Actions
 const fs=require('fs');
 const p='server.js';
 let s=fs.readFileSync(p,'utf8');
