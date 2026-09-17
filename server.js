@@ -203,10 +203,11 @@ const GEMINI_TIMEOUT_MS = Math.max(15000, Number(process.env.GEMINI_TIMEOUT_MS |
 const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || "";
 const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || "";
 const CLOUDFLARE_AI_MODEL = process.env.CLOUDFLARE_AI_MODEL || "@cf/zai-org/glm-4.7-flash";
+// v0.14.22 — prioriza o modelo gratuito que concluiu com sucesso o fluxo Tavily no ambiente real.
 const CLOUDFLARE_FREE_MODEL_FALLBACKS = [
+  "@cf/nvidia/nemotron-3-120b-a12b",
   "@cf/zai-org/glm-4.7-flash",
-  "@cf/google/gemma-4-26b-a4b-it",
-  "@cf/nvidia/nemotron-3-120b-a12b"
+  "@cf/google/gemma-4-26b-a4b-it"
 ];
 const CLOUDFLARE_KNOWN_PAID_MODELS = new Set([
   "@cf/moonshotai/kimi-k2.5",
@@ -838,7 +839,14 @@ async function runAIRevision(prompt,requested,options={}){
     }
   }
   console.error(`[SIASH AI] todos os provedores falharam | ${errors.join(" | ")}`);
-  if(requireWebResearch){const err=new Error("Esta revisão exige pesquisa web atual, mas a pesquisa verificável não ficou disponível. Verifique Tavily, Gemini com Google Search ou OpenAI com web_search; o POP vigente permanece inalterado.");err.code="AI_WEB_RESEARCH_REQUIRED";throw err}
+  if(requireWebResearch){
+    const tavilyOk=!!webResearch;
+    const err=new Error(tavilyOk
+      ? "A pesquisa web verificável da Tavily foi concluída, porém nenhum modelo de IA disponível conseguiu gerar a proposta dentro dos limites atuais. O POP vigente permanece inalterado."
+      : "Esta revisão exige pesquisa web atual, mas a pesquisa verificável não ficou disponível. Verifique Tavily, Gemini com Google Search ou OpenAI com web_search; o POP vigente permanece inalterado.");
+    err.code=tavilyOk?"AI_GENERATION_UNAVAILABLE_AFTER_WEB_RESEARCH":"AI_WEB_RESEARCH_REQUIRED";
+    throw err
+  }
   const err=new Error("Serviço de IA temporariamente indisponível. Nenhuma alteração foi realizada no POP. Tente novamente mais tarde.");
   err.code="AI_PROVIDERS_UNAVAILABLE";
   throw err;
