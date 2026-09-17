@@ -938,7 +938,7 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
 MOTIVO DA REVISÃO DOCUMENTAL: ${String(periodic_review_reason||"não informado").trim()||"não informado"}
 AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scientificAudit.findings.join(" | ")}`:"Sem apontamento retroativo específico."}\nPEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").trim()||"Nenhum"}\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
     const ai=await runAIRevision(prompt,provider,{requireWebResearch:requiresCurrentWebResearch});
-    if(requiresCurrentWebResearch&&!(["web_search","google_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
+    if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
     if(effective.some(x=>!Array.isArray(x.references)||!x.references.length))throw new Error("A IA propôs alteração técnico-científica sem referência específica. A proposta foi bloqueada para conferência segura.");
