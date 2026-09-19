@@ -1,0 +1,11 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8");
+assert.ok(s.includes('async function researchWithTavily(prompt,queryOverride="")'));
+assert.ok(s.includes('String(queryOverride||prompt||"")'));
+assert.ok(s.includes("scientificAudit?.findings||[]"));
+assert.ok(s.includes("revisão técnico-científica hospitalar neonatal"));
+assert.ok(s.includes("REGRA DE AUDITORIA: quando houver AUDITORIA CIENTÍFICA SIASH com REVISÃO NECESSÁRIA"));
+assert.ok(s.includes("researchQuery"));
+const audit=s.match(/"LEG-UTIN-023":\{status:"review",label:"Revisão necessária",findings:\[(.*?)\]\}/s);
+assert.ok(audit&&audit[1].includes("ANVISA")&&audit[1].includes("5 momentos")&&audit[1].includes("3–5 mL"),"Achados do LEG-UTIN-023 devem permanecer preservados.");
+console.log("OK: pesquisa direcionada pelos achados da auditoria e proteções preservadas.");
