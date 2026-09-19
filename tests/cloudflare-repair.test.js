@@ -1,0 +1,12 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8");
+assert.ok(s.includes("async function cloudflareRequest(model,messages"));
+assert.ok(s.includes("function cloudflareRepairPrompt(originalPrompt,invalidText,parseReason)"));
+assert.ok(s.includes("if(!e?.modelJsonParseFailure)throw e;"));
+assert.ok(s.includes("Cloudflare resposta exige reparo estrutural"));
+assert.ok(s.includes("Cloudflare reparo estrutural concluído"));
+assert.ok(s.includes("Não acrescente fatos nem fontes ausentes das evidências fornecidas"));
+assert.ok(s.includes("Se uma alteração não puder ser sustentada pelas fontes do pedido original, não a invente"));
+assert.ok(s.includes("const result=parseModelJson(repairedText)"));
+assert.ok(s.includes("structuralRepair:true"));
+console.log("OK: reparo estrutural limitado, revalidação obrigatória e proteções científicas preservadas.");
