@@ -763,10 +763,10 @@ function providerOrder(requested){
   return ["gemini","cloudflare","openai"];
 }
 
-async function researchWithTavily(prompt){
+async function researchWithTavily(prompt,queryOverride=""){
   if(!TAVILY_API_KEY) throw new Error("TAVILY_API_KEY não configurada no servidor.");
 
-  const query=String(prompt||"")
+  const query=String(queryOverride||prompt||"")
     .replace(/\s+/g," ")
     .trim()
     .slice(0,400);
@@ -841,14 +841,15 @@ async function runAIRevision(prompt,requested,options={}){
   let revisionPrompt=prompt;
   if(requireWebResearch&&TAVILY_API_KEY){
     try{
-      webResearch=await researchWithTavily(prompt);
+      webResearch=await researchWithTavily(prompt,options?.researchQuery||"");
       revisionPrompt=[
         prompt,
         "",
         "PESQUISA WEB ATUAL E VERIFICÁVEL FORNECIDA PELO TAVILY:",
         webResearch.evidence,
         "",
-        "REGRA DE EVIDÊNCIA: use somente as fontes acima para sustentar afirmações que dependam de pesquisa web atual. Preserve os URLs das fontes utilizadas nas referências. Não invente fontes, títulos, normas, datas ou URLs."
+        "REGRA DE EVIDÊNCIA: use somente as fontes acima para sustentar afirmações que dependam de pesquisa web atual. Preserve os URLs das fontes utilizadas nas referências. Não invente fontes, títulos, normas, datas ou URLs.",
+        "REGRA DE AUDITORIA: quando houver AUDITORIA CIENTÍFICA SIASH com REVISÃO NECESSÁRIA, confronte cada achado com as evidências Tavily e com os PARÁGRAFOS EDITÁVEIS. Para todo achado que possua suporte nas fontes, gere alteração técnico-científica rastreável no paragraph_index correspondente e cite a fonte específica. Se algum achado não puder ser corrigido com as fontes retornadas, declare explicitamente no summary qual achado ficou sem suporte; nunca substitua isso por simples renovação de vigência."
       ].join("\n");
       console.log(`[SIASH AI] Tavily habilitou pesquisa web verificável | fontes=${webResearch.sources.length}`);
     }catch(e){
@@ -996,7 +997,13 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
 17) Se a AUDITORIA CIENTÍFICA SIASH estiver classificada como REVISÃO NECESSÁRIA, trate os achados como pontos obrigatórios de verificação e não encerre a análise como simples renovação de vigência.
 MOTIVO DA REVISÃO DOCUMENTAL: ${String(periodic_review_reason||"não informado").trim()||"não informado"}
 AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scientificAudit.findings.join(" | ")}`:"Sem apontamento retroativo específico."}\nPEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").trim()||"Nenhum"}\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
-    const ai=await runAIRevision(prompt,provider,{requireWebResearch:requiresCurrentWebResearch});
+    const researchQuery=[
+      doc_title,
+      scientificAudit?.status==="review"||scientificAudit?.status==="adjust" ? "revisão técnico-científica hospitalar neonatal" : "",
+      ...(scientificAudit?.findings||[]),
+      "ANVISA Ministério da Saúde SBP WHO diretriz manual recomendação atual"
+    ].filter(Boolean).join(" | ");
+    const ai=await runAIRevision(prompt,provider,{requireWebResearch:requiresCurrentWebResearch,researchQuery});
     if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);

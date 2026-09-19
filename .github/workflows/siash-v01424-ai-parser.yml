@@ -17,7 +17,7 @@ jobs:
           node-version: "20"
       - run: node --check server.js
       - run: node tests/ai-parser.test.js
-      - name: Validate release version
+      - name: Validate release version synchronization
         run: |
-          grep -q '"version": "0.14.24"' package.json
-          test "$(grep -o 'v0.14.24' index.html | wc -l)" -ge 3
+          VERSION=$(node -p "require('./package.json').version")
+          test "$(grep -o "v$VERSION" index.html | wc -l)" -ge 3
