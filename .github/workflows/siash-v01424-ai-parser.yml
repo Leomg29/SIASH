@@ -1,0 +1,23 @@
+name: SIASH v0.14.24 AI parser tests
+on:
+  pull_request:
+    paths:
+      - "server.js"
+      - "tests/ai-parser.test.js"
+      - "package.json"
+      - "index.html"
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node --check server.js
+      - run: node tests/ai-parser.test.js
+      - name: Validate release version
+        run: |
+          grep -q '"version": "0.14.24"' package.json
+          test "$(grep -o 'v0.14.24' index.html | wc -l)" -ge 3

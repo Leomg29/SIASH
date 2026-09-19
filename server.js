@@ -568,9 +568,60 @@ function collectOpenAISources(response){
   const urls=new Map();for(const item of response.output||[]){if(item.type==="web_search_call"){for(const s of item.action?.sources||[]){if(s?.url)urls.set(s.url,s.title||s.url)}}}
   return [...urls].map(([url,title])=>({title,url}));
 }
+function modelJsonCandidates(text=""){
+  const raw=String(text||"").trim();
+  if(!raw)return [];
+  const out=[],seen=new Set(),add=value=>{const v=String(value||"").trim();if(v&&!seen.has(v)){seen.add(v);out.push(v)}};
+  add(raw);
+  add(raw.replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/i,"").trim());
+  for(const m of raw.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi))add(m[1]);
+  for(let start=0;start<raw.length;start++){
+    if(raw[start]!=="{")continue;
+    let depth=0,inString=false,escaped=false;
+    for(let i=start;i<raw.length;i++){
+      const ch=raw[i];
+      if(inString){
+        if(escaped)escaped=false;
+        else if(ch==="\\")escaped=true;
+        else if(ch==='"')inString=false;
+        continue;
+      }
+      if(ch==='"'){inString=true;continue}
+      if(ch==="{")depth++;
+      else if(ch==="}"&&--depth===0){add(raw.slice(start,i+1));break}
+    }
+  }
+  return out;
+}
+function validateModelRevisionJson(value){
+  if(!value||typeof value!=="object"||Array.isArray(value))throw new Error("A resposta da IA não contém um objeto JSON de revisão.");
+  const candidate=value.summary!==undefined||value.updates!==undefined||value.references!==undefined
+    ? value
+    : (value.result&&typeof value.result==="object"&&!Array.isArray(value.result)?value.result:null);
+  if(!candidate)throw new Error("A resposta da IA não contém as chaves obrigatórias da revisão.");
+  if(typeof candidate.summary!=="string"||!candidate.summary.trim())throw new Error("A resposta da IA não contém summary válido.");
+  if(!Array.isArray(candidate.updates))throw new Error("A resposta da IA não contém updates válido.");
+  if(!Array.isArray(candidate.references))throw new Error("A resposta da IA não contém references válido.");
+  for(const u of candidate.updates){
+    if(!u||typeof u!=="object"||!Number.isInteger(Number(u.paragraph_index))||typeof u.new_text!=="string"||!u.new_text.trim()||typeof u.reason!=="string"||!Array.isArray(u.references))
+      throw new Error("A resposta da IA contém uma alteração fora do esquema seguro.");
+  }
+  for(const ref of candidate.references){
+    if(!ref||typeof ref!=="object"||typeof ref.title!=="string"||typeof ref.url!=="string")
+      throw new Error("A resposta da IA contém uma referência fora do esquema seguro.");
+  }
+  return candidate;
+}
 function parseModelJson(text=""){
-  let t=String(text||"").trim().replace(/^```(?:json)?\s*/i,"").replace(/\s*```$/i,"").trim();
-  try{return JSON.parse(t)}catch(_){const a=t.indexOf("{"),b=t.lastIndexOf("}");if(a>=0&&b>a)return JSON.parse(t.slice(a,b+1));throw new Error("A IA retornou uma resposta que não pôde ser interpretada com segurança.")}
+  let lastError=null;
+  for(const candidate of modelJsonCandidates(text)){
+    try{return validateModelRevisionJson(JSON.parse(candidate))}
+    catch(e){lastError=e}
+  }
+  const err=new Error("A IA retornou uma resposta que não pôde ser interpretada com segurança.");
+  err.modelJsonParseFailure=true;
+  err.parseReason=String(lastError?.message||"Nenhum objeto JSON válido foi encontrado.").slice(0,240);
+  throw err;
 }
 function geminiGroundingSources(data){
   const chunks=data?.candidates?.[0]?.groundingMetadata?.groundingChunks||[];
@@ -677,7 +728,7 @@ function cloudflareModelCandidates(){
 }
 function cloudflareModelRetryable(e){
   const msg=String(e?.message||"").toLowerCase();
-  return e?.httpStatus===403||e?.httpStatus===404||e?.httpStatus===429||e?.cloudflareEmptyContent===true||msg.includes("tempo limite")||msg.includes("workers free plan")||msg.includes("not available")||msg.includes("out of capacity")||msg.includes("5035")||msg.includes("3040")||msg.includes("não retornou conteúdo utilizável");
+  return e?.httpStatus===403||e?.httpStatus===404||e?.httpStatus===429||e?.cloudflareEmptyContent===true||e?.modelJsonParseFailure===true||msg.includes("tempo limite")||msg.includes("workers free plan")||msg.includes("not available")||msg.includes("out of capacity")||msg.includes("5035")||msg.includes("3040")||msg.includes("não retornou conteúdo utilizável");
 }
 async function reviseWithCloudflare(prompt){
   if(!CLOUDFLARE_API_TOKEN||!CLOUDFLARE_ACCOUNT_ID)throw new Error("Cloudflare Workers AI ainda não configurada no servidor.");
@@ -691,7 +742,7 @@ async function reviseWithCloudflare(prompt){
     }catch(e){
       const msg=String(e?.message||"falha").replace(/\s+/g," ").slice(0,500);
       errors.push(`${model}: ${msg}`);
-      console.warn(`[SIASH AI] Cloudflare modelo indisponível | model=${model} | motivo=${msg}`);
+      console.warn(`[SIASH AI] Cloudflare modelo indisponível | model=${model} | motivo=${msg}${e?.parseReason?` | parse=${e.parseReason}`:""}`);
       if(!cloudflareModelRetryable(e))break;
     }
   }
