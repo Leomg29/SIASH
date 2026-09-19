@@ -664,17 +664,13 @@ async function reviseWithGemini(prompt){
   const result=parseModelJson(text);
   return {result,sources:useSearch?geminiGroundingSources(data):[],model:GEMINI_MODEL,provider:"gemini",researchMode:useSearch?"google_search":"model_knowledge"};
 }
-async function cloudflareRunModel(model,prompt){
-  const strictPrompt=prompt+`\n\nFORMATO DE SAÍDA OBRIGATÓRIO: responda SOMENTE com JSON válido nas chaves summary, updates e references. Não inclua markdown nem comentários fora do JSON. Em references, forneça título e URL específica do documento quando souber com segurança; nunca invente URL.`;
+async function cloudflareRequest(model,messages,{maxTokens=CLOUDFLARE_MAX_COMPLETION_TOKENS,temperature=0.1}={}){
   const url=`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/run/${model}`;
   const payload={
-    messages:[
-      {role:"system",content:"Você é um revisor técnico-científico hospitalar. Obedeça estritamente às regras do usuário e retorne apenas JSON válido."},
-      {role:"user",content:strictPrompt}
-    ],
-    max_completion_tokens:CLOUDFLARE_MAX_COMPLETION_TOKENS,
+    messages,
+    max_completion_tokens:maxTokens,
     reasoning_effort:["low","medium","high"].includes(CLOUDFLARE_REASONING_EFFORT)?CLOUDFLARE_REASONING_EFFORT:"low",
-    temperature:0.1
+    temperature
   };
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),CLOUDFLARE_TIMEOUT_MS);
   let r;
@@ -684,16 +680,49 @@ async function cloudflareRunModel(model,prompt){
   const data=await r.json().catch(()=>({}));
   if(!r.ok||data?.success===false){
     const detail=(data?.errors||[]).map(x=>x?.message).filter(Boolean).join("; ")||data?.error?.message||`Cloudflare retornou HTTP ${r.status}.`;
-    const err=new Error(detail);err.httpStatus=r.status;err.cloudflareErrors=data?.errors||[];err.model=model;
-    throw err;
+    const err=new Error(detail);err.httpStatus=r.status;err.cloudflareErrors=data?.errors||[];err.model=model;throw err;
   }
   const text=extractCloudflareText(data);
   if(!text.trim()){
     const err=new Error("Cloudflare Workers AI não retornou conteúdo utilizável.");
-    err.cloudflareEmptyContent=true;err.model=model;
-    throw err;
+    err.cloudflareEmptyContent=true;err.model=model;throw err;
   }
-  return {result:parseModelJson(text),sources:[],model,provider:"cloudflare",researchMode:"model_knowledge"};
+  return text;
+}
+function cloudflareRepairPrompt(originalPrompt,invalidText,parseReason){
+  const safeInvalid=String(invalidText||"").slice(0,12000);
+  return [
+    "Sua resposta anterior não passou na validação estrutural do SIASH.",
+    `MOTIVO DA VALIDAÇÃO: ${String(parseReason||"estrutura JSON inválida").slice(0,300)}`,
+    "CORRIJA SOMENTE A ESTRUTURA E COMPLETE OS CAMPOS OBRIGATÓRIOS SEM INVENTAR fatos, fontes, URLs ou recomendações.",
+    "Use exclusivamente as evidências e regras contidas no pedido original abaixo.",
+    "A saída deve ser APENAS um objeto JSON válido com exatamente estas chaves de nível superior: summary, updates, references.",
+    'updates deve ser array de objetos com paragraph_index (inteiro), new_text (texto), reason (texto) e references (array de títulos ou URLs).',
+    'references deve ser array de objetos com title e url. Se uma alteração não puder ser sustentada pelas fontes do pedido original, não a invente e explique a limitação em summary.',
+    "PEDIDO ORIGINAL:",
+    originalPrompt,
+    "RESPOSTA ANTERIOR PARA REPARO:",
+    safeInvalid
+  ].join("\n\n");
+}
+async function cloudflareRunModel(model,prompt){
+  const strictPrompt=prompt+`\n\nFORMATO DE SAÍDA OBRIGATÓRIO: responda SOMENTE com JSON válido nas chaves summary, updates e references. Não inclua markdown nem comentários fora do JSON. Em references, forneça título e URL específica do documento quando souber com segurança; nunca invente URL.`;
+  const system={role:"system",content:"Você é um revisor técnico-científico hospitalar. Obedeça estritamente às regras do usuário e retorne apenas JSON válido."};
+  const text=await cloudflareRequest(model,[system,{role:"user",content:strictPrompt}]);
+  try{
+    return {result:parseModelJson(text),sources:[],model,provider:"cloudflare",researchMode:"model_knowledge"};
+  }catch(e){
+    if(!e?.modelJsonParseFailure)throw e;
+    console.warn(`[SIASH AI] Cloudflare resposta exige reparo estrutural | model=${model} | parse=${e.parseReason||"não informado"}`);
+    const repairPrompt=cloudflareRepairPrompt(prompt,text,e.parseReason);
+    const repairedText=await cloudflareRequest(model,[
+      {role:"system",content:"Você corrige exclusivamente a estrutura JSON de uma proposta técnico-científica. Não acrescente fatos nem fontes ausentes das evidências fornecidas. Retorne apenas JSON válido."},
+      {role:"user",content:repairPrompt}
+    ],{temperature:0});
+    const result=parseModelJson(repairedText);
+    console.log(`[SIASH AI] Cloudflare reparo estrutural concluído | model=${model}`);
+    return {result,sources:[],model,provider:"cloudflare",researchMode:"model_knowledge",structuralRepair:true};
+  }
 }
 function cloudflareContentToText(value){
   if(typeof value==="string")return value.trim();
