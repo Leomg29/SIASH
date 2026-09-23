@@ -872,7 +872,8 @@ async function researchWithTavily(prompt,queryOverride=""){
 
   const sources=results
     .filter(r=>r&&/^https?:\/\//i.test(String(r.url||"")))
-    .map(r=>({
+    .map((r,i)=>({
+      sourceId:`FONTE_${i+1}`,
       title:String(r.title||"Fonte web").trim(),
       url:String(r.url||"").trim(),
       content:String(r.content||"").trim()
@@ -884,7 +885,7 @@ async function researchWithTavily(prompt,queryOverride=""){
   }
 
   const evidence=sources.map((s,i)=>
-    `[FONTE ${i+1}]\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`
+    `[${s.sourceId}]\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`
   ).join("\n\n");
 
   console.log(`[SIASH AI] pesquisa Tavily concluída | fontes=${sources.length}`);
@@ -912,8 +913,9 @@ async function runAIRevision(prompt,requested,options={}){
         "PESQUISA WEB ATUAL E VERIFICÁVEL FORNECIDA PELO TAVILY:",
         webResearch.evidence,
         "",
-        "REGRA DE EVIDÊNCIA: use somente as fontes acima para sustentar afirmações que dependam de pesquisa web atual. Preserve os URLs das fontes utilizadas nas referências. Não invente fontes, títulos, normas, datas ou URLs.",
-        "REGRA DE AUDITORIA: quando houver AUDITORIA CIENTÍFICA SIASH com REVISÃO NECESSÁRIA, confronte cada achado com as evidências Tavily e com os PARÁGRAFOS EDITÁVEIS. Para todo achado que possua suporte nas fontes, gere alteração técnico-científica rastreável no paragraph_index correspondente e cite a fonte específica. Se algum achado não puder ser corrigido com as fontes retornadas, declare explicitamente no summary qual achado ficou sem suporte; nunca substitua isso por simples renovação de vigência."
+        "REGRA DE EVIDÊNCIA: use somente as fontes acima para sustentar afirmações que dependam de pesquisa web atual. Não invente fontes, títulos, normas, datas ou URLs.",
+        "REGRA DE VÍNCULO OBRIGATÓRIO: cada alteração em updates DEVE ter references com pelo menos um identificador exato FONTE_1, FONTE_2, etc. correspondente às evidências acima. Não use referência vazia, abreviada ou criada pelo modelo. O SIASH resolverá esses identificadores para título e URL verificados da Tavily.",
+        "REGRA DE AUDITORIA: quando houver AUDITORIA CIENTÍFICA SIASH com REVISÃO NECESSÁRIA, confronte cada achado com as evidências Tavily e com os PARÁGRAFOS EDITÁVEIS. Para todo achado que possua suporte nas fontes, gere alteração técnico-científica rastreável no paragraph_index correspondente e cite o identificador FONTE_N específico. Se algum achado não puder ser corrigido com as fontes retornadas, declare explicitamente no summary qual achado ficou sem suporte; nunca substitua isso por simples renovação de vigência."
       ].join("\n");
       console.log(`[SIASH AI] Tavily habilitou pesquisa web verificável | fontes=${webResearch.sources.length}`);
     }catch(e){
@@ -940,6 +942,18 @@ async function runAIRevision(prompt,requested,options={}){
       else if(p==="openai"&&openaiClient)ai=await reviseWithOpenAI(revisionPrompt);
       else {errors.push(`${p}: não configurado`);console.log(`[SIASH AI] provedor ignorado | provider=${p} | motivo=não_configurado`);continue}
       if(webResearch){
+        const tavilyById=new Map((webResearch.sources||[]).map(s=>[String(s.sourceId||"").toUpperCase(),s]));
+        if(ai?.result&&Array.isArray(ai.result.updates)){
+          ai.result.updates=ai.result.updates.map(update=>({
+            ...update,
+            references:(Array.isArray(update.references)?update.references:[]).map(ref=>{
+              const raw=String(ref||"").trim();
+              const match=raw.toUpperCase().match(/FONTE[_\\s-]?(\\d+)/);
+              const src=match?tavilyById.get(`FONTE_${match[1]}`):null;
+              return src?src.url:raw;
+            }).filter(Boolean)
+          }));
+        }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
         ai.researchMode="tavily_search";
