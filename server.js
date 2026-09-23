@@ -827,74 +827,83 @@ function providerOrder(requested){
   return ["gemini","cloudflare","openai"];
 }
 
-async function researchWithTavily(prompt,queryOverride=""){
-  if(!TAVILY_API_KEY) throw new Error("TAVILY_API_KEY não configurada no servidor.");
-
-  const query=String(queryOverride||prompt||"")
-    .replace(/\s+/g," ")
-    .trim()
-    .slice(0,400);
-
-  if(!query) throw new Error("Não foi possível montar a consulta científica para o Tavily.");
-
-  const controller=new AbortController();
-  const timer=setTimeout(()=>controller.abort(),30000);
-
-  let response;
+// v0.14.33 — governança científica das fontes: prioriza fontes primárias/oficiais e rejeita redes sociais.
+const SCIENTIFIC_PREFERRED_DOMAINS=[
+  "gov.br","anvisa.gov.br","saude.gov.br","fiocruz.br",
+  "who.int","paho.org","opas.org.br",
+  "cofen.gov.br","coren-mg.gov.br","coren-sp.gov.br","coren-rj.gov.br",
+  "sbp.com.br"
+];
+const SCIENTIFIC_BLOCKED_DOMAINS=[
+  "instagram.com","facebook.com","tiktok.com","x.com","twitter.com",
+  "youtube.com","youtu.be","linkedin.com","pinterest.com",
+  "medium.com","blogspot.com","wordpress.com"
+];
+function sourceHostname(raw=""){try{return new URL(String(raw)).hostname.toLowerCase().replace(/^www\./,"")}catch(_){return ""}}
+function domainMatches(host,domain){return host===domain||host.endsWith("."+domain)}
+function scientificSourceTier(raw=""){
+  const host=sourceHostname(raw);
+  if(!host)return 0;
+  if(SCIENTIFIC_BLOCKED_DOMAINS.some(d=>domainMatches(host,d)))return -1;
+  if(SCIENTIFIC_PREFERRED_DOMAINS.some(d=>domainMatches(host,d)))return 3;
+  if(/(?:^|\.)gov\.[a-z.]+$/.test(host)||/(?:^|\.)edu\.[a-z.]+$/.test(host))return 2;
+  return 1;
+}
+function rankScientificSources(results=[]){
+  return results
+    .filter(r=>r&&/^https?:\/\//i.test(String(r.url||""))&&String(r.content||"").trim())
+    .map((r,originalIndex)=>({...r,_tier:scientificSourceTier(r.url),_originalIndex:originalIndex}))
+    .filter(r=>r._tier>=0)
+    .sort((a,b)=>b._tier-a._tier||a._originalIndex-b._originalIndex);
+}
+async function tavilySearchRequest(query,extra={}){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
   try{
-    response=await fetch("https://api.tavily.com/search",{
+    const response=await fetch("https://api.tavily.com/search",{
       method:"POST",
-      headers:{
-        "Content-Type":"application/json",
-        "Authorization":`Bearer ${TAVILY_API_KEY}`
-      },
-      body:JSON.stringify({
-        query,
-        search_depth:"basic",
-        topic:"general",
-        max_results:5,
-        include_answer:false,
-        include_raw_content:false
-      }),
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${TAVILY_API_KEY}`},
+      body:JSON.stringify({query,search_depth:"basic",topic:"general",max_results:10,include_answer:false,include_raw_content:false,...extra}),
       signal:controller.signal
     });
-  }finally{
-    clearTimeout(timer);
+    if(!response.ok){const detail=await response.text().catch(()=> "");throw new Error(`Tavily indisponível (${response.status}). ${detail.slice(0,200)}`)}
+    return await response.json();
+  }finally{clearTimeout(timer)}
+}
+async function researchWithTavily(prompt,queryOverride=""){
+  if(!TAVILY_API_KEY)throw new Error("TAVILY_API_KEY não configurada no servidor.");
+  const query=String(queryOverride||prompt||"").replace(/\s+/g," ").trim().slice(0,400);
+  if(!query)throw new Error("Não foi possível montar a consulta científica para o Tavily.");
+
+  const first=await tavilySearchRequest(query);
+  let ranked=rankScientificSources(Array.isArray(first.results)?first.results:[]);
+  let official=ranked.filter(r=>r._tier>=2);
+
+  // Se a busca geral não trouxer base oficial suficiente, faz uma segunda busca restrita
+  // às instituições técnico-científicas preferenciais, sem aceitar redes sociais como fallback.
+  if(official.length<2){
+    const second=await tavilySearchRequest(query,{include_domains:SCIENTIFIC_PREFERRED_DOMAINS});
+    const merged=[...ranked,...rankScientificSources(Array.isArray(second.results)?second.results:[])];
+    const seen=new Set();
+    ranked=merged.filter(r=>{const u=normalizeUrl(r.url);if(!u||seen.has(u))return false;seen.add(u);return true})
+      .sort((a,b)=>b._tier-a._tier||a._originalIndex-b._originalIndex);
+    official=ranked.filter(r=>r._tier>=2);
   }
 
-  if(!response.ok){
-    const detail=await response.text().catch(()=> "");
-    throw new Error(`Tavily indisponível (${response.status}). ${detail.slice(0,200)}`);
-  }
+  // Para POP assistencial, fontes oficiais/primárias formam a base. Fontes secundárias
+  // só complementam quando já existem ao menos duas fontes oficiais verificáveis.
+  if(official.length<2)throw new Error("Pesquisa científica bloqueada: não foram localizadas pelo menos 2 fontes oficiais/primárias verificáveis.");
+  const selected=[...official,...ranked.filter(r=>r._tier===1)].slice(0,5);
+  const sources=selected.map((r,i)=>({
+    sourceId:`FONTE_${i+1}`,
+    title:String(r.title||"Fonte web").trim(),
+    url:String(r.url||"").trim(),
+    content:String(r.content||"").trim(),
+    sourceTier:r._tier
+  }));
 
-  const data=await response.json();
-  const results=Array.isArray(data.results)?data.results:[];
-
-  const sources=results
-    .filter(r=>r&&/^https?:\/\//i.test(String(r.url||"")))
-    .map((r,i)=>({
-      sourceId:`FONTE_${i+1}`,
-      title:String(r.title||"Fonte web").trim(),
-      url:String(r.url||"").trim(),
-      content:String(r.content||"").trim()
-    }))
-    .filter(r=>r.url&&r.content);
-
-  if(sources.length<2){
-    throw new Error("Tavily não retornou fontes web verificáveis suficientes para a revisão científica.");
-  }
-
-  const evidence=sources.map((s,i)=>
-    `[${s.sourceId}]\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`
-  ).join("\n\n");
-
-  console.log(`[SIASH AI] pesquisa Tavily concluída | fontes=${sources.length}`);
-
-  return {
-    sources,
-    evidence,
-    researchMode:"tavily_search"
-  };
+  const evidence=sources.map(s=>`[${s.sourceId}]\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`).join("\n\n");
+  console.log(`[SIASH AI] pesquisa Tavily concluída | fontes=${sources.length} | oficiais=${official.length} | política=scientific_source_governance_v1`);
+  return {sources,evidence,researchMode:"tavily_search"};
 }
 async function runAIRevision(prompt,requested,options={}){
   const errors=[];
