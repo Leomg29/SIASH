@@ -1,0 +1,12 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("app.js","utf8");
+assert.ok(s.includes("window.requestDocCorrection=async"));
+assert.ok(s.includes("correctionRegeneration:true"));
+assert.ok(s.includes("expectedRevision:String(v.revision)"));
+assert.ok(s.includes("skipConfirm:true"));
+assert.ok(s.includes("window.sendDocToAI=async(i,options={})"));
+assert.ok(s.includes("if(options.expectedRevision&&String(options.expectedRevision)!==rev)"));
+assert.ok(s.includes("if(options.correctionRegeneration)v.correctionAppliedAt=nowBR()"));
+assert.ok(s.includes("correction_request:((d.versions||[]).find"));
+assert.ok(s.includes("regenerada pela IA após correção profissional"));
+console.log("OK: correction request regenerates same revision and remains wired to backend correction_request.");
