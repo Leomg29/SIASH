@@ -1,0 +1,12 @@
+const fs=require("fs"),vm=require("vm"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8");
+const a=s.indexOf("function modelJsonCandidates"),b=s.indexOf("function geminiGroundingSources",a);
+const box={};vm.createContext(box);vm.runInContext(s.slice(a,b)+";this.parseModelJson=parseModelJson;",box);
+const base={updates:[{paragraph_index:2,new_text:"Texto sustentado.",reason:"Correção auditada.",references:["Fonte oficial"]}],references:[{title:"Fonte oficial",url:"https://example.org/oficial"}]};
+const x=box.parseModelJson(JSON.stringify(base));
+assert.ok(typeof x.summary==="string"&&x.summary.includes("1 alteração"));
+assert.equal(x.summaryNormalized,true);
+let rejected=false;try{box.parseModelJson(JSON.stringify({updates:[],references:[]}))}catch(e){rejected=e.modelJsonParseFailure===true}assert.ok(rejected,"Sem summary e sem alterações deve continuar bloqueado.");
+rejected=false;try{box.parseModelJson(JSON.stringify({updates:[{paragraph_index:2,new_text:"x",reason:"r",references:[]}],references:"invalido"}))}catch(e){rejected=e.modelJsonParseFailure===true}assert.ok(rejected,"Referências inválidas devem continuar bloqueadas.");
+assert.ok(s.includes("Cloudflare reparo estrutural falhou"));
+console.log("OK: summary ausente é normalizado somente com proposta estruturada; proteções críticas permanecem.");
