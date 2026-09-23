@@ -1,0 +1,9 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8");
+assert.ok(s.includes("sourceId:"));
+assert.ok(s.includes("REGRA DE VÍNCULO OBRIGATÓRIO"));
+assert.ok(s.includes("tavilyById=new Map"));
+assert.ok(s.includes("return src?src.url:raw"));
+assert.ok(s.includes("effective.some(x=>!Array.isArray(x.references)||!x.references.length)"));
+assert.ok(s.includes("const unlinked=effective.filter"));
+console.log("OK: Tavily source linking and safety barriers preserved.");
