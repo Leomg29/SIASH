@@ -7,6 +7,6 @@ assert.ok(s.includes("Cloudflare resposta exige reparo estrutural"));
 assert.ok(s.includes("Cloudflare reparo estrutural concluído"));
 assert.ok(s.includes("Não acrescente fatos nem fontes ausentes das evidências fornecidas"));
 assert.ok(s.includes("Se uma alteração não puder ser sustentada pelas fontes do pedido original, não a invente"));
-assert.ok(s.includes("const result=parseModelJson(repairedText)"));
+assert.ok(s.includes("result=parseModelJson(repairedText)"));
 assert.ok(s.includes("structuralRepair:true"));
 console.log("OK: reparo estrutural limitado, revalidação obrigatória e proteções científicas preservadas.");
