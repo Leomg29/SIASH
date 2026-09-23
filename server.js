@@ -672,11 +672,27 @@ async function reviseWithGemini(prompt){
 }
 async function cloudflareRequest(model,messages,{maxTokens=CLOUDFLARE_MAX_COMPLETION_TOKENS,temperature=0.1}={}){
   const url=`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CLOUDFLARE_ACCOUNT_ID)}/ai/run/${model}`;
+  const revisionSchema={
+    type:"object",
+    additionalProperties:false,
+    properties:{
+      summary:{type:"string"},
+      updates:{type:"array",items:{type:"object",additionalProperties:false,properties:{
+        paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"},
+        references:{type:"array",items:{type:"string"}}
+      },required:["paragraph_index","new_text","reason","references"]}},
+      references:{type:"array",items:{type:"object",additionalProperties:false,properties:{
+        title:{type:"string"},url:{type:"string"}
+      },required:["title","url"]}}
+    },
+    required:["summary","updates","references"]
+  };
   const payload={
     messages,
     max_completion_tokens:maxTokens,
-    reasoning_effort:["low","medium","high"].includes(CLOUDFLARE_REASONING_EFFORT)?CLOUDFLARE_REASONING_EFFORT:"low",
-    temperature
+    temperature,
+    response_format:{type:"json_schema",json_schema:revisionSchema},
+    chat_template_kwargs:{enable_thinking:false}
   };
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),CLOUDFLARE_TIMEOUT_MS);
   let r;
@@ -690,6 +706,8 @@ async function cloudflareRequest(model,messages,{maxTokens=CLOUDFLARE_MAX_COMPLE
   }
   const text=extractCloudflareText(data);
   if(!text.trim()){
+    const resultShape=data?.result&&typeof data.result==="object"?Object.keys(data.result).slice(0,12).join(",") : typeof data?.result;
+    console.warn(`[SIASH AI] Cloudflare resposta sem texto | model=${model} | result_shape=${resultShape||"ausente"}`);
     const err=new Error("Cloudflare Workers AI não retornou conteúdo utilizável.");
     err.cloudflareEmptyContent=true;err.model=model;throw err;
   }
@@ -750,12 +768,18 @@ function extractCloudflareText(data){
   const candidates=[
     r?.response, r?.output_text, r?.text,
     r?.choices?.[0]?.message?.content, r?.choices?.[0]?.text,
+    r?.output?.[0]?.content?.[0]?.text, r?.output?.[0]?.content,
     data?.choices?.[0]?.message?.content, data?.choices?.[0]?.text,
-    data?.response
+    data?.response, data?.output_text
   ];
   for(const value of candidates){
     const text=cloudflareContentToText(value);
     if(text)return text;
+  }
+  // Último recurso seguro: alguns modelos retornam o objeto estruturado diretamente em result.
+  if(r&&typeof r==="object"&&!Array.isArray(r)){
+    const direct=(Object.hasOwn(r,"updates")&&Object.hasOwn(r,"references"))?r:null;
+    if(direct)return JSON.stringify(direct);
   }
   return "";
 }
