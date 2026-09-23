@@ -679,7 +679,7 @@ async function cloudflareRequest(model,messages,{maxTokens=CLOUDFLARE_MAX_COMPLE
       summary:{type:"string"},
       updates:{type:"array",items:{type:"object",additionalProperties:false,properties:{
         paragraph_index:{type:"integer"},new_text:{type:"string"},reason:{type:"string"},
-        references:{type:"array",items:{type:"string"}}
+        references:{type:"array",minItems:1,items:{type:"string",pattern:"^FONTE_[1-9][0-9]*$"}}
       },required:["paragraph_index","new_text","reason","references"]}},
       references:{type:"array",items:{type:"object",additionalProperties:false,properties:{
         title:{type:"string"},url:{type:"string"}
@@ -944,15 +944,20 @@ async function runAIRevision(prompt,requested,options={}){
       if(webResearch){
         const tavilyById=new Map((webResearch.sources||[]).map(s=>[String(s.sourceId||"").toUpperCase(),s]));
         if(ai?.result&&Array.isArray(ai.result.updates)){
+          const usedSourceUrls=new Set();
           ai.result.updates=ai.result.updates.map(update=>({
             ...update,
             references:(Array.isArray(update.references)?update.references:[]).map(ref=>{
               const raw=String(ref||"").trim();
-              const match=raw.toUpperCase().match(/FONTE[_\\s-]?(\\d+)/);
-              const src=match?tavilyById.get(`FONTE_${match[1]}`):null;
-              return src?src.url:raw;
+              const exact=raw.toUpperCase().match(/^FONTE_(\d+)$/);
+              const src=exact?tavilyById.get(`FONTE_${exact[1]}`):null;
+              if(src){usedSourceUrls.add(src.url);return src.url}
+              return raw;
             }).filter(Boolean)
           }));
+          ai.result.references=(webResearch.sources||[])
+            .filter(src=>usedSourceUrls.has(src.url))
+            .map(src=>({title:src.title,url:src.url}));
         }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
