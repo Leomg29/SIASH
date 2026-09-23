@@ -599,9 +599,15 @@ function validateModelRevisionJson(value){
     ? value
     : (value.result&&typeof value.result==="object"&&!Array.isArray(value.result)?value.result:null);
   if(!candidate)throw new Error("A resposta da IA não contém as chaves obrigatórias da revisão.");
-  if(typeof candidate.summary!=="string"||!candidate.summary.trim())throw new Error("A resposta da IA não contém summary válido.");
   if(!Array.isArray(candidate.updates))throw new Error("A resposta da IA não contém updates válido.");
   if(!Array.isArray(candidate.references))throw new Error("A resposta da IA não contém references válido.");
+  // summary é metadado descritivo e não altera o POP. Se o modelo omitir somente esse campo,
+  // preservamos as validações clínicas/bibliográficas e geramos um resumo neutro determinístico.
+  if(typeof candidate.summary!=="string"||!candidate.summary.trim()){
+    if(!candidate.updates.length)throw new Error("A resposta da IA não contém summary válido nem alterações estruturadas.");
+    candidate.summary=`Proposta técnico-científica com ${candidate.updates.length} alteração(ões) estruturada(s), sujeita(s) à validação científica e aprovação humana do SIASH.`;
+    candidate.summaryNormalized=true;
+  }
   for(const u of candidate.updates){
     if(!u||typeof u!=="object"||!Number.isInteger(Number(u.paragraph_index))||typeof u.new_text!=="string"||!u.new_text.trim()||typeof u.reason!=="string"||!Array.isArray(u.references))
       throw new Error("A resposta da IA contém uma alteração fora do esquema seguro.");
@@ -719,8 +725,13 @@ async function cloudflareRunModel(model,prompt){
       {role:"system",content:"Você corrige exclusivamente a estrutura JSON de uma proposta técnico-científica. Não acrescente fatos nem fontes ausentes das evidências fornecidas. Retorne apenas JSON válido."},
       {role:"user",content:repairPrompt}
     ],{temperature:0});
-    const result=parseModelJson(repairedText);
-    console.log(`[SIASH AI] Cloudflare reparo estrutural concluído | model=${model}`);
+    let result;
+    try{result=parseModelJson(repairedText)}
+    catch(repairError){
+      console.warn(`[SIASH AI] Cloudflare reparo estrutural falhou | model=${model} | parse=${repairError?.parseReason||repairError?.message||"não informado"}`);
+      throw repairError;
+    }
+    console.log(`[SIASH AI] Cloudflare reparo estrutural concluído | model=${model} | summary_normalized=${result?.summaryNormalized===true}`);
     return {result,sources:[],model,provider:"cloudflare",researchMode:"model_knowledge",structuralRepair:true};
   }
 }
