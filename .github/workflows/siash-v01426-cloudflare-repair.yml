@@ -14,7 +14,7 @@ jobs:
       - run: node tests/ai-parser.test.js
       - run: node tests/audit-targeted-research.test.js
       - run: node tests/cloudflare-repair.test.js
-      - name: Validate release version
+      - name: Validate release version synchronization
         run: |
-          grep -q '"version": "0.14.26"' package.json
-          test "$(grep -o 'v0.14.26' index.html | wc -l)" -ge 3
+          VERSION=$(node -p "require('./package.json').version")
+          test "$(grep -o "v$VERSION" index.html | wc -l)" -ge 3
