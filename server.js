@@ -1078,6 +1078,9 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
 15) Quando esta revisão exigir PESQUISA ATUAL, confronte deliberadamente o conteúdo com publicações posteriores ao ano mais recente da bibliografia detectada no POP (${latestReferenceYear||"não identificado"}) e priorize documentos oficiais vigentes.
 16) Para concluir que NÃO há alteração técnico-científica necessária em revisão periódica, sustente a conclusão com pelo menos 2 referências específicas elegíveis e ao menos 1 fonte oficial/autoridade reconhecida consultada na pesquisa atual.
 17) Se a AUDITORIA CIENTÍFICA SIASH estiver classificada como REVISÃO NECESSÁRIA, trate os achados como pontos obrigatórios de verificação e não encerre a análise como simples renovação de vigência.
+18) Em REVISÃO NECESSÁRIA, compare literalmente os PARÁGRAFOS EDITÁVEIS com cada achado. Quando uma fonte atual sustentar correção de um achado, devolva em updates o paragraph_index do parágrafo vigente afetado e um new_text REALMENTE DIFERENTE que incorpore a correção. Repetir o texto vigente não conta como correção.
+19) Em REVISÃO NECESSÁRIA, não devolva updates vazio se houver ao menos um achado corrigível pelas fontes fornecidas. Não invente alteração para cumprir esta regra: se nenhum achado puder ser corrigido com segurança pelas fontes disponíveis, mantenha updates vazio e explique objetivamente no summary quais achados ficaram sem evidência suficiente; o SIASH bloqueará a proposta para nova pesquisa.
+20) Para LEG-UTIN-023 e outros POPs de higienização das mãos, diferencie explicitamente, quando sustentado pelas fontes fornecidas, preparação alcoólica versus lavagem com água e sabonete, indicação pelos momentos de higiene e quantidade/volume conforme instrução do produto/fabricante, evitando regra universal sem suporte.
 MOTIVO DA REVISÃO DOCUMENTAL: ${String(periodic_review_reason||"não informado").trim()||"não informado"}
 AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scientificAudit.findings.join(" | ")}`:"Sem apontamento retroativo específico."}\nPEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").trim()||"Nenhum"}\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
     const researchQuery=[
@@ -1090,6 +1093,10 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
+    if(scientificAudit?.status==="review"){
+      console.log(`[SIASH AI] auditoria obrigatória | code=${doc_code} | updates_recebidos=${Array.isArray(result.updates)?result.updates.length:0} | alteracoes_reais=${effective.length} | achados=${scientificAudit.findings.length}`);
+      if(!effective.length)throw new Error("Este POP foi classificado pela auditoria científica como REVISÃO NECESSÁRIA. A IA não produziu alteração real nos parágrafos auditados; a proposta foi bloqueada para evitar simples renovação de vigência.");
+    }
     if(effective.some(x=>!Array.isArray(x.references)||!x.references.length))throw new Error("A IA propôs alteração técnico-científica sem referência específica. A proposta foi bloqueada para conferência segura.");
     const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&(x.title||x.url));
     const norm=s=>normalizedText(s).toLowerCase();
@@ -1107,7 +1114,6 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
       excludedChanges=effective.filter(ch=>!traceable.includes(ch));
       if(!traceable.length)throw new Error("As alterações propostas ficaram sustentadas apenas por fontes genéricas ou não identificáveis. A SIASH não inseriu essas fontes no Word e bloqueou a proposta para proteger a bibliografia institucional.");
     }
-    if(scientificAudit?.status==="review"&&!traceable.length)throw new Error("Este POP foi classificado pela auditoria científica como REVISÃO NECESSÁRIA. A simples renovação de vigência foi bloqueada; os pontos auditados precisam ser corrigidos com fontes atuais.");
     if(periodicReviewRequired&&!traceable.length&&(eligibleReferenceCount<2||officialEligibleReferenceCount<1))throw new Error(`Revisão periódica sem alteração bloqueada: são necessárias pelo menos 2 referências específicas elegíveis e 1 fonte oficial/autoridade reconhecida. Recebidas: ${eligibleReferenceCount} elegível(is), ${officialEligibleReferenceCount} oficial(is).`);
     // v0.14.6 — separa revisão documental periódica de alteração técnico-científica.
     // Se o POP precisa renovar a vigência, a ausência de mudança técnica NÃO é falha: cria-se uma
