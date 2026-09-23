@@ -1,0 +1,21 @@
+name: SIASH correction regeneration
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node --check app.js
+      - run: node --check server.js
+      - run: node tests/correction-regeneration.test.js
+      - run: node tests/audit-actionability.test.js
+      - run: node tests/strict-tavily-citations.test.js
+      - name: Validate release version
+        run: |
+          grep -q '"version": "0.14.32"' package.json
+          test "$(grep -o 'v0.14.32' index.html | wc -l)" -ge 3
