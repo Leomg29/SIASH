@@ -1,0 +1,10 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8");
+assert.ok(s.includes('pattern:"^FONTE_[1-9][0-9]*$"'));
+assert.ok(s.includes("const usedSourceUrls=new Set()"));
+assert.ok(s.includes("usedSourceUrls.add(src.url)"));
+assert.ok(s.includes(".filter(src=>usedSourceUrls.has(src.url))"));
+assert.ok(s.includes(".map(src=>({title:src.title,url:src.url}))"));
+assert.ok(s.includes("const unlinked=effective.filter"));
+assert.ok(s.includes("wordEligible===true"));
+console.log("OK: strict source IDs, bibliography from cited Tavily sources only, safety barriers preserved.");

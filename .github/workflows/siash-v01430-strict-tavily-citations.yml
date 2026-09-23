@@ -1,0 +1,24 @@
+name: SIASH v0.14.30 strict Tavily citations
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: node --check server.js
+      - run: node tests/ai-parser.test.js
+      - run: node tests/audit-targeted-research.test.js
+      - run: node tests/cloudflare-repair.test.js
+      - run: node tests/summary-normalization.test.js
+      - run: node tests/cloudflare-json-mode.test.js
+      - run: node tests/tavily-source-linking.test.js
+      - run: node tests/strict-tavily-citations.test.js
+      - name: Validate release version
+        run: |
+          grep -q '"version": "0.14.30"' package.json
+          test "$(grep -o 'v0.14.30' index.html | wc -l)" -ge 3
