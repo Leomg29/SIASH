@@ -17,5 +17,5 @@ jobs:
       - run: node tests/strict-tavily-citations.test.js
       - name: Validate release version
         run: |
-          grep -q '"version": "0.14.32"' package.json
-          test "$(grep -o 'v0.14.32' index.html | wc -l)" -ge 3
+          VERSION=$(node -p "require('./package.json').version")
+          test "$(grep -o "v$VERSION" index.html | wc -l)" -ge 3
