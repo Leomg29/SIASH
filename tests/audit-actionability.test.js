@@ -1,0 +1,10 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8");
+assert.ok(s.includes("Repetir o texto vigente não conta como correção."));
+assert.ok(s.includes("não devolva updates vazio se houver ao menos um achado corrigível"));
+assert.ok(s.includes("auditoria obrigatória | code="));
+assert.ok(s.includes("alteracoes_reais="));
+assert.ok(s.includes("A IA não produziu alteração real nos parágrafos auditados"));
+assert.ok(s.includes("effective.some(x=>!Array.isArray(x.references)||!x.references.length)"));
+assert.ok(s.includes("const unlinked=effective.filter"));
+console.log("OK: audit findings require real changes and existing scientific barriers remain.");
