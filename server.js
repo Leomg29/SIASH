@@ -875,6 +875,18 @@ async function tavilySearchRequest(query,extra={}){
     return await response.json();
   }finally{clearTimeout(timer)}
 }
+function primaryScientificInstitution(raw=""){
+  const host=sourceHostname(raw),u=String(raw||"").toLowerCase();
+  if(!host)return "";
+  if(domainMatches(host,"who.int"))return "WHO";
+  if(domainMatches(host,"paho.org")||domainMatches(host,"opas.org.br"))return "OPAS";
+  if(domainMatches(host,"anvisa.gov.br")||(domainMatches(host,"gov.br")&&u.includes("/anvisa/")))return "ANVISA";
+  if(domainMatches(host,"saude.gov.br")||(domainMatches(host,"gov.br")&&u.includes("/saude/")))return "MS";
+  if(domainMatches(host,"fiocruz.br"))return "FIOCRUZ";
+  if(domainMatches(host,"cofen.gov.br")||host.includes("coren-"))return "COFEN_COREN";
+  if(domainMatches(host,"sbp.com.br"))return "SBP";
+  return "";
+}
 async function researchWithTavily(prompt,queryOverride=""){
   if(!TAVILY_API_KEY)throw new Error("TAVILY_API_KEY não configurada no servidor.");
   const query=String(queryOverride||prompt||"").replace(/\s+/g," ").trim().slice(0,400);
@@ -882,7 +894,7 @@ async function researchWithTavily(prompt,queryOverride=""){
 
   const first=await tavilySearchRequest(query);
   let ranked=rankScientificSources(Array.isArray(first.results)?first.results:[]);
-  let official=ranked.filter(r=>r._tier>=2);
+  let official=ranked.filter(r=>primaryScientificInstitution(r.url));
 
   // Se a busca geral não trouxer base oficial suficiente, faz uma segunda busca restrita
   // às instituições técnico-científicas preferenciais, sem aceitar redes sociais como fallback.
@@ -892,12 +904,12 @@ async function researchWithTavily(prompt,queryOverride=""){
     const seen=new Set();
     ranked=merged.filter(r=>{const u=normalizeUrl(r.url);if(!u||seen.has(u))return false;seen.add(u);return true})
       .sort((a,b)=>b._tier-a._tier||a._originalIndex-b._originalIndex);
-    official=ranked.filter(r=>r._tier>=2);
+    official=ranked.filter(r=>primaryScientificInstitution(r.url));
   }
 
   // Para POP assistencial, fontes oficiais/primárias formam a base. Fontes secundárias
   // só complementam quando já existem ao menos duas fontes oficiais verificáveis.
-  if(official.length<2)throw new Error("Pesquisa científica bloqueada: não foram localizadas pelo menos 2 fontes oficiais/primárias verificáveis.");
+  if(official.length<2)throw new Error("Pesquisa científica bloqueada: não foram localizadas pelo menos 2 fontes primárias de autoridades técnico-científicas reconhecidas.");
   // v0.14.35: em POP assistencial, a evidência entregue ao modelo é somente oficial/primária.
   // Fontes secundárias podem ser descobertas na busca, mas não sustentam alteração clínica.
   const selected=official.slice(0,6);
@@ -907,7 +919,7 @@ async function researchWithTavily(prompt,queryOverride=""){
     url:String(r.url||"").trim(),
     content:String(r.content||"").trim(),
     sourceTier:r._tier,
-    sourceHost:sourceHostname(r.url)
+    sourceHost:sourceHostname(r.url),\n    sourceInstitution:primaryScientificInstitution(r.url)
   }));
 
   const evidence=sources.map(s=>`[${s.sourceId}]\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`).join("\n\n");
