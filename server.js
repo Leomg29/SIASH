@@ -922,7 +922,7 @@ async function researchWithTavily(prompt,queryOverride=""){
     sourceHost:sourceHostname(r.url),\n    sourceInstitution:primaryScientificInstitution(r.url)
   }));
 
-  const evidence=sources.map(s=>`[${s.sourceId}]\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`).join("\n\n");
+  const evidence=sources.map(s=>`[${s.sourceId}]\nInstituição oficial: ${s.sourceInstitution}\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`).join("\n\n");
   console.log(`[SIASH AI] pesquisa Tavily concluída | fontes=${sources.length} | oficiais=${official.length} | política=scientific_source_governance_v1`);
   return {sources,evidence,researchMode:"tavily_search"};
 }
@@ -976,7 +976,7 @@ async function runAIRevision(prompt,requested,options={}){
         webResearch.evidence,
         "",
         "REGRA DE EVIDÊNCIA: use somente as fontes acima para sustentar afirmações que dependam de pesquisa web atual. Não invente fontes, títulos, normas, datas ou URLs.",
-        "REGRA DE VÍNCULO OBRIGATÓRIO: cada alteração em updates DEVE ter references com pelo menos um identificador exato FONTE_1, FONTE_2, etc. correspondente às evidências acima. Não use referência vazia, abreviada ou criada pelo modelo. O SIASH resolverá esses identificadores para título e URL verificados da Tavily.",
+        "REGRA DE VÍNCULO OBRIGATÓRIO: cada alteração em updates DEVE ter references com pelo menos um identificador exato FONTE_1, FONTE_2, etc. correspondente às evidências acima. Não use referência vazia, abreviada ou criada pelo modelo. O SIASH resolverá esses identificadores para título e URL verificados da Tavily.",\n        "REGRA DE ATRIBUIÇÃO INSTITUCIONAL: cada FONTE_N informa sua Instituição oficial. Só atribua uma recomendação a uma instituição quando a própria alteração citar uma FONTE_N dessa mesma instituição. Se ela não estiver nas evidências, não invente a atribuição; registre a limitação no summary.",
         "REGRA DE AUDITORIA: quando houver AUDITORIA CIENTÍFICA SIASH com REVISÃO NECESSÁRIA, confronte cada achado com as evidências Tavily e com os PARÁGRAFOS EDITÁVEIS. Para todo achado que possua suporte nas fontes, gere alteração técnico-científica rastreável no paragraph_index correspondente e cite o identificador FONTE_N específico. Se algum achado não puder ser corrigido com as fontes retornadas, declare explicitamente no summary qual achado ficou sem suporte; nunca substitua isso por simples renovação de vigência."
       ].join("\n");
       console.log(`[SIASH AI] Tavily habilitou pesquisa web verificável | fontes=${webResearch.sources.length}`);
