@@ -7,4 +7,4 @@ assert.ok(s.includes("AI_SCIENTIFIC_VALIDATION_REJECTED"));
 assert.ok(s.includes("proposta rejeitada pela validação científica"));
 assert.ok(s.includes("sourceInstitution:src.sourceInstitution"));
 assert.equal(p.version,"0.14.36");assert.ok((i.match(/v0\.14\.36/g)||[]).length>=2);
-console.log("v0.14.36 precise scientific generation diagnostics OK");
+console.log("v0.14.36+ scientific generation diagnostics regression OK");
