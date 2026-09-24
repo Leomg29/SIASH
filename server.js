@@ -927,7 +927,8 @@ async function researchWithTavily(prompt,queryOverride=""){
   console.log(`[SIASH AI] pesquisa Tavily concluída | fontes=${sources.length} | oficiais=${official.length} | política=scientific_source_governance_v1`);
   return {sources,evidence,researchMode:"tavily_search"};
 }
-function sourceInstitutionFamily(raw=""){return primaryScientificInstitution(raw)}\nfunction claimedInstitutionFamilies(text=""){
+function sourceInstitutionFamily(raw=""){return primaryScientificInstitution(raw)}
+function claimedInstitutionFamilies(text=""){
   const t=normalizedText(text).toUpperCase(),out=new Set();
   if(/\b(?:OMS|WHO|ORGANIZAÇÃO MUNDIAL DA SAÚDE)\b/.test(t))out.add("WHO");
   if(/\b(?:OPAS|PAHO|ORGANIZAÇÃO PAN-AMERICANA DA SAÚDE)\b/.test(t))out.add("OPAS");
