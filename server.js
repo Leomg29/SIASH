@@ -926,23 +926,7 @@ async function researchWithTavily(prompt,queryOverride=""){
   console.log(`[SIASH AI] pesquisa Tavily concluída | fontes=${sources.length} | oficiais=${official.length} | política=scientific_source_governance_v1`);
   return {sources,evidence,researchMode:"tavily_search"};
 }
-function sourceInstitutionFamily(raw=""){
-  const host=sourceHostname(raw);
-  if(!host)return "";
-  if(domainMatches(host,"who.int"))return "WHO";
-  if(domainMatches(host,"paho.org")||domainMatches(host,"opas.org.br"))return "OPAS";
-  if(domainMatches(host,"gov.br")||domainMatches(host,"anvisa.gov.br")||domainMatches(host,"saude.gov.br")){
-    const u=String(raw||"").toLowerCase();
-    if(u.includes("/anvisa/")||host.includes("anvisa"))return "ANVISA";
-    if(u.includes("/saude/")||host.includes("saude"))return "MS";
-    return "GOV_BR";
-  }
-  if(domainMatches(host,"fiocruz.br"))return "FIOCRUZ";
-  if(domainMatches(host,"cofen.gov.br")||/^coren-/.test(host))return "COFEN_COREN";
-  if(domainMatches(host,"sbp.com.br"))return "SBP";
-  return "";
-}
-function claimedInstitutionFamilies(text=""){
+function sourceInstitutionFamily(raw=""){return primaryScientificInstitution(raw)}\nfunction claimedInstitutionFamilies(text=""){
   const t=normalizedText(text).toUpperCase(),out=new Set();
   if(/\b(?:OMS|WHO|ORGANIZAÇÃO MUNDIAL DA SAÚDE)\b/.test(t))out.add("WHO");
   if(/\b(?:OPAS|PAHO|ORGANIZAÇÃO PAN-AMERICANA DA SAÚDE)\b/.test(t))out.add("OPAS");
@@ -960,7 +944,7 @@ function enforceScientificClaimSourceBinding(updates=[],sources=[]){
     const refs=(u.references||[]).map(normalizeUrl).filter(Boolean);
     const linked=refs.map(x=>byUrl.get(x)).filter(Boolean);
     if(!linked.length){failures.push({paragraph:u.paragraph_index,reason:"sem fonte oficial vinculada"});continue}
-    if(linked.some(s=>Number(s.sourceTier||scientificSourceTier(s.url))<2)){
+    if(linked.some(s=>!primaryScientificInstitution(s.url))){
       failures.push({paragraph:u.paragraph_index,reason:"fonte secundária não pode sustentar alteração clínica"});continue;
     }
     const claims=claimedInstitutionFamilies([u.new_text,u.reason].join(" "));
@@ -971,7 +955,7 @@ function enforceScientificClaimSourceBinding(updates=[],sources=[]){
       }
     }
   }
-  if(failures.length)throw new Error(`Rastreabilidade científica bloqueada: ${failures.map(x=>`parágrafo ${x.paragraph} (${x.reason})`).join("; ")}. Use a fonte primária da própria instituição citada.`);
+  if(failures.length){const err=new Error(`Rastreabilidade científica bloqueada: ${failures.map(x=>`parágrafo ${x.paragraph} (${x.reason})`).join("; ")}. Use a fonte primária da própria instituição citada.`);err.code="SCIENTIFIC_BINDING_REJECTED";throw err;}
   return true;
 }
 async function runAIRevision(prompt,requested,options={}){
@@ -1035,7 +1019,7 @@ async function runAIRevision(prompt,requested,options={}){
           }));
           ai.result.references=(webResearch.sources||[])
             .filter(src=>usedSourceUrls.has(src.url))
-            .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost}));
+            .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
           enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);
         }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
