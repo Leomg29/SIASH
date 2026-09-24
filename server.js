@@ -898,18 +898,69 @@ async function researchWithTavily(prompt,queryOverride=""){
   // Para POP assistencial, fontes oficiais/primárias formam a base. Fontes secundárias
   // só complementam quando já existem ao menos duas fontes oficiais verificáveis.
   if(official.length<2)throw new Error("Pesquisa científica bloqueada: não foram localizadas pelo menos 2 fontes oficiais/primárias verificáveis.");
-  const selected=[...official,...ranked.filter(r=>r._tier===1)].slice(0,5);
+  // v0.14.35: em POP assistencial, a evidência entregue ao modelo é somente oficial/primária.
+  // Fontes secundárias podem ser descobertas na busca, mas não sustentam alteração clínica.
+  const selected=official.slice(0,6);
   const sources=selected.map((r,i)=>({
     sourceId:`FONTE_${i+1}`,
     title:String(r.title||"Fonte web").trim(),
     url:String(r.url||"").trim(),
     content:String(r.content||"").trim(),
-    sourceTier:r._tier
+    sourceTier:r._tier,
+    sourceHost:sourceHostname(r.url)
   }));
 
   const evidence=sources.map(s=>`[${s.sourceId}]\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`).join("\n\n");
   console.log(`[SIASH AI] pesquisa Tavily concluída | fontes=${sources.length} | oficiais=${official.length} | política=scientific_source_governance_v1`);
   return {sources,evidence,researchMode:"tavily_search"};
+}
+function sourceInstitutionFamily(raw=""){
+  const host=sourceHostname(raw);
+  if(!host)return "";
+  if(domainMatches(host,"who.int"))return "WHO";
+  if(domainMatches(host,"paho.org")||domainMatches(host,"opas.org.br"))return "OPAS";
+  if(domainMatches(host,"gov.br")||domainMatches(host,"anvisa.gov.br")||domainMatches(host,"saude.gov.br")){
+    const u=String(raw||"").toLowerCase();
+    if(u.includes("/anvisa/")||host.includes("anvisa"))return "ANVISA";
+    if(u.includes("/saude/")||host.includes("saude"))return "MS";
+    return "GOV_BR";
+  }
+  if(domainMatches(host,"fiocruz.br"))return "FIOCRUZ";
+  if(domainMatches(host,"cofen.gov.br")||/^coren-/.test(host))return "COFEN_COREN";
+  if(domainMatches(host,"sbp.com.br"))return "SBP";
+  return "";
+}
+function claimedInstitutionFamilies(text=""){
+  const t=normalizedText(text).toUpperCase(),out=new Set();
+  if(/\b(?:OMS|WHO|ORGANIZAÇÃO MUNDIAL DA SAÚDE)\b/.test(t))out.add("WHO");
+  if(/\b(?:OPAS|PAHO|ORGANIZAÇÃO PAN-AMERICANA DA SAÚDE)\b/.test(t))out.add("OPAS");
+  if(/\bANVISA\b/.test(t))out.add("ANVISA");
+  if(/\b(?:MINISTÉRIO DA SAÚDE|MINISTERIO DA SAUDE)\b/.test(t))out.add("MS");
+  if(/\bFIOCRUZ\b/.test(t))out.add("FIOCRUZ");
+  if(/\b(?:COFEN|COREN)\b/.test(t))out.add("COFEN_COREN");
+  if(/\b(?:SBP|SOCIEDADE BRASILEIRA DE PEDIATRIA)\b/.test(t))out.add("SBP");
+  return [...out];
+}
+function enforceScientificClaimSourceBinding(updates=[],sources=[]){
+  const byUrl=new Map(sources.map(s=>[normalizeUrl(s.url),s]));
+  const failures=[];
+  for(const u of updates){
+    const refs=(u.references||[]).map(normalizeUrl).filter(Boolean);
+    const linked=refs.map(x=>byUrl.get(x)).filter(Boolean);
+    if(!linked.length){failures.push({paragraph:u.paragraph_index,reason:"sem fonte oficial vinculada"});continue}
+    if(linked.some(s=>Number(s.sourceTier||scientificSourceTier(s.url))<2)){
+      failures.push({paragraph:u.paragraph_index,reason:"fonte secundária não pode sustentar alteração clínica"});continue;
+    }
+    const claims=claimedInstitutionFamilies([u.new_text,u.reason].join(" "));
+    for(const family of claims){
+      if(!linked.some(s=>sourceInstitutionFamily(s.url)===family)){
+        failures.push({paragraph:u.paragraph_index,reason:`texto atribui evidência a ${family}, mas a URL vinculada pertence a outra instituição`});
+        break;
+      }
+    }
+  }
+  if(failures.length)throw new Error(`Rastreabilidade científica bloqueada: ${failures.map(x=>`parágrafo ${x.paragraph} (${x.reason})`).join("; ")}. Use a fonte primária da própria instituição citada.`);
+  return true;
 }
 async function runAIRevision(prompt,requested,options={}){
   const errors=[];
@@ -972,7 +1023,8 @@ async function runAIRevision(prompt,requested,options={}){
           }));
           ai.result.references=(webResearch.sources||[])
             .filter(src=>usedSourceUrls.has(src.url))
-            .map(src=>({title:src.title,url:src.url}));
+            .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost}));
+          enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);
         }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
@@ -1096,6 +1148,9 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
 18) Em REVISÃO NECESSÁRIA, compare literalmente os PARÁGRAFOS EDITÁVEIS com cada achado. Quando uma fonte atual sustentar correção de um achado, devolva em updates o paragraph_index do parágrafo vigente afetado e um new_text REALMENTE DIFERENTE que incorpore a correção. Repetir o texto vigente não conta como correção.
 19) Em REVISÃO NECESSÁRIA, não devolva updates vazio se houver ao menos um achado corrigível pelas fontes fornecidas. Não invente alteração para cumprir esta regra: se nenhum achado puder ser corrigido com segurança pelas fontes disponíveis, mantenha updates vazio e explique objetivamente no summary quais achados ficaram sem evidência suficiente; o SIASH bloqueará a proposta para nova pesquisa.
 20) Para LEG-UTIN-023 e outros POPs de higienização das mãos, diferencie explicitamente, quando sustentado pelas fontes fornecidas, preparação alcoólica versus lavagem com água e sabonete, indicação pelos momentos de higiene e quantidade/volume conforme instrução do produto/fabricante, evitando regra universal sem suporte.
+21) HIERARQUIA OBRIGATÓRIA: para alteração clínica/assistencial use somente as fontes oficiais/primárias FONTE_N fornecidas pela pesquisa. Não substitua referência primária vigente por protocolo municipal, página de terceiro, repositório, blog ou documento secundário.
+22) VÍNCULO INSTITUCIONAL OBRIGATÓRIO: se new_text ou reason atribuir uma recomendação a ANVISA, OMS/WHO, OPAS/PAHO, Ministério da Saúde, FIOCRUZ, COFEN/COREN ou SBP, references deve conter FONTE_N cuja URL pertença à própria instituição citada. Não use uma fonte de terceiro para justificar afirmação atribuída a outra instituição.
+23) Não altere um parágrafo apenas para trocar uma referência bibliográfica por outra inferior. Uma atualização de referência só é válida quando a nova fonte é oficial/primária e de hierarquia igual ou superior à fonte vigente.
 MOTIVO DA REVISÃO DOCUMENTAL: ${String(periodic_review_reason||"não informado").trim()||"não informado"}
 AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scientificAudit.findings.join(" | ")}`:"Sem apontamento retroativo específico."}\nPEDIDO DE CORREÇÃO DO PROFISSIONAL: ${String(correction_request||"Nenhum").trim()||"Nenhum"}\nPARÁGRAFOS EDITÁVEIS (índice | texto):\n${editable.map(p=>`${p.index} | ${p.text}`).join("\n")}`;
     const researchQuery=[
