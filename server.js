@@ -919,7 +919,8 @@ async function researchWithTavily(prompt,queryOverride=""){
     url:String(r.url||"").trim(),
     content:String(r.content||"").trim(),
     sourceTier:r._tier,
-    sourceHost:sourceHostname(r.url),\n    sourceInstitution:primaryScientificInstitution(r.url)
+    sourceHost:sourceHostname(r.url),
+    sourceInstitution:primaryScientificInstitution(r.url)
   }));
 
   const evidence=sources.map(s=>`[${s.sourceId}]\nInstituição oficial: ${s.sourceInstitution}\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`).join("\n\n");
