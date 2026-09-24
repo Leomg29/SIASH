@@ -1,0 +1,17 @@
+name: SIASH v0.14.36 scientific generation diagnostics
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check server.js
+      - run: node tests/scientific-generation-diagnostics.test.js
+      - run: node tests/source-claim-binding.test.js
+      - run: node tests/scientific-source-governance.test.js
+      - run: node tests/reference-heading-safety.test.js

@@ -1,0 +1,10 @@
+const fs=require("fs"),assert=require("assert");const s=fs.readFileSync("server.js","utf8"),p=require("../package.json"),i=fs.readFileSync("index.html","utf8");
+assert.ok(s.includes("primaryScientificInstitution"));
+assert.ok(s.includes("official=ranked.filter(r=>primaryScientificInstitution(r.url))"));
+assert.ok(s.includes("Instituição oficial:"));
+assert.ok(s.includes('err.code="SCIENTIFIC_BINDING_REJECTED"'));
+assert.ok(s.includes("AI_SCIENTIFIC_VALIDATION_REJECTED"));
+assert.ok(s.includes("proposta rejeitada pela validação científica"));
+assert.ok(s.includes("sourceInstitution:src.sourceInstitution"));
+assert.equal(p.version,"0.14.36");assert.ok((i.match(/v0\.14\.36/g)||[]).length>=2);
+console.log("v0.14.36 precise scientific generation diagnostics OK");

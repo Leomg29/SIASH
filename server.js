@@ -875,6 +875,18 @@ async function tavilySearchRequest(query,extra={}){
     return await response.json();
   }finally{clearTimeout(timer)}
 }
+function primaryScientificInstitution(raw=""){
+  const host=sourceHostname(raw),u=String(raw||"").toLowerCase();
+  if(!host)return "";
+  if(domainMatches(host,"who.int"))return "WHO";
+  if(domainMatches(host,"paho.org")||domainMatches(host,"opas.org.br"))return "OPAS";
+  if(domainMatches(host,"anvisa.gov.br")||(domainMatches(host,"gov.br")&&u.includes("/anvisa/")))return "ANVISA";
+  if(domainMatches(host,"saude.gov.br")||(domainMatches(host,"gov.br")&&u.includes("/saude/")))return "MS";
+  if(domainMatches(host,"fiocruz.br"))return "FIOCRUZ";
+  if(domainMatches(host,"cofen.gov.br")||host.includes("coren-"))return "COFEN_COREN";
+  if(domainMatches(host,"sbp.com.br"))return "SBP";
+  return "";
+}
 async function researchWithTavily(prompt,queryOverride=""){
   if(!TAVILY_API_KEY)throw new Error("TAVILY_API_KEY não configurada no servidor.");
   const query=String(queryOverride||prompt||"").replace(/\s+/g," ").trim().slice(0,400);
@@ -882,7 +894,7 @@ async function researchWithTavily(prompt,queryOverride=""){
 
   const first=await tavilySearchRequest(query);
   let ranked=rankScientificSources(Array.isArray(first.results)?first.results:[]);
-  let official=ranked.filter(r=>r._tier>=2);
+  let official=ranked.filter(r=>primaryScientificInstitution(r.url));
 
   // Se a busca geral não trouxer base oficial suficiente, faz uma segunda busca restrita
   // às instituições técnico-científicas preferenciais, sem aceitar redes sociais como fallback.
@@ -892,12 +904,12 @@ async function researchWithTavily(prompt,queryOverride=""){
     const seen=new Set();
     ranked=merged.filter(r=>{const u=normalizeUrl(r.url);if(!u||seen.has(u))return false;seen.add(u);return true})
       .sort((a,b)=>b._tier-a._tier||a._originalIndex-b._originalIndex);
-    official=ranked.filter(r=>r._tier>=2);
+    official=ranked.filter(r=>primaryScientificInstitution(r.url));
   }
 
   // Para POP assistencial, fontes oficiais/primárias formam a base. Fontes secundárias
   // só complementam quando já existem ao menos duas fontes oficiais verificáveis.
-  if(official.length<2)throw new Error("Pesquisa científica bloqueada: não foram localizadas pelo menos 2 fontes oficiais/primárias verificáveis.");
+  if(official.length<2)throw new Error("Pesquisa científica bloqueada: não foram localizadas pelo menos 2 fontes primárias de autoridades técnico-científicas reconhecidas.");
   // v0.14.35: em POP assistencial, a evidência entregue ao modelo é somente oficial/primária.
   // Fontes secundárias podem ser descobertas na busca, mas não sustentam alteração clínica.
   const selected=official.slice(0,6);
@@ -907,29 +919,15 @@ async function researchWithTavily(prompt,queryOverride=""){
     url:String(r.url||"").trim(),
     content:String(r.content||"").trim(),
     sourceTier:r._tier,
-    sourceHost:sourceHostname(r.url)
+    sourceHost:sourceHostname(r.url),
+    sourceInstitution:primaryScientificInstitution(r.url)
   }));
 
-  const evidence=sources.map(s=>`[${s.sourceId}]\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`).join("\n\n");
+  const evidence=sources.map(s=>`[${s.sourceId}]\nInstituição oficial: ${s.sourceInstitution}\nTítulo: ${s.title}\nURL: ${s.url}\nConteúdo: ${s.content}`).join("\n\n");
   console.log(`[SIASH AI] pesquisa Tavily concluída | fontes=${sources.length} | oficiais=${official.length} | política=scientific_source_governance_v1`);
   return {sources,evidence,researchMode:"tavily_search"};
 }
-function sourceInstitutionFamily(raw=""){
-  const host=sourceHostname(raw);
-  if(!host)return "";
-  if(domainMatches(host,"who.int"))return "WHO";
-  if(domainMatches(host,"paho.org")||domainMatches(host,"opas.org.br"))return "OPAS";
-  if(domainMatches(host,"gov.br")||domainMatches(host,"anvisa.gov.br")||domainMatches(host,"saude.gov.br")){
-    const u=String(raw||"").toLowerCase();
-    if(u.includes("/anvisa/")||host.includes("anvisa"))return "ANVISA";
-    if(u.includes("/saude/")||host.includes("saude"))return "MS";
-    return "GOV_BR";
-  }
-  if(domainMatches(host,"fiocruz.br"))return "FIOCRUZ";
-  if(domainMatches(host,"cofen.gov.br")||/^coren-/.test(host))return "COFEN_COREN";
-  if(domainMatches(host,"sbp.com.br"))return "SBP";
-  return "";
-}
+function sourceInstitutionFamily(raw=""){return primaryScientificInstitution(raw)}
 function claimedInstitutionFamilies(text=""){
   const t=normalizedText(text).toUpperCase(),out=new Set();
   if(/\b(?:OMS|WHO|ORGANIZAÇÃO MUNDIAL DA SAÚDE)\b/.test(t))out.add("WHO");
@@ -948,7 +946,7 @@ function enforceScientificClaimSourceBinding(updates=[],sources=[]){
     const refs=(u.references||[]).map(normalizeUrl).filter(Boolean);
     const linked=refs.map(x=>byUrl.get(x)).filter(Boolean);
     if(!linked.length){failures.push({paragraph:u.paragraph_index,reason:"sem fonte oficial vinculada"});continue}
-    if(linked.some(s=>Number(s.sourceTier||scientificSourceTier(s.url))<2)){
+    if(linked.some(s=>!primaryScientificInstitution(s.url))){
       failures.push({paragraph:u.paragraph_index,reason:"fonte secundária não pode sustentar alteração clínica"});continue;
     }
     const claims=claimedInstitutionFamilies([u.new_text,u.reason].join(" "));
@@ -959,7 +957,7 @@ function enforceScientificClaimSourceBinding(updates=[],sources=[]){
       }
     }
   }
-  if(failures.length)throw new Error(`Rastreabilidade científica bloqueada: ${failures.map(x=>`parágrafo ${x.paragraph} (${x.reason})`).join("; ")}. Use a fonte primária da própria instituição citada.`);
+  if(failures.length){const err=new Error(`Rastreabilidade científica bloqueada: ${failures.map(x=>`parágrafo ${x.paragraph} (${x.reason})`).join("; ")}. Use a fonte primária da própria instituição citada.`);err.code="SCIENTIFIC_BINDING_REJECTED";throw err;}
   return true;
 }
 async function runAIRevision(prompt,requested,options={}){
@@ -968,6 +966,7 @@ async function runAIRevision(prompt,requested,options={}){
   const requireWebResearch=options?.requireWebResearch===true;
   const simulatedUnavailable=new Set(Array.isArray(options?.simulateUnavailable)?options.simulateUnavailable.map(x=>String(x).toLowerCase()):[]);
   const diagnostic=options?.diagnostic===true;
+  const scientificRejections=[];
   let webResearch=null;
   let revisionPrompt=prompt;
   if(requireWebResearch&&TAVILY_API_KEY){
@@ -981,6 +980,7 @@ async function runAIRevision(prompt,requested,options={}){
         "",
         "REGRA DE EVIDÊNCIA: use somente as fontes acima para sustentar afirmações que dependam de pesquisa web atual. Não invente fontes, títulos, normas, datas ou URLs.",
         "REGRA DE VÍNCULO OBRIGATÓRIO: cada alteração em updates DEVE ter references com pelo menos um identificador exato FONTE_1, FONTE_2, etc. correspondente às evidências acima. Não use referência vazia, abreviada ou criada pelo modelo. O SIASH resolverá esses identificadores para título e URL verificados da Tavily.",
+        "REGRA DE ATRIBUIÇÃO INSTITUCIONAL: cada FONTE_N informa sua Instituição oficial. Só atribua uma recomendação a uma instituição quando a própria alteração citar uma FONTE_N dessa mesma instituição. Se ela não estiver nas evidências, não invente a atribuição; registre a limitação no summary.",
         "REGRA DE AUDITORIA: quando houver AUDITORIA CIENTÍFICA SIASH com REVISÃO NECESSÁRIA, confronte cada achado com as evidências Tavily e com os PARÁGRAFOS EDITÁVEIS. Para todo achado que possua suporte nas fontes, gere alteração técnico-científica rastreável no paragraph_index correspondente e cite o identificador FONTE_N específico. Se algum achado não puder ser corrigido com as fontes retornadas, declare explicitamente no summary qual achado ficou sem suporte; nunca substitua isso por simples renovação de vigência."
       ].join("\n");
       console.log(`[SIASH AI] Tavily habilitou pesquisa web verificável | fontes=${webResearch.sources.length}`);
@@ -1023,7 +1023,7 @@ async function runAIRevision(prompt,requested,options={}){
           }));
           ai.result.references=(webResearch.sources||[])
             .filter(src=>usedSourceUrls.has(src.url))
-            .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost}));
+            .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
           enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);
         }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
@@ -1034,7 +1034,10 @@ async function runAIRevision(prompt,requested,options={}){
       return ai;
     }catch(e){
       const msg=String(e?.message||"falha").replace(/\s+/g," ").slice(0,500);
-      console.warn(`[SIASH AI${diagnostic?" TEST":""}] provedor indisponível | provider=${p} | motivo=${msg}`);
+      if(e?.code==="SCIENTIFIC_BINDING_REJECTED"){
+        scientificRejections.push({provider:p,message:msg});
+        console.warn(`[SIASH AI${diagnostic?" TEST":""}] proposta rejeitada pela validação científica | provider=${p} | motivo=${msg}`);
+      }else console.warn(`[SIASH AI${diagnostic?" TEST":""}] provedor indisponível | provider=${p} | motivo=${msg}`);
       errors.push(`${p}: ${msg}`);
       const next=order[order.indexOf(p)+1];
       if(next)console.log(`[SIASH AI${diagnostic?" TEST":""}] iniciando fallback | de=${p} | para=${next}`);
@@ -1043,6 +1046,12 @@ async function runAIRevision(prompt,requested,options={}){
   console.error(`[SIASH AI] todos os provedores falharam | ${errors.join(" | ")}`);
   if(requireWebResearch){
     const tavilyOk=!!webResearch;
+    if(tavilyOk&&scientificRejections.length){
+      const err=new Error("A pesquisa oficial foi concluída e a IA respondeu, mas a proposta foi rejeitada pela validação científica de rastreabilidade. Nenhuma alteração foi aplicada ao POP vigente.");
+      err.code="AI_SCIENTIFIC_VALIDATION_REJECTED";
+      err.details=scientificRejections;
+      throw err;
+    }
     const err=new Error(tavilyOk
       ? "A pesquisa web verificável da Tavily foi concluída, porém nenhum modelo de IA disponível conseguiu gerar a proposta dentro dos limites atuais. O POP vigente permanece inalterado."
       : "Esta revisão exige pesquisa web atual, mas a pesquisa verificável não ficou disponível. Verifique Tavily, Gemini com Google Search ou OpenAI com web_search; o POP vigente permanece inalterado.");
