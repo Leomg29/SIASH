@@ -304,14 +304,20 @@ async function classifyReferenceUrls(refs){
   const dedup=a=>[...new Map(a.map(x=>[(x.url||x.title).toLowerCase(),x])).values()].map(decorate);
   return {verified:dedup(verified),pending:dedup(pending)};
 }
-function isReferenceHeading(text=""){
-  const t = normalizedText(text)
+function normalizeReferenceHeadingText(text=""){
+  return normalizedText(text)
     .replace(/\u00a0/g," ")
+    .replace(/[\u200B-\u200D\uFEFF]/g,"")
     .replace(/^[\s\u2022\u25CF\u25AA\u25E6\-–—]+/,"")
     .replace(/\s+/g," ")
     .trim();
-
-  return /^(?:\d{1,2}(?:\.\d{1,2})?\s*[-–—.)]?\s*)?(?:refer[eê]ncias?(?:\s+bibliogr[aá]ficas?)?|bibliografia)\s*:?\s*$/i.test(t);
+}
+function isReferenceHeading(text=""){
+  const t=normalizeReferenceHeadingText(text);
+  // Aceita variações institucionais comuns sem aceitar frases de conteúdo.
+  // Exemplos: "8. REFERÊNCIAS", "8 - REFERÊNCIAS BIBLIOGRÁFICAS",
+  // "REFERÊNCIAS:", "REFERÊNCIAS BIBLIOGRÁFICAS" e "BIBLIOGRAFIA".
+  return /^(?:\d{1,2}(?:\.\d{1,2})*\s*(?:[-–—.):]|\.)?\s*)?(?:refer[eê]ncias?(?:\s+(?:bibliogr[aá]ficas?|t[eé]cnicas?|normativas?))?|bibliografia)\s*[:.;-]?\s*$/i.test(t);
 }
 
 function referenceSectionInfo(paragraphs){

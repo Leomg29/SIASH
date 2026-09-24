@@ -9,6 +9,7 @@ ok(s.includes('"instagram.com"')&&s.includes("SCIENTIFIC_BLOCKED_DOMAINS"),"soci
 ok(s.includes("if(official.length<2)"),"minimum official source gate missing");
 ok(s.includes("include_domains:SCIENTIFIC_PREFERRED_DOMAINS"),"official retry missing");
 ok(s.includes("sourceTier:r._tier"),"source provenance tier missing");
-ok(p.version==="0.14.33","package version mismatch");
-ok((i.match(/v0\.14\.33/g)||[]).length>=2,"UI version not updated everywhere");
-console.log("v0.14.33 scientific source governance OK");
+const version=p.version;
+ok(/^0\.14\.\d+$/.test(version),"invalid release version");
+ok((i.match(new RegExp(`v${version.replace(/\./g,"\\.")}`,"g"))||[]).length>=2,"UI version not updated everywhere");
+console.log(`scientific source governance OK on v${version}`);
