@@ -1,0 +1,18 @@
+name: SIASH v0.14.35 source claim binding
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check server.js
+      - run: node tests/source-claim-binding.test.js
+      - run: node tests/scientific-source-governance.test.js
+      - run: node tests/reference-heading-safety.test.js
+      - run: node tests/correction-regeneration.test.js
