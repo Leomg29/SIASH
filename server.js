@@ -966,6 +966,7 @@ async function runAIRevision(prompt,requested,options={}){
   const requireWebResearch=options?.requireWebResearch===true;
   const simulatedUnavailable=new Set(Array.isArray(options?.simulateUnavailable)?options.simulateUnavailable.map(x=>String(x).toLowerCase()):[]);
   const diagnostic=options?.diagnostic===true;
+  const scientificRejections=[];
   let webResearch=null;
   let revisionPrompt=prompt;
   if(requireWebResearch&&TAVILY_API_KEY){
@@ -1033,7 +1034,10 @@ async function runAIRevision(prompt,requested,options={}){
       return ai;
     }catch(e){
       const msg=String(e?.message||"falha").replace(/\s+/g," ").slice(0,500);
-      console.warn(`[SIASH AI${diagnostic?" TEST":""}] provedor indisponível | provider=${p} | motivo=${msg}`);
+      if(e?.code==="SCIENTIFIC_BINDING_REJECTED"){
+        scientificRejections.push({provider:p,message:msg});
+        console.warn(`[SIASH AI${diagnostic?" TEST":""}] proposta rejeitada pela validação científica | provider=${p} | motivo=${msg}`);
+      }else console.warn(`[SIASH AI${diagnostic?" TEST":""}] provedor indisponível | provider=${p} | motivo=${msg}`);
       errors.push(`${p}: ${msg}`);
       const next=order[order.indexOf(p)+1];
       if(next)console.log(`[SIASH AI${diagnostic?" TEST":""}] iniciando fallback | de=${p} | para=${next}`);
@@ -1042,6 +1046,12 @@ async function runAIRevision(prompt,requested,options={}){
   console.error(`[SIASH AI] todos os provedores falharam | ${errors.join(" | ")}`);
   if(requireWebResearch){
     const tavilyOk=!!webResearch;
+    if(tavilyOk&&scientificRejections.length){
+      const err=new Error("A pesquisa oficial foi concluída e a IA respondeu, mas a proposta foi rejeitada pela validação científica de rastreabilidade. Nenhuma alteração foi aplicada ao POP vigente.");
+      err.code="AI_SCIENTIFIC_VALIDATION_REJECTED";
+      err.details=scientificRejections;
+      throw err;
+    }
     const err=new Error(tavilyOk
       ? "A pesquisa web verificável da Tavily foi concluída, porém nenhum modelo de IA disponível conseguiu gerar a proposta dentro dos limites atuais. O POP vigente permanece inalterado."
       : "Esta revisão exige pesquisa web atual, mas a pesquisa verificável não ficou disponível. Verifique Tavily, Gemini com Google Search ou OpenAI com web_search; o POP vigente permanece inalterado.");
