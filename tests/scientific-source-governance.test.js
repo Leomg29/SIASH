@@ -10,6 +10,6 @@ ok(s.includes("if(official.length<2)"),"minimum official source gate missing");
 ok(s.includes("include_domains:SCIENTIFIC_PREFERRED_DOMAINS"),"official retry missing");
 ok(s.includes("sourceTier:r._tier"),"source provenance tier missing");
 const version=p.version;
-ok(/^0\\.14\\.\\d+$/.test(version),"invalid release version");
-ok((i.match(new RegExp(`v${version.replace(/\\./g,"\\\\.")}`,"g"))||[]).length>=2,"UI version not updated everywhere");
+ok(/^0\.14\.\d+$/.test(version),"invalid release version");
+ok((i.match(new RegExp(`v${version.replace(/\./g,"\\.")}`,"g"))||[]).length>=2,"UI version not updated everywhere");
 console.log(`scientific source governance OK on v${version}`);
