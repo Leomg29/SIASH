@@ -1172,6 +1172,14 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
+    const correctionRequested=!!String(correction_request||"").trim();
+    const correctionNoop=correctionRequested&&!effective.length;
+    if(correctionNoop){
+      const err=new Error("A IA analisou o pedido de correção, mas não produziu alteração real em relação ao Word vigente. A proposta anterior foi preservada e nenhuma nova revisão foi criada.");
+      err.code="AI_CORRECTION_NO_EFFECTIVE_CHANGE";
+      err.details={doc_code,updatesReceived:Array.isArray(result.updates)?result.updates.length:0,correctionRequested:true};
+      throw err;
+    }
     if(scientificAudit?.status==="review"){
       console.log(`[SIASH AI] auditoria obrigatória | code=${doc_code} | updates_recebidos=${Array.isArray(result.updates)?result.updates.length:0} | alteracoes_reais=${effective.length} | achados=${scientificAudit.findings.length}`);
       if(!effective.length)throw new Error("Este POP foi classificado pela auditoria científica como REVISÃO NECESSÁRIA. A IA não produziu alteração real nos parágrafos auditados; a proposta foi bloqueada para evitar simples renovação de vigência.");
