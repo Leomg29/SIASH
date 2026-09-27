@@ -6,5 +6,5 @@ assert.ok(s.includes('err.code="SCIENTIFIC_BINDING_REJECTED"'));
 assert.ok(s.includes("AI_SCIENTIFIC_VALIDATION_REJECTED"));
 assert.ok(s.includes("proposta rejeitada pela validação científica"));
 assert.ok(s.includes("sourceInstitution:src.sourceInstitution"));
-assert.equal(p.version,"0.14.36");assert.ok((i.match(/v0\.14\.36/g)||[]).length>=2);
+assert.ok(/^0\.14\.(?:3[6-9]|[4-9]\d)$/.test(p.version),"package version must preserve v0.14.36+ diagnostics");assert.ok(i.split(`v${p.version}`).length-1>=2,"current release version must appear in both UI locations");
 console.log("v0.14.36+ scientific generation diagnostics regression OK");
