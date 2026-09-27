@@ -1,0 +1,10 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8"),p=require("../package.json"),html=fs.readFileSync("index.html","utf8");
+assert(s.includes("function enforceClinicalSequenceIntegrity(updates=[])"),"clinical sequence validator missing");
+assert(s.includes("enforceClinicalSequenceIntegrity(ai.result.updates);"),"validator must run before proposal is accepted");
+assert(s.includes("REGRA DE INTEGRIDADE DE SEQUÊNCIA CLÍNICA"),"AI prompt must require whole-procedure validation");
+assert(s.includes("polpas digitais/unhas"),"validator must protect fingertip/nail step");
+assert(s.includes("5 - após tocar superfícies próximas ao paciente"),"validator must require fifth WHO moment");
+assert.strictEqual(p.version,"0.14.40");
+assert((html.match(/0\\.14\\.40/g)||[]).length>=2,"UI must display v0.14.40");
+console.log("v0.14.40 clinical sequence integrity regression OK");
