@@ -949,6 +949,31 @@ function claimedInstitutionFamilies(text=""){
   if(/\b(?:SBP|SOCIEDADE BRASILEIRA DE PEDIATRIA)\b/.test(t))out.add("SBP");
   return [...out];
 }
+function foldClinicalText(text=""){return normalizedText(text).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")}
+function enforceClinicalSequenceIntegrity(updates=[]){
+  const proposed=(updates||[]).map(u=>foldClinicalText(u.new_text)).filter(Boolean);
+  const reasons=(updates||[]).map(u=>foldClinicalText(u.reason)).filter(Boolean);
+  const combined=proposed.join(" | ");
+  const mentionsFiveMoments=proposed.some(t=>/5 momentos|cinco momentos/.test(t))||reasons.some(t=>/5 momentos|cinco momentos/.test(t));
+  if(mentionsFiveMoments){
+    const required=[
+      ["1 - antes de tocar o paciente",/antes (?:de )?(?:tocar|contato com) (?:o )?paciente/],
+      ["2 - antes de procedimento limpo/asséptico",/antes (?:de |da |do )?(?:realizar )?(?:procedimento )?(?:limpo|asseptico)/],
+      ["3 - após risco de exposição a fluidos corporais",/apos (?:o )?(?:risco de )?exposicao a fluidos corporais/],
+      ["4 - após tocar o paciente",/apos (?:tocar|o contato com) (?:o )?paciente/],
+      ["5 - após tocar superfícies próximas ao paciente",/apos (?:tocar|o contato com) (?:objetos|superficies|areas|o ambiente|ambiente).{0,45}(?:proxim|entorno|paciente)/]
+    ];
+    const missing=required.filter(([,rx])=>!rx.test(combined)).map(([label])=>label);
+    if(missing.length){const err=new Error(`Integridade clínica bloqueada: a proposta menciona os 5 momentos de higiene das mãos, mas não apresenta o conjunto completo. Ausente(s): ${missing.join("; ")}.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
+    const numbered=reasons.map((t,i)=>({i,n:Number(t.match(/(?:primeiro|1º|1o|1°)/)?1:t.match(/(?:segundo|2º|2o|2°)/)?2:t.match(/(?:terceiro|3º|3o|3°)/)?3:t.match(/(?:quarto|4º|4o|4°)/)?4:t.match(/(?:quinto|5º|5o|5°)/)?5:0),text:proposed[i]||""})).filter(x=>x.n);
+    const expected=[null,/antes (?:de )?(?:tocar|contato com) (?:o )?paciente/,/antes (?:de |da |do )?(?:realizar )?(?:procedimento )?(?:limpo|asseptico)/,/apos (?:o )?(?:risco de )?exposicao a fluidos corporais/,/apos (?:tocar|o contato com) (?:o )?paciente/,/apos (?:tocar|o contato com) (?:objetos|superficies|areas|o ambiente|ambiente).{0,45}(?:proxim|entorno|paciente)/];
+    const mismatch=numbered.find(x=>!expected[x.n].test(x.text));
+    if(mismatch){const err=new Error(`Integridade clínica bloqueada: a justificativa identifica incorretamente o momento ${mismatch.n} em relação ao texto proposto.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
+  }
+  const fingertipBefore=(updates||[]).filter(u=>/polpas digitais|unhas/i.test(String(u.old_text||"")));
+  for(const u of fingertipBefore){const after=foldClinicalText(u.new_text);if(!/(ponta|polpa).{0,30}dedos|unhas/.test(after)){const err=new Error(`Integridade clínica bloqueada: o parágrafo ${u.paragraph_index} continha etapa de polpas digitais/unhas e a proposta a substituiu sem preservar essa etapa.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}}
+  return true;
+}
 function enforceScientificClaimSourceBinding(updates=[],sources=[]){
   const byUrl=new Map(sources.map(s=>[normalizeUrl(s.url),s]));
   const failures=[];
@@ -994,6 +1019,7 @@ async function runAIRevision(prompt,requested,options={}){
         "REGRA DE EVIDÊNCIA: use somente as fontes acima para sustentar afirmações que dependam de pesquisa web atual. Não invente fontes, títulos, normas, datas ou URLs.",
         "REGRA DE VÍNCULO OBRIGATÓRIO: cada alteração em updates DEVE ter references com pelo menos um identificador exato FONTE_1, FONTE_2, etc. correspondente às evidências acima. Não use referência vazia, abreviada ou criada pelo modelo. O SIASH resolverá esses identificadores para título e URL verificados da Tavily.",
         "REGRA DE ATRIBUIÇÃO INSTITUCIONAL: cada FONTE_N informa sua Instituição oficial. No new_text, só atribua uma recomendação nominalmente a uma instituição quando references incluir uma FONTE_N dessa mesma instituição. Se ela não estiver nas evidências, redija a recomendação sem atribuição nominal e registre a limitação no summary. Na reason, descreva a justificativa sem criar atribuições científicas novas.",
+        "REGRA DE INTEGRIDADE DE SEQUÊNCIA CLÍNICA: antes de devolver updates, valide o procedimento como um conjunto. Se atualizar uma lista clínica padronizada (por exemplo, os 5 momentos da higiene das mãos) preserve TODOS os itens, a ordem oficial e a correspondência entre new_text e reason. Nunca substitua uma etapa técnica por outra diferente (por exemplo, polpas digitais/unhas por punhos). Se não houver parágrafo editável suficiente para preservar o conjunto completo, não improvise: registre a limitação no summary.",
         "REGRA DE AUDITORIA: quando houver AUDITORIA CIENTÍFICA SIASH com REVISÃO NECESSÁRIA, confronte cada achado com as evidências Tavily e com os PARÁGRAFOS EDITÁVEIS. Para todo achado que possua suporte nas fontes, gere alteração técnico-científica rastreável no paragraph_index correspondente e cite o identificador FONTE_N específico. Se algum achado não puder ser corrigido com as fontes retornadas, declare explicitamente no summary qual achado ficou sem suporte; nunca substitua isso por simples renovação de vigência."
       ].join("\n");
       console.log(`[SIASH AI] Tavily habilitou pesquisa web verificável | fontes=${webResearch.sources.length}`);
@@ -1038,6 +1064,7 @@ async function runAIRevision(prompt,requested,options={}){
             .filter(src=>usedSourceUrls.has(src.url))
             .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
           enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);
+          enforceClinicalSequenceIntegrity(ai.result.updates);
         }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
