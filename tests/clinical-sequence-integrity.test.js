@@ -6,5 +6,5 @@ assert(s.includes("REGRA DE INTEGRIDADE DE SEQUÊNCIA CLÍNICA"),"AI prompt must
 assert(s.includes("polpas digitais/unhas"),"validator must protect fingertip/nail step");
 assert(s.includes("5 - após tocar superfícies próximas ao paciente"),"validator must require fifth WHO moment");
 assert.strictEqual(p.version,"0.14.40");
-assert((html.match(/0\\.14\\.40/g)||[]).length>=2,"UI must display v0.14.40");
+assert((html.match(/0\.14\.40/g)||[]).length>=2,"UI must display v0.14.40");
 console.log("v0.14.40 clinical sequence integrity regression OK");
