@@ -902,20 +902,33 @@ async function researchWithTavily(prompt,queryOverride=""){
   const query=String(queryOverride||prompt||"").replace(/\s+/g," ").trim().slice(0,400);
   if(!query)throw new Error("Não foi possível montar a consulta científica para o Tavily.");
 
-  const first=await tavilySearchRequest(query);
-  let ranked=rankScientificSources(Array.isArray(first.results)?first.results:[]);
-  let official=ranked.filter(r=>primaryScientificInstitution(r.url));
-
-  // Se a busca geral não trouxer base oficial suficiente, faz uma segunda busca restrita
-  // às instituições técnico-científicas preferenciais, sem aceitar redes sociais como fallback.
-  if(official.length<2){
-    const second=await tavilySearchRequest(query,{include_domains:SCIENTIFIC_PREFERRED_DOMAINS});
-    const merged=[...ranked,...rankScientificSources(Array.isArray(second.results)?second.results:[])];
-    const seen=new Set();
-    ranked=merged.filter(r=>{const u=normalizeUrl(r.url);if(!u||seen.has(u))return false;seen.add(u);return true})
-      .sort((a,b)=>b._tier-a._tier||a._originalIndex-b._originalIndex);
+  let ranked=[],official=[],lastSearchError=null;
+  // v0.14.42 — a pesquisa científica não deve cair inteira se apenas uma consulta Tavily falhar.
+  // Tenta a busca geral e, independentemente do resultado, complementa com busca oficial restrita
+  // quando ainda não houver base primária suficiente.
+  try{
+    const first=await tavilySearchRequest(query);
+    ranked=rankScientificSources(Array.isArray(first.results)?first.results:[]);
     official=ranked.filter(r=>primaryScientificInstitution(r.url));
+  }catch(e){
+    lastSearchError=e;
+    console.warn(`[SIASH AI] Tavily busca geral falhou; tentando busca oficial restrita | motivo=${String(e?.message||"falha").replace(/\s+/g," ").slice(0,300)}`);
   }
+
+  if(official.length<2){
+    try{
+      const second=await tavilySearchRequest(query,{include_domains:SCIENTIFIC_PREFERRED_DOMAINS});
+      const merged=[...ranked,...rankScientificSources(Array.isArray(second.results)?second.results:[])];
+      const seen=new Set();
+      ranked=merged.filter(r=>{const u=normalizeUrl(r.url);if(!u||seen.has(u))return false;seen.add(u);return true})
+        .sort((a,b)=>b._tier-a._tier||a._originalIndex-b._originalIndex);
+      official=ranked.filter(r=>primaryScientificInstitution(r.url));
+    }catch(e){
+      lastSearchError=e;
+      console.warn(`[SIASH AI] Tavily busca oficial restrita falhou | motivo=${String(e?.message||"falha").replace(/\s+/g," ").slice(0,300)}`);
+    }
+  }
+  if(!ranked.length&&lastSearchError)throw lastSearchError;
 
   // Para POP assistencial, fontes oficiais/primárias formam a base. Fontes secundárias
   // só complementam quando já existem ao menos duas fontes oficiais verificáveis.

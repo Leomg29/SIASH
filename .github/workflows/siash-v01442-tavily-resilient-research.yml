@@ -1,0 +1,17 @@
+name: SIASH v0.14.42 resilient Tavily research
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [fix/v01442-tavily-resilient-research]
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check server.js
+      - run: node --check app.js
+      - run: node tests/tavily-resilient-research.test.js
