@@ -959,10 +959,13 @@ function enforceScientificClaimSourceBinding(updates=[],sources=[]){
     if(linked.some(s=>!primaryScientificInstitution(s.url))){
       failures.push({paragraph:u.paragraph_index,reason:"fonte secundária não pode sustentar alteração clínica"});continue;
     }
-    const claims=claimedInstitutionFamilies([u.new_text,u.reason].join(" "));
+    // A vinculação institucional deve validar a afirmação clínica que entrará no POP.
+    // A justificativa é metadado de auditoria e pode comparar instituições/fontes; usá-la
+    // como se fosse texto publicado gerava falso bloqueio de rastreabilidade.
+    const claims=claimedInstitutionFamilies(u.new_text);
     for(const family of claims){
       if(!linked.some(s=>sourceInstitutionFamily(s.url)===family)){
-        failures.push({paragraph:u.paragraph_index,reason:`texto atribui evidência a ${family}, mas a URL vinculada pertence a outra instituição`});
+        failures.push({paragraph:u.paragraph_index,reason:`texto proposto atribui evidência a ${family}, mas nenhuma URL vinculada pertence a essa instituição`});
         break;
       }
     }
@@ -990,7 +993,7 @@ async function runAIRevision(prompt,requested,options={}){
         "",
         "REGRA DE EVIDÊNCIA: use somente as fontes acima para sustentar afirmações que dependam de pesquisa web atual. Não invente fontes, títulos, normas, datas ou URLs.",
         "REGRA DE VÍNCULO OBRIGATÓRIO: cada alteração em updates DEVE ter references com pelo menos um identificador exato FONTE_1, FONTE_2, etc. correspondente às evidências acima. Não use referência vazia, abreviada ou criada pelo modelo. O SIASH resolverá esses identificadores para título e URL verificados da Tavily.",
-        "REGRA DE ATRIBUIÇÃO INSTITUCIONAL: cada FONTE_N informa sua Instituição oficial. Só atribua uma recomendação a uma instituição quando a própria alteração citar uma FONTE_N dessa mesma instituição. Se ela não estiver nas evidências, não invente a atribuição; registre a limitação no summary.",
+        "REGRA DE ATRIBUIÇÃO INSTITUCIONAL: cada FONTE_N informa sua Instituição oficial. No new_text, só atribua uma recomendação nominalmente a uma instituição quando references incluir uma FONTE_N dessa mesma instituição. Se ela não estiver nas evidências, redija a recomendação sem atribuição nominal e registre a limitação no summary. Na reason, descreva a justificativa sem criar atribuições científicas novas.",
         "REGRA DE AUDITORIA: quando houver AUDITORIA CIENTÍFICA SIASH com REVISÃO NECESSÁRIA, confronte cada achado com as evidências Tavily e com os PARÁGRAFOS EDITÁVEIS. Para todo achado que possua suporte nas fontes, gere alteração técnico-científica rastreável no paragraph_index correspondente e cite o identificador FONTE_N específico. Se algum achado não puder ser corrigido com as fontes retornadas, declare explicitamente no summary qual achado ficou sem suporte; nunca substitua isso por simples renovação de vigência."
       ].join("\n");
       console.log(`[SIASH AI] Tavily habilitou pesquisa web verificável | fontes=${webResearch.sources.length}`);
