@@ -1063,7 +1063,8 @@ async function runAIRevision(prompt,requested,options={}){
           ai.result.references=(webResearch.sources||[])
             .filter(src=>usedSourceUrls.has(src.url))
             .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
-          enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);\n          enforceClinicalSequenceIntegrity(ai.result.updates);
+          enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);
+          enforceClinicalSequenceIntegrity(ai.result.updates);
         }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
