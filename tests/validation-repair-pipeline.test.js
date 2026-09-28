@@ -1,0 +1,10 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8"),p=require("../package.json"),html=fs.readFileSync("index.html","utf8");
+assert(s.includes('e?.code==="SCIENTIFIC_BINDING_REJECTED"||e?.code==="CLINICAL_SEQUENCE_INTEGRITY_REJECTED"'),"both deterministic validation failures must enter repair pipeline");
+assert(s.includes("REPARO OBRIGATÓRIO DE VALIDAÇÃO SIASH"),"repair prompt missing");
+assert(s.includes("proposta reparada e revalidada"),"repair must be revalidated before return");
+assert(s.includes('err.code="AI_CLINICAL_VALIDATION_REJECTED"'),"clinical rejection needs its own final diagnosis");
+assert(s.includes("clinicalRejections.push"),"clinical failures must not be mislabeled as provider outages");
+assert.strictEqual(p.version,"0.14.47");
+assert(html.includes("0.14.47"));
+console.log("v0.14.47 unified validation repair pipeline regression OK");
