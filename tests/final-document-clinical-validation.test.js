@@ -1,0 +1,10 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8"),p=require("../package.json"),html=fs.readFileSync("index.html","utf8");
+assert(s.includes("function enforceClinicalSequenceIntegrity(updates=[],baselineParagraphs=[])"),"validator must accept proposal baseline");
+assert(s.includes("const finalMap=new Map(baseline);"),"validator must build final document state");
+assert(s.includes("editableParagraphs:editable"),"revision must pass Rev.02 editable baseline into validation");
+assert(s.includes("options?.editableParagraphs||[]"),"all clinical validation paths must use baseline");
+assert(s.includes("é um cabeçalho de procedimento e não pode ser substituído"),"procedure headings must be protected");
+assert.strictEqual(p.version,"0.14.46");
+assert(html.includes("0.14.46"),"UI must display v0.14.46");
+console.log("v0.14.46 final-document clinical validation regression OK");

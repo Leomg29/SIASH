@@ -963,11 +963,18 @@ function claimedInstitutionFamilies(text=""){
   return [...out];
 }
 function foldClinicalText(text=""){return normalizedText(text).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"")}
-function enforceClinicalSequenceIntegrity(updates=[]){
+function enforceClinicalSequenceIntegrity(updates=[],baselineParagraphs=[]){
+  const baseline=new Map((baselineParagraphs||[]).map(p=>[Number(p.index),String(p.text||"")]));
+  const finalMap=new Map(baseline);
+  for(const u of updates||[])if(Number.isInteger(Number(u.paragraph_index)))finalMap.set(Number(u.paragraph_index),String(u.new_text||""));
   const proposed=(updates||[]).map(u=>foldClinicalText(u.new_text)).filter(Boolean);
   const reasons=(updates||[]).map(u=>foldClinicalText(u.reason)).filter(Boolean);
-  const combined=proposed.join(" | ");
-  const mentionsFiveMoments=proposed.some(t=>/5 momentos|cinco momentos/.test(t))||reasons.some(t=>/5 momentos|cinco momentos/.test(t));
+  // v0.14.46 — listas clínicas são validadas no documento final, não apenas no delta de updates.
+  // Em correções da Rev.02, itens corretos podem permanecer inalterados e por isso não aparecem
+  // em updates; exigir que todos estivessem no delta tornava uma correção válida impossível.
+  const finalTexts=[...finalMap.values()].map(foldClinicalText).filter(Boolean);
+  const combined=(finalTexts.length?finalTexts:proposed).join(" | ");
+  const mentionsFiveMoments=[...finalTexts,...proposed,...reasons].some(t=>/5 momentos|cinco momentos/.test(t));
   if(mentionsFiveMoments){
     const required=[
       ["1 - antes de tocar o paciente",/antes (?:de )?(?:tocar|contato com) (?:o )?paciente/],
@@ -977,14 +984,20 @@ function enforceClinicalSequenceIntegrity(updates=[]){
       ["5 - após tocar superfícies próximas ao paciente",/apos (?:tocar|o contato com) (?:objetos|superficies|areas|o ambiente|ambiente).{0,45}(?:proxim|entorno|paciente)/]
     ];
     const missing=required.filter(([,rx])=>!rx.test(combined)).map(([label])=>label);
-    if(missing.length){const err=new Error(`Integridade clínica bloqueada: a proposta menciona os 5 momentos de higiene das mãos, mas não apresenta o conjunto completo. Ausente(s): ${missing.join("; ")}.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
+    if(missing.length){const err=new Error(`Integridade clínica bloqueada: o documento final menciona os 5 momentos de higiene das mãos, mas não apresenta o conjunto completo. Ausente(s): ${missing.join("; ")}.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
     const numbered=reasons.map((t,i)=>({i,n:Number(t.match(/(?:primeiro|1º|1o|1°)/)?1:t.match(/(?:segundo|2º|2o|2°)/)?2:t.match(/(?:terceiro|3º|3o|3°)/)?3:t.match(/(?:quarto|4º|4o|4°)/)?4:t.match(/(?:quinto|5º|5o|5°)/)?5:0),text:proposed[i]||""})).filter(x=>x.n);
     const expected=[null,/antes (?:de )?(?:tocar|contato com) (?:o )?paciente/,/antes (?:de |da |do )?(?:realizar )?(?:procedimento )?(?:limpo|asseptico)/,/apos (?:o )?(?:risco de )?exposicao a fluidos corporais/,/apos (?:tocar|o contato com) (?:o )?paciente/,/apos (?:tocar|o contato com) (?:objetos|superficies|areas|o ambiente|ambiente).{0,45}(?:proxim|entorno|paciente)/];
     const mismatch=numbered.find(x=>!expected[x.n].test(x.text));
     if(mismatch){const err=new Error(`Integridade clínica bloqueada: a justificativa identifica incorretamente o momento ${mismatch.n} em relação ao texto proposto.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
   }
-  const fingertipBefore=(updates||[]).filter(u=>/polpas digitais|unhas/i.test(String(u.old_text||"")));
-  for(const u of fingertipBefore){const after=foldClinicalText(u.new_text);if(!/(ponta|polpa).{0,30}dedos|unhas/.test(after)){const err=new Error(`Integridade clínica bloqueada: o parágrafo ${u.paragraph_index} continha etapa de polpas digitais/unhas e a proposta a substituiu sem preservar essa etapa.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}}
+  for(const u of updates||[]){
+    const before=String(baseline.get(Number(u.paragraph_index))||u.old_text||"");
+    if(/polpas digitais|unhas/i.test(before)){
+      const after=foldClinicalText(u.new_text);
+      if(!/(ponta|polpa).{0,30}dedos|unhas/.test(after)){const err=new Error(`Integridade clínica bloqueada: o parágrafo ${u.paragraph_index} continha etapa de polpas digitais/unhas e a proposta a substituiu sem preservar essa etapa.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
+    }
+    if(/^\s*\d+\s*[-.)]?\s*(descri[cç][aã]o|procedimento)/i.test(before)&&!/^\s*\d+\s*[-.)]?\s*(descri[cç][aã]o|procedimento)/i.test(String(u.new_text||""))){const err=new Error(`Integridade estrutural bloqueada: o parágrafo ${u.paragraph_index} é um cabeçalho de procedimento e não pode ser substituído por uma etapa clínica.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
+  }
   return true;
 }
 function enforceScientificClaimSourceBinding(updates=[],sources=[]){
@@ -1077,7 +1090,7 @@ async function runAIRevision(prompt,requested,options={}){
             .filter(src=>usedSourceUrls.has(src.url))
             .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
           enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);
-          enforceClinicalSequenceIntegrity(ai.result.updates);
+          enforceClinicalSequenceIntegrity(ai.result.updates,options?.editableParagraphs||[]);
         }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
@@ -1112,7 +1125,7 @@ async function runAIRevision(prompt,requested,options={}){
               repaired.result.updates=repaired.result.updates.map(update=>({...update,references:(Array.isArray(update.references)?update.references:[]).map(ref=>{const raw=String(ref||"").trim();const exact=raw.toUpperCase().match(/^FONTE_(\d+)$/);const src=exact?tavilyById.get(`FONTE_${exact[1]}`):null;if(src){usedSourceUrls.add(src.url);return src.url}return raw}).filter(Boolean)}));
               repaired.result.references=(webResearch.sources||[]).filter(src=>usedSourceUrls.has(src.url)).map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
               enforceScientificClaimSourceBinding(repaired.result.updates,webResearch.sources||[]);
-              enforceClinicalSequenceIntegrity(repaired.result.updates);
+              enforceClinicalSequenceIntegrity(repaired.result.updates,options?.editableParagraphs||[]);
               repaired.sources=[...new Map([...(webResearch.sources||[]),...(Array.isArray(repaired.sources)?repaired.sources:[])].filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
               repaired.researchMode="tavily_search";
               console.log(`[SIASH AI${diagnostic?" TEST":""}] rastreabilidade reparada | provider=${p}`);
@@ -1264,7 +1277,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
       String(correction_request||"").trim() ? `correção solicitada pelo profissional: ${String(correction_request).trim()}` : "",
       "ANVISA Ministério da Saúde Fiocruz IFF Fundação Oswaldo Cruz SBP WHO OPAS diretriz manual recomendação atual"
     ].filter(Boolean).join(" | ");
-    const ai=await runAIRevision(prompt,provider,{requireWebResearch:requiresCurrentWebResearch,researchQuery});
+    const ai=await runAIRevision(prompt,provider,{requireWebResearch:requiresCurrentWebResearch,researchQuery,editableParagraphs:editable});
     if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);

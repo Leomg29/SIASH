@@ -4,6 +4,6 @@ assert(s.includes('if(repairError?.code==="SCIENTIFIC_BINDING_REJECTED")'),"repa
 assert(s.includes("reparo não concluído pelo provedor"),"provider repair failures must not be mislabeled as scientific rejection");
 assert(s.includes("todas as propostas utilizáveis foram rejeitadas"),"scientific rejection message must require usable rejected proposals");
 assert(s.includes("A revisão proposta foi preservada e nenhuma alteração foi publicada."),"correction failure must describe protected proposal state");
-assert.strictEqual(p.version,"0.14.45");
-assert(html.includes("0.14.45"),"UI must display v0.14.45");
+assert(/^0\.14\.(?:45|4[6-9]|[5-9]\d|\d{3,})$/.test(p.version),"version must retain or advance beyond v0.14.45");
+assert(html.includes(p.version),"UI must display the current package version");
 console.log("v0.14.45 repair error classification regression OK");
