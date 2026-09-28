@@ -1120,8 +1120,16 @@ async function runAIRevision(prompt,requested,options={}){
             }
           }catch(repairError){
             const repairMsg=String(repairError?.message||"falha").replace(/\s+/g," ").slice(0,500);
-            scientificRejections.push({provider:p,message:`reparo: ${repairMsg}`});
-            console.warn(`[SIASH AI${diagnostic?" TEST":""}] reparo de rastreabilidade falhou | provider=${p} | motivo=${repairMsg}`);
+            // v0.14.45 — preserve a classe real do erro ocorrido no reparo.
+            // Uma nova rejeição científica continua sendo rejeição científica; indisponibilidade,
+            // quota, timeout ou parser do provedor não podem ser mascarados como rastreabilidade.
+            if(repairError?.code==="SCIENTIFIC_BINDING_REJECTED"){
+              scientificRejections.push({provider:p,message:`reparo: ${repairMsg}`});
+              console.warn(`[SIASH AI${diagnostic?" TEST":""}] reparo de rastreabilidade rejeitado novamente | provider=${p} | motivo=${repairMsg}`);
+            }else{
+              errors.push(`${p} repair: ${repairMsg}`);
+              console.warn(`[SIASH AI${diagnostic?" TEST":""}] reparo não concluído pelo provedor | provider=${p} | motivo=${repairMsg}`);
+            }
           }
         }
       }else console.warn(`[SIASH AI${diagnostic?" TEST":""}] provedor indisponível | provider=${p} | motivo=${msg}`);
@@ -1134,13 +1142,13 @@ async function runAIRevision(prompt,requested,options={}){
   if(requireWebResearch){
     const tavilyOk=!!webResearch;
     if(tavilyOk&&scientificRejections.length){
-      const err=new Error("A pesquisa oficial foi concluída e a IA respondeu, mas a proposta foi rejeitada pela validação científica de rastreabilidade. Nenhuma alteração foi aplicada ao POP vigente.");
+      const err=new Error("A pesquisa oficial foi concluída e houve resposta de IA, mas todas as propostas utilizáveis foram rejeitadas pela validação científica de rastreabilidade. A revisão proposta foi preservada e nenhuma alteração foi publicada.");
       err.code="AI_SCIENTIFIC_VALIDATION_REJECTED";
       err.details=scientificRejections;
       throw err;
     }
     const err=new Error(tavilyOk
-      ? "A pesquisa web verificável da Tavily foi concluída, porém nenhum modelo de IA disponível conseguiu gerar a proposta dentro dos limites atuais. O POP vigente permanece inalterado."
+      ? "A pesquisa web verificável da Tavily foi concluída, porém nenhum modelo de IA disponível conseguiu concluir uma proposta válida dentro dos limites atuais. A revisão proposta foi preservada e nenhuma alteração foi publicada."
       : "Esta revisão exige pesquisa web atual, mas a pesquisa verificável não ficou disponível. Verifique Tavily, Gemini com Google Search ou OpenAI com web_search; o POP vigente permanece inalterado.");
     err.code=tavilyOk?"AI_GENERATION_UNAVAILABLE_AFTER_WEB_RESEARCH":"AI_WEB_RESEARCH_REQUIRED";
     throw err
