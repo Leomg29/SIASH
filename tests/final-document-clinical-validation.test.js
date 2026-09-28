@@ -5,6 +5,6 @@ assert(s.includes("const finalMap=new Map(baseline);"),"validator must build fin
 assert(s.includes("editableParagraphs:editable"),"revision must pass Rev.02 editable baseline into validation");
 assert(s.includes("options?.editableParagraphs||[]"),"all clinical validation paths must use baseline");
 assert(s.includes("é um cabeçalho de procedimento e não pode ser substituído"),"procedure headings must be protected");
-assert.strictEqual(p.version,"0.14.46");
-assert(html.includes("0.14.46"),"UI must display v0.14.46");
+assert(/^0\.14\.(?:46|4[7-9]|[5-9]\d|\d{3,})$/.test(p.version),"version must retain or advance beyond v0.14.46");
+assert(html.includes(p.version),"UI must display the current package version");
 console.log("v0.14.46 final-document clinical validation regression OK");
