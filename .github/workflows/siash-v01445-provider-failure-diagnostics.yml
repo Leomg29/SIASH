@@ -1,0 +1,17 @@
+name: SIASH v0.14.45 provider failure diagnostics
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [fix/v01445-repair-classification-diagnostics]
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check server.js
+      - run: node --check app.js
+      - run: node tests/provider-failure-diagnostics.test.js
