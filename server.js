@@ -1090,6 +1090,40 @@ async function runAIRevision(prompt,requested,options={}){
       if(e?.code==="SCIENTIFIC_BINDING_REJECTED"){
         scientificRejections.push({provider:p,message:msg});
         console.warn(`[SIASH AI${diagnostic?" TEST":""}] proposta rejeitada pela validação científica | provider=${p} | motivo=${msg}`);
+        // v0.14.44 — uma rejeição de rastreabilidade é conteúdo reparável, não indisponibilidade.
+        // Reenvia uma única vez ao mesmo provedor com o motivo exato, mantendo as mesmas fontes
+        // verificadas. Isso evita cair em outro modelo sem antes permitir autocorreção do vínculo.
+        if(webResearch){
+          try{
+            const repairPrompt=[
+              revisionPrompt,
+              "",
+              "REPARO OBRIGATÓRIO DE RASTREABILIDADE SIASH:",
+              msg,
+              "Gere novamente a proposta corrigindo SOMENTE os vínculos de fonte que causaram a rejeição. Cada update deve citar exclusivamente FONTE_N oficial que sustente seu new_text. Se não existir fonte oficial suficiente para uma alteração, remova essa alteração; não invente referência nem atribuição institucional."
+            ].join("\n");
+            let repaired=null;
+            if(p==="gemini"&&GEMINI_API_KEY)repaired=await reviseWithGemini(repairPrompt);
+            else if(p==="cloudflare"&&cloudflareConfigured())repaired=await reviseWithCloudflare(repairPrompt);
+            else if(p==="openai"&&openaiClient)repaired=await reviseWithOpenAI(repairPrompt);
+            if(repaired?.result&&Array.isArray(repaired.result.updates)){
+              const tavilyById=new Map((webResearch.sources||[]).map(src=>[String(src.sourceId||"").toUpperCase(),src]));
+              const usedSourceUrls=new Set();
+              repaired.result.updates=repaired.result.updates.map(update=>({...update,references:(Array.isArray(update.references)?update.references:[]).map(ref=>{const raw=String(ref||"").trim();const exact=raw.toUpperCase().match(/^FONTE_(\d+)$/);const src=exact?tavilyById.get(`FONTE_${exact[1]}`):null;if(src){usedSourceUrls.add(src.url);return src.url}return raw}).filter(Boolean)}));
+              repaired.result.references=(webResearch.sources||[]).filter(src=>usedSourceUrls.has(src.url)).map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
+              enforceScientificClaimSourceBinding(repaired.result.updates,webResearch.sources||[]);
+              enforceClinicalSequenceIntegrity(repaired.result.updates);
+              repaired.sources=[...new Map([...(webResearch.sources||[]),...(Array.isArray(repaired.sources)?repaired.sources:[])].filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
+              repaired.researchMode="tavily_search";
+              console.log(`[SIASH AI${diagnostic?" TEST":""}] rastreabilidade reparada | provider=${p}`);
+              return repaired;
+            }
+          }catch(repairError){
+            const repairMsg=String(repairError?.message||"falha").replace(/\s+/g," ").slice(0,500);
+            scientificRejections.push({provider:p,message:`reparo: ${repairMsg}`});
+            console.warn(`[SIASH AI${diagnostic?" TEST":""}] reparo de rastreabilidade falhou | provider=${p} | motivo=${repairMsg}`);
+          }
+        }
       }else console.warn(`[SIASH AI${diagnostic?" TEST":""}] provedor indisponível | provider=${p} | motivo=${msg}`);
       errors.push(`${p}: ${msg}`);
       const next=order[order.indexOf(p)+1];
