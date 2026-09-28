@@ -1018,6 +1018,7 @@ async function runAIRevision(prompt,requested,options={}){
   const simulatedUnavailable=new Set(Array.isArray(options?.simulateUnavailable)?options.simulateUnavailable.map(x=>String(x).toLowerCase()):[]);
   const diagnostic=options?.diagnostic===true;
   const scientificRejections=[];
+  const generationFailures=[];
   let webResearch=null;
   let revisionPrompt=prompt;
   if(requireWebResearch&&TAVILY_API_KEY){
@@ -1124,7 +1125,10 @@ async function runAIRevision(prompt,requested,options={}){
             console.warn(`[SIASH AI${diagnostic?" TEST":""}] reparo de rastreabilidade falhou | provider=${p} | motivo=${repairMsg}`);
           }
         }
-      }else console.warn(`[SIASH AI${diagnostic?" TEST":""}] provedor indisponível | provider=${p} | motivo=${msg}`);
+      }else{
+        generationFailures.push({provider:p,code:String(e?.code||""),message:msg});
+        console.warn(`[SIASH AI${diagnostic?" TEST":""}] geração falhou | provider=${p} | code=${String(e?.code||"SEM_CODIGO")} | motivo=${msg}`);
+      }
       errors.push(`${p}: ${msg}`);
       const next=order[order.indexOf(p)+1];
       if(next)console.log(`[SIASH AI${diagnostic?" TEST":""}] iniciando fallback | de=${p} | para=${next}`);
@@ -1140,9 +1144,10 @@ async function runAIRevision(prompt,requested,options={}){
       throw err;
     }
     const err=new Error(tavilyOk
-      ? "A pesquisa web verificável da Tavily foi concluída, porém nenhum modelo de IA disponível conseguiu gerar a proposta dentro dos limites atuais. O POP vigente permanece inalterado."
-      : "Esta revisão exige pesquisa web atual, mas a pesquisa verificável não ficou disponível. Verifique Tavily, Gemini com Google Search ou OpenAI com web_search; o POP vigente permanece inalterado.");
+      ? "A pesquisa web verificável da Tavily foi concluída, mas os modelos de IA configurados não concluíram uma proposta válida nesta tentativa. A revisão proposta anterior foi preservada. Consulte o diagnóstico dos provedores antes de tentar novamente."
+      : "Esta revisão exige pesquisa web atual, mas a pesquisa verificável não ficou disponível. Verifique Tavily, Gemini com Google Search ou OpenAI com web_search; a revisão proposta anterior permanece preservada.");
     err.code=tavilyOk?"AI_GENERATION_UNAVAILABLE_AFTER_WEB_RESEARCH":"AI_WEB_RESEARCH_REQUIRED";
+    err.details={generationFailures,errors};
     throw err
   }
   const err=new Error("Serviço de IA temporariamente indisponível. Nenhuma alteração foi realizada no POP. Tente novamente mais tarde.");
