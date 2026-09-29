@@ -1031,6 +1031,7 @@ async function runAIRevision(prompt,requested,options={}){
   const simulatedUnavailable=new Set(Array.isArray(options?.simulateUnavailable)?options.simulateUnavailable.map(x=>String(x).toLowerCase()):[]);
   const diagnostic=options?.diagnostic===true;
   const scientificRejections=[];
+  const clinicalRejections=[];
   let webResearch=null;
   let revisionPrompt=prompt;
   if(requireWebResearch&&TAVILY_API_KEY){
@@ -1100,20 +1101,23 @@ async function runAIRevision(prompt,requested,options={}){
       return ai;
     }catch(e){
       const msg=String(e?.message||"falha").replace(/\s+/g," ").slice(0,500);
-      if(e?.code==="SCIENTIFIC_BINDING_REJECTED"){
-        scientificRejections.push({provider:p,message:msg});
-        console.warn(`[SIASH AI${diagnostic?" TEST":""}] proposta rejeitada pela validação científica | provider=${p} | motivo=${msg}`);
-        // v0.14.44 — uma rejeição de rastreabilidade é conteúdo reparável, não indisponibilidade.
-        // Reenvia uma única vez ao mesmo provedor com o motivo exato, mantendo as mesmas fontes
-        // verificadas. Isso evita cair em outro modelo sem antes permitir autocorreção do vínculo.
+      if(e?.code==="SCIENTIFIC_BINDING_REJECTED"||e?.code==="CLINICAL_SEQUENCE_INTEGRITY_REJECTED"){
+        const validationKind=e.code==="SCIENTIFIC_BINDING_REJECTED"?"rastreabilidade científica":"integridade clínica";
+        const rejectionBucket=e.code==="SCIENTIFIC_BINDING_REJECTED"?scientificRejections:clinicalRejections;
+        rejectionBucket.push({provider:p,message:msg});
+        console.warn(`[SIASH AI${diagnostic?" TEST":""}] proposta rejeitada pela validação | tipo=${validationKind} | provider=${p} | motivo=${msg}`);
+        // v0.14.47 — validações são parte do pipeline, não "indisponibilidade do provedor".
+        // O mesmo modelo recebe o erro determinístico e pode reparar a proposta usando exatamente
+        // as mesmas fontes e o mesmo baseline. Só depois de falhar no reparo ocorre fallback.
         if(webResearch){
           try{
             const repairPrompt=[
               revisionPrompt,
               "",
-              "REPARO OBRIGATÓRIO DE RASTREABILIDADE SIASH:",
-              msg,
-              "Gere novamente a proposta corrigindo SOMENTE os vínculos de fonte que causaram a rejeição. Cada update deve citar exclusivamente FONTE_N oficial que sustente seu new_text. Se não existir fonte oficial suficiente para uma alteração, remova essa alteração; não invente referência nem atribuição institucional."
+              "REPARO OBRIGATÓRIO DE VALIDAÇÃO SIASH:",
+              `TIPO: ${validationKind}`,
+              `ERRO DETERMINÍSTICO: ${msg}`,
+              "Regenere a proposta corrigindo exatamente o erro acima. Preserve as partes já corretas do documento-base. Não invente fonte, não substitua cabeçalhos por etapas e não elimine etapas clínicas obrigatórias. Cada update científico deve citar FONTE_N oficial compatível. Se uma alteração não puder ser sustentada, remova apenas essa alteração."
             ].join("\n");
             let repaired=null;
             if(p==="gemini"&&GEMINI_API_KEY)repaired=await reviseWithGemini(repairPrompt);
@@ -1128,21 +1132,19 @@ async function runAIRevision(prompt,requested,options={}){
               enforceClinicalSequenceIntegrity(repaired.result.updates,options?.editableParagraphs||[]);
               repaired.sources=[...new Map([...(webResearch.sources||[]),...(Array.isArray(repaired.sources)?repaired.sources:[])].filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
               repaired.researchMode="tavily_search";
-              console.log(`[SIASH AI${diagnostic?" TEST":""}] rastreabilidade reparada | provider=${p}`);
+              console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta reparada e revalidada | tipo=${validationKind} | provider=${p}`);
               return repaired;
             }
           }catch(repairError){
             const repairMsg=String(repairError?.message||"falha").replace(/\s+/g," ").slice(0,500);
-            // v0.14.45 — preserve a classe real do erro ocorrido no reparo.
-            // Uma nova rejeição científica continua sendo rejeição científica; indisponibilidade,
-            // quota, timeout ou parser do provedor não podem ser mascarados como rastreabilidade.
             if(repairError?.code==="SCIENTIFIC_BINDING_REJECTED"){
               scientificRejections.push({provider:p,message:`reparo: ${repairMsg}`});
-              console.warn(`[SIASH AI${diagnostic?" TEST":""}] reparo de rastreabilidade rejeitado novamente | provider=${p} | motivo=${repairMsg}`);
+            }else if(repairError?.code==="CLINICAL_SEQUENCE_INTEGRITY_REJECTED"){
+              clinicalRejections.push({provider:p,message:`reparo: ${repairMsg}`});
             }else{
               errors.push(`${p} repair: ${repairMsg}`);
-              console.warn(`[SIASH AI${diagnostic?" TEST":""}] reparo não concluído pelo provedor | provider=${p} | motivo=${repairMsg}`);
             }
+            console.warn(`[SIASH AI${diagnostic?" TEST":""}] reparo não aprovado | provider=${p} | code=${repairError?.code||"PROVIDER_ERROR"} | motivo=${repairMsg}`);
           }
         }
       }else console.warn(`[SIASH AI${diagnostic?" TEST":""}] provedor indisponível | provider=${p} | motivo=${msg}`);
@@ -1154,6 +1156,12 @@ async function runAIRevision(prompt,requested,options={}){
   console.error(`[SIASH AI] todos os provedores falharam | ${errors.join(" | ")}`);
   if(requireWebResearch){
     const tavilyOk=!!webResearch;
+    if(tavilyOk&&clinicalRejections.length){
+      const err=new Error("A pesquisa oficial foi concluída, mas as propostas geradas não passaram pela validação de integridade clínica após tentativa automática de reparo. A revisão proposta foi preservada e nenhuma alteração foi publicada.");
+      err.code="AI_CLINICAL_VALIDATION_REJECTED";
+      err.details=clinicalRejections;
+      throw err;
+    }
     if(tavilyOk&&scientificRejections.length){
       const err=new Error("A pesquisa oficial foi concluída e houve resposta de IA, mas todas as propostas utilizáveis foram rejeitadas pela validação científica de rastreabilidade. A revisão proposta foi preservada e nenhuma alteração foi publicada.");
       err.code="AI_SCIENTIFIC_VALIDATION_REJECTED";
