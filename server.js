@@ -986,9 +986,9 @@ function enforceClinicalSequenceIntegrity(updates=[],baselineParagraphs=[]){
     // v0.14.48 — se houver seção textual "Procedimentos essenciais", a lista deve estar completa ali.
     // Texto em imagem, referência ou outra seção não pode mascarar uma lista clínica editável incompleta.
     let momentScope=combined;
-    const sectionStart=finalTexts.findIndex(t=>/^(?:6\\s*[-.)]?\\s*)?procedimentos essenciais/.test(t));
+    const sectionStart=finalTexts.findIndex(t=>/^(?:6\s*[-.)]?\s*)?procedimentos essenciais/.test(t));
     if(sectionStart>=0){
-      let sectionEnd=finalTexts.findIndex((t,i)=>i>sectionStart&&/^7\\s*[-.)]?\\s*/.test(t));
+      let sectionEnd=finalTexts.findIndex((t,i)=>i>sectionStart&&/^7\s*[-.)]?\s*/.test(t));
       if(sectionEnd<0)sectionEnd=finalTexts.length;
       momentScope=finalTexts.slice(sectionStart,sectionEnd).join(" | ");
     }
