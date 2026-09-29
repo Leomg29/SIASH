@@ -5,6 +5,6 @@ assert(s.includes("REPARO OBRIGATÓRIO DE VALIDAÇÃO SIASH"),"repair prompt mis
 assert(s.includes("proposta reparada e revalidada"),"repair must be revalidated before return");
 assert(s.includes('err.code="AI_CLINICAL_VALIDATION_REJECTED"'),"clinical rejection needs its own final diagnosis");
 assert(s.includes("clinicalRejections.push"),"clinical failures must not be mislabeled as provider outages");
-assert.strictEqual(p.version,"0.14.47");
-assert(html.includes("0.14.47"));
+assert(/^0\.14\.(?:47|4[8-9]|[5-9]\d|\d{3,})$/.test(p.version),"version must retain or advance beyond v0.14.47");
+assert(html.includes(p.version),"UI must display current package version");
 console.log("v0.14.47 unified validation repair pipeline regression OK");
