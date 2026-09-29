@@ -1,0 +1,13 @@
+const fs=require("fs"),assert=require("assert");
+const s=fs.readFileSync("server.js","utf8"),a=fs.readFileSync("app.js","utf8"),p=require("../package.json"),html=fs.readFileSync("index.html","utf8");
+assert(s.includes('const correctionRequested=!!String(correction_request||"").trim();'),"correction intent must be explicit before research policy");
+assert(s.includes("const requiresCurrentWebResearch=correctionRequested||periodicReviewRequired"),"professional corrections must use current verifiable research");
+assert(s.includes("integridade clínica é obrigatória mesmo sem pesquisa web")||s.includes("valida somente texto editável OOXML"),"clinical validation must not depend on web research");
+assert(s.includes("Conteúdo presente apenas em imagem não satisfaz esta validação"),"images must not satisfy editable-text clinical validation");
+assert(s.includes("os 5 momentos estão fora da ordem oficial no texto editável"),"five moments order must be validated");
+assert(s.includes("instruções redundantes para repetir a sequência na mão esquerda"),"redundant hand-rub steps must be rejected");
+assert(a.includes("Correção concluída na mesma revisão"),"correction flow must give explicit completion feedback");
+assert(a.includes("return {ok:false,error:e}"),"AI correction failure must be observable by caller");
+assert.strictEqual(p.version,"0.14.48");
+assert(html.includes("0.14.48"));
+console.log("v0.14.48 editable clinical validation and feedback regression OK");
