@@ -983,13 +983,26 @@ function enforceClinicalSequenceIntegrity(updates=[],baselineParagraphs=[]){
       ["4 - após tocar o paciente",/apos (?:tocar|o contato com) (?:o )?paciente/],
       ["5 - após tocar superfícies próximas ao paciente",/apos (?:tocar|o contato com) (?:objetos|superficies|areas|o ambiente|ambiente).{0,45}(?:proxim|entorno|paciente)/]
     ];
-    const missing=required.filter(([,rx])=>!rx.test(combined)).map(([label])=>label);
-    if(missing.length){const err=new Error(`Integridade clínica bloqueada: o documento final menciona os 5 momentos de higiene das mãos, mas não apresenta o conjunto completo. Ausente(s): ${missing.join("; ")}.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
+    // v0.14.48 — se houver seção textual "Procedimentos essenciais", a lista deve estar completa ali.
+    // Texto em imagem, referência ou outra seção não pode mascarar uma lista clínica editável incompleta.
+    let momentScope=combined;
+    const sectionStart=finalTexts.findIndex(t=>/^(?:6\s*[-.)]?\s*)?procedimentos essenciais/.test(t));
+    if(sectionStart>=0){
+      let sectionEnd=finalTexts.findIndex((t,i)=>i>sectionStart&&/^7\s*[-.)]?\s*/.test(t));
+      if(sectionEnd<0)sectionEnd=finalTexts.length;
+      momentScope=finalTexts.slice(sectionStart,sectionEnd).join(" | ");
+    }
+    const missing=required.filter(([,rx])=>!rx.test(momentScope)).map(([label])=>label);
+    if(missing.length){const err=new Error(`Integridade clínica bloqueada: a lista textual editável dos 5 momentos está incompleta. Ausente(s): ${missing.join("; ")}. Conteúdo presente apenas em imagem não satisfaz esta validação.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
+    const positions=required.map(([,rx])=>{const m=momentScope.match(rx);return m?momentScope.indexOf(m[0]):-1});
+    if(positions.some((p,i)=>i>0&&p<=positions[i-1])){const err=new Error("Integridade clínica bloqueada: os 5 momentos estão fora da ordem oficial no texto editável (1 antes de tocar o paciente; 2 antes de procedimento limpo/asséptico; 3 após risco de fluidos; 4 após tocar o paciente; 5 após superfícies próximas).");err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
     const numbered=reasons.map((t,i)=>({i,n:Number(t.match(/(?:primeiro|1º|1o|1°)/)?1:t.match(/(?:segundo|2º|2o|2°)/)?2:t.match(/(?:terceiro|3º|3o|3°)/)?3:t.match(/(?:quarto|4º|4o|4°)/)?4:t.match(/(?:quinto|5º|5o|5°)/)?5:0),text:proposed[i]||""})).filter(x=>x.n);
     const expected=[null,/antes (?:de )?(?:tocar|contato com) (?:o )?paciente/,/antes (?:de |da |do )?(?:realizar )?(?:procedimento )?(?:limpo|asseptico)/,/apos (?:o )?(?:risco de )?exposicao a fluidos corporais/,/apos (?:tocar|o contato com) (?:o )?paciente/,/apos (?:tocar|o contato com) (?:objetos|superficies|areas|o ambiente|ambiente).{0,45}(?:proxim|entorno|paciente)/];
     const mismatch=numbered.find(x=>!expected[x.n].test(x.text));
     if(mismatch){const err=new Error(`Integridade clínica bloqueada: a justificativa identifica incorretamente o momento ${mismatch.n} em relação ao texto proposto.`);err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
   }
+  const repeatLeft=finalTexts.filter(t=>/repetir.{0,80}(?:mao esquerda|sequencia para a mao esquerda)/.test(t));
+  if(repeatLeft.length>1){const err=new Error("Integridade clínica bloqueada: o texto final contém instruções redundantes para repetir a sequência na mão esquerda.");err.code="CLINICAL_SEQUENCE_INTEGRITY_REJECTED";throw err;}
   for(const u of updates||[]){
     const before=String(baseline.get(Number(u.paragraph_index))||u.old_text||"");
     if(/polpas digitais|unhas/i.test(before)){
@@ -1091,12 +1104,13 @@ async function runAIRevision(prompt,requested,options={}){
             .filter(src=>usedSourceUrls.has(src.url))
             .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
           enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);
-          enforceClinicalSequenceIntegrity(ai.result.updates,options?.editableParagraphs||[]);
         }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
         ai.researchMode="tavily_search";
       }
+      // v0.14.48 — valida somente texto editável OOXML; imagem não satisfaz regra clínica textual.
+      if(ai?.result&&Array.isArray(ai.result.updates))enforceClinicalSequenceIntegrity(ai.result.updates,options?.editableParagraphs||[]);
       console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
       return ai;
     }catch(e){
@@ -1257,7 +1271,8 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const {doc_code,doc_title,current_revision,next_revision,file_name,file_base64,provider,correction_request,periodic_review_required,periodic_review_reason}=req.body||{};
     const periodicReviewRequired=periodic_review_required===true;
     const scientificAudit=auditPop(doc_code);
-    const requiresCurrentWebResearch=periodicReviewRequired||scientificAudit?.status==="review"||scientificAudit?.status==="adjust";
+    const correctionRequested=!!String(correction_request||"").trim();
+    const requiresCurrentWebResearch=correctionRequested||periodicReviewRequired||scientificAudit?.status==="review"||scientificAudit?.status==="adjust";
     if(!doc_code||!file_base64)return res.status(400).json({error:"POP/arquivo não informado."});
     const original=Buffer.from(file_base64,"base64");if(original.length>18*1024*1024)return res.status(413).json({error:"Word acima do limite de 18 MB para revisão automática."});
     const historyCleanup=cleanDuplicateSiashHistoryRows(original),baseDocument=historyCleanup.buffer;
@@ -1289,7 +1304,6 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
-    const correctionRequested=!!String(correction_request||"").trim();
     const correctionNoop=correctionRequested&&!effective.length;
     if(correctionNoop){
       const err=new Error("A IA analisou o pedido de correção, mas não produziu alteração real em relação ao Word da revisão proposta. A proposta anterior foi preservada e nenhuma nova revisão foi criada.");

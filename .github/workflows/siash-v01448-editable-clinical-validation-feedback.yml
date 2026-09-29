@@ -1,0 +1,17 @@
+name: SIASH v0.14.48 editable clinical validation feedback
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [fix/v01448-editable-clinical-validation-feedback]
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check server.js
+      - run: node --check app.js
+      - run: node tests/editable-clinical-validation-feedback.test.js
