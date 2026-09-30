@@ -9,5 +9,5 @@ assert(s.includes("instruções redundantes para repetir a sequência na mão es
 assert(a.includes("Correção concluída na mesma revisão"),"correction flow must give explicit completion feedback");
 assert(a.includes("return {ok:false,error:e}"),"AI correction failure must be observable by caller");
 assert(/^0\.14\.(?:48|49|[5-9][0-9]|[1-9][0-9]{2,})$/.test(p.version),"version must retain or advance beyond v0.14.48");
-assert(html.includes("0.14.48"));
+assert(html.includes(p.version),"UI must display current package version");
 console.log("v0.14.48 editable clinical validation and feedback regression OK");
