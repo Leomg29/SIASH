@@ -1148,7 +1148,8 @@ async function runAIRevision(prompt,requested,options={}){
             else if(p==="cloudflare"&&cloudflareConfigured())repaired=await reviseWithCloudflare(repairPrompt);
             else if(p==="openai"&&openaiClient)repaired=await reviseWithOpenAI(repairPrompt);
             if(repaired?.result&&Array.isArray(repaired.result.updates)){
-              if(e?.code==="CLINICAL_SEQUENCE_INTEGRITY_REJECTED")repaired.result.updates=deterministicFiveMomentsRepair(repaired.result.updates,options?.editableParagraphs||[],webResearch.sources||[]);\n              repaired.result.updates=normalizeOfficialUpdateReferences(repaired.result.updates,webResearch.sources||[]);
+              if(e?.code==="CLINICAL_SEQUENCE_INTEGRITY_REJECTED")repaired.result.updates=deterministicFiveMomentsRepair(repaired.result.updates,options?.editableParagraphs||[],webResearch.sources||[]);
+              repaired.result.updates=normalizeOfficialUpdateReferences(repaired.result.updates,webResearch.sources||[]);
               const tavilyById=new Map((webResearch.sources||[]).map(src=>[String(src.sourceId||"").toUpperCase(),src]));
               const usedSourceUrls=new Set();
               repaired.result.updates=repaired.result.updates.map(update=>({...update,references:(Array.isArray(update.references)?update.references:[]).map(ref=>{const raw=String(ref||"").trim();const exact=raw.toUpperCase().match(/^FONTE_(\d+)$/);const src=exact?tavilyById.get(`FONTE_${exact[1]}`):null;if(src){usedSourceUrls.add(src.url);return src.url}return raw}).filter(Boolean)}));
