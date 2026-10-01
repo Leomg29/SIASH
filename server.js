@@ -1119,7 +1119,7 @@ async function runAIRevision(prompt,requested,options={}){
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
         ai.researchMode="tavily_search";
       }
-      // v0.14.53 — reparar padrões clínicos conhecidos antes de bloquear; validar sempre o estado final.
+      // v0.14.53 — reparar padrões clínicos conhecidos antes de bloquear; integridade clínica é obrigatória mesmo sem pesquisa web; validar sempre o estado final.
       if(ai?.result&&Array.isArray(ai.result.updates)){
         ai.result.updates=deterministicFiveMomentsRepair(ai.result.updates,options?.editableParagraphs||[],webResearch?.sources||[]);
         if(webResearch){ai.result.updates=normalizeOfficialUpdateReferences(ai.result.updates,webResearch.sources||[]);enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);}
