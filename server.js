@@ -1119,8 +1119,12 @@ async function runAIRevision(prompt,requested,options={}){
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
         ai.researchMode="tavily_search";
       }
-      // v0.14.48 — valida somente texto editável OOXML; imagem não satisfaz regra clínica textual.
-      if(ai?.result&&Array.isArray(ai.result.updates))enforceClinicalSequenceIntegrity(ai.result.updates,options?.editableParagraphs||[]);
+      // v0.14.53 — reparar padrões clínicos conhecidos antes de bloquear; validar sempre o estado final.
+      if(ai?.result&&Array.isArray(ai.result.updates)){
+        ai.result.updates=deterministicFiveMomentsRepair(ai.result.updates,options?.editableParagraphs||[],webResearch?.sources||[]);
+        if(webResearch){ai.result.updates=normalizeOfficialUpdateReferences(ai.result.updates,webResearch.sources||[]);enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);}
+        enforceClinicalSequenceIntegrity(ai.result.updates,options?.editableParagraphs||[]);
+      }
       console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
       return ai;
     }catch(e){
