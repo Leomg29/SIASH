@@ -1051,6 +1051,21 @@ function enforceScientificClaimSourceBinding(updates=[],sources=[]){
   if(failures.length){const err=new Error(`Rastreabilidade científica bloqueada: ${failures.map(x=>`parágrafo ${x.paragraph} (${x.reason})`).join("; ")}. Use a fonte primária da própria instituição citada.`);err.code="SCIENTIFIC_BINDING_REJECTED";throw err;}
   return true;
 }
+function validateScientificAdvisory(updates=[],sources=[]){
+  try{enforceScientificClaimSourceBinding(updates,sources);return {ok:true,warnings:[]};}
+  catch(e){
+    if(e?.code!=="SCIENTIFIC_BINDING_REJECTED")throw e;
+    const warning=String(e?.message||"Conferência de rastreabilidade científica recomendada.");
+    console.warn(`[SIASH AI] alerta científico para conferência profissional | ${warning.replace(/\\s+/g," ").slice(0,500)}`);
+    return {ok:false,warnings:[warning]};
+  }
+}
+function appendProfessionalReviewWarnings(result,check){
+  if(!result||check?.ok!==false)return;
+  const merged=[...(result.validationWarnings||[]),...(check.warnings||[])].filter(Boolean);
+  result.validationWarnings=[...new Set(merged)];
+  result.requiresProfessionalReview=true;
+}
 async function runAIRevision(prompt,requested,options={}){
   const errors=[];
   const order=providerOrder(requested);
@@ -1117,7 +1132,7 @@ async function runAIRevision(prompt,requested,options={}){
           ai.result.references=(webResearch.sources||[])
             .filter(src=>usedSourceUrls.has(src.url))
             .map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
-          enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);
+          appendProfessionalReviewWarnings(ai.result,validateScientificAdvisory(ai.result.updates,webResearch.sources||[]));
         }
         const merged=[...(webResearch.sources||[]),...(Array.isArray(ai.sources)?ai.sources:[])];
         ai.sources=[...new Map(merged.filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
@@ -1126,9 +1141,8 @@ async function runAIRevision(prompt,requested,options={}){
       // v0.14.53 — reparar padrões clínicos conhecidos antes de bloquear; integridade clínica é obrigatória mesmo sem pesquisa web; validar sempre o estado final.
       if(ai?.result&&Array.isArray(ai.result.updates)){
         ai.result.updates=deterministicFiveMomentsRepair(ai.result.updates,options?.editableParagraphs||[],webResearch?.sources||[]);
-        if(webResearch){ai.result.updates=normalizeOfficialUpdateReferences(ai.result.updates,webResearch.sources||[]);enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);}
-        const clinicalCheck=validateClinicalAdvisory(ai.result.updates,options?.editableParagraphs||[]);
-        if(!clinicalCheck.ok){ai.result.validationWarnings=[...(ai.result.validationWarnings||[]),...clinicalCheck.warnings];ai.result.requiresProfessionalReview=true;}
+        if(webResearch){ai.result.updates=normalizeOfficialUpdateReferences(ai.result.updates,webResearch.sources||[]);appendProfessionalReviewWarnings(ai.result,validateScientificAdvisory(ai.result.updates,webResearch.sources||[]));}
+        appendProfessionalReviewWarnings(ai.result,validateClinicalAdvisory(ai.result.updates,options?.editableParagraphs||[]));
       }
       console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
       return ai;
@@ -1163,8 +1177,8 @@ async function runAIRevision(prompt,requested,options={}){
               const usedSourceUrls=new Set();
               repaired.result.updates=repaired.result.updates.map(update=>({...update,references:(Array.isArray(update.references)?update.references:[]).map(ref=>{const raw=String(ref||"").trim();const exact=raw.toUpperCase().match(/^FONTE_(\d+)$/);const src=exact?tavilyById.get(`FONTE_${exact[1]}`):null;if(src){usedSourceUrls.add(src.url);return src.url}return raw}).filter(Boolean)}));
               repaired.result.references=(webResearch.sources||[]).filter(src=>usedSourceUrls.has(src.url)).map(src=>({title:src.title,url:src.url,sourceTier:src.sourceTier,sourceHost:src.sourceHost,sourceInstitution:src.sourceInstitution}));
-              enforceScientificClaimSourceBinding(repaired.result.updates,webResearch.sources||[]);
-              enforceClinicalSequenceIntegrity(repaired.result.updates,options?.editableParagraphs||[]);
+              appendProfessionalReviewWarnings(repaired.result,validateScientificAdvisory(repaired.result.updates,webResearch.sources||[]));
+              appendProfessionalReviewWarnings(repaired.result,validateClinicalAdvisory(repaired.result.updates,options?.editableParagraphs||[]));
               repaired.sources=[...new Map([...(webResearch.sources||[]),...(Array.isArray(repaired.sources)?repaired.sources:[])].filter(x=>x&&x.url).map(x=>[String(x.url).trim(),x])).values()];
               repaired.researchMode="tavily_search";
               console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta reparada e revalidada | tipo=${validationKind} | provider=${p}`);
