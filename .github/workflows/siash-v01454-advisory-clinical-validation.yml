@@ -1,0 +1,16 @@
+name: SIASH v0.14.54 advisory clinical validation
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [fix/v01454-advisory-clinical-validation]
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check server.js
+      - run: node tests/advisory-clinical-validation.test.js

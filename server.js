@@ -1013,6 +1013,10 @@ function enforceClinicalSequenceIntegrity(updates=[],baselineParagraphs=[]){
   }
   return true;
 }
+function validateClinicalAdvisory(updates=[],baselineParagraphs=[]){
+  try{enforceClinicalSequenceIntegrity(updates,baselineParagraphs);return {ok:true,warnings:[]};}
+  catch(e){if(e?.code!=="CLINICAL_SEQUENCE_INTEGRITY_REJECTED")throw e;const warning=String(e?.message||"Revisão clínica recomendada.");console.warn(`[SIASH AI] alerta clínico para conferência profissional | ${warning.replace(/\\s+/g," ").slice(0,500)}`);return {ok:false,warnings:[warning]};}
+}
 function deterministicFiveMomentsRepair(updates=[],baselineParagraphs=[],sources=[]){
   const baseline=new Map((baselineParagraphs||[]).map(p=>[Number(p.index),String(p.text||"")])),finalMap=new Map(baseline);for(const u of updates||[])if(Number.isInteger(Number(u.paragraph_index)))finalMap.set(Number(u.paragraph_index),String(u.new_text||""));
   const ordered=[...finalMap.entries()].sort((a,b)=>a[0]-b[0]);let start=ordered.findIndex(([,t])=>/^(?:6\s*[-.)]?\s*)?procedimentos essenciais/i.test(String(t).trim()));if(start<0)start=ordered.findIndex(([,t])=>/seguintes casos/i.test(String(t)));if(start<0)return updates;let end=ordered.findIndex(([,t],i)=>i>start&&/^7\s*[-.)]?\s*/.test(String(t).trim()));if(end<0)end=ordered.length;const scope=ordered.slice(start,end);let cases=scope.findIndex(([,t])=>/seguintes casos/i.test(String(t)));if(cases<0)cases=-1;
@@ -1123,7 +1127,8 @@ async function runAIRevision(prompt,requested,options={}){
       if(ai?.result&&Array.isArray(ai.result.updates)){
         ai.result.updates=deterministicFiveMomentsRepair(ai.result.updates,options?.editableParagraphs||[],webResearch?.sources||[]);
         if(webResearch){ai.result.updates=normalizeOfficialUpdateReferences(ai.result.updates,webResearch.sources||[]);enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);}
-        enforceClinicalSequenceIntegrity(ai.result.updates,options?.editableParagraphs||[]);
+        const clinicalCheck=validateClinicalAdvisory(ai.result.updates,options?.editableParagraphs||[]);
+        if(!clinicalCheck.ok){ai.result.validationWarnings=[...(ai.result.validationWarnings||[]),...clinicalCheck.warnings];ai.result.requiresProfessionalReview=true;}
       }
       console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
       return ai;

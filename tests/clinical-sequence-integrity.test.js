@@ -1,7 +1,7 @@
 const fs=require("fs"),assert=require("assert");
 const s=fs.readFileSync("server.js","utf8"),p=require("../package.json"),html=fs.readFileSync("index.html","utf8");
 assert(s.includes("function enforceClinicalSequenceIntegrity(updates=[],baselineParagraphs=[])"),"clinical sequence validator missing");
-assert(s.includes("enforceClinicalSequenceIntegrity(ai.result.updates,options?.editableParagraphs||[]);"),"validator must run before proposal is accepted");
+assert(s.includes("const clinicalCheck=validateClinicalAdvisory(ai.result.updates,options?.editableParagraphs||[]);"),"clinical validator must run as professional-review advisory before proposal is accepted");
 assert(s.includes("REGRA DE INTEGRIDADE DE SEQUÊNCIA CLÍNICA"),"AI prompt must require whole-procedure validation");
 assert(s.includes("polpas digitais/unhas"),"validator must protect fingertip/nail step");
 assert(s.includes("5 - após tocar superfícies próximas ao paciente"),"validator must require fifth WHO moment");
