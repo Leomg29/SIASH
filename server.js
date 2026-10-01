@@ -1019,6 +1019,10 @@ function deterministicFiveMomentsRepair(updates=[],baselineParagraphs=[],sources
   const canonical=["a) Antes de tocar o paciente;","b) Antes de realizar procedimento limpo/asséptico;","c) Após risco de exposição a fluidos corporais;","d) Após tocar o paciente;","e) Após tocar superfícies próximas ao paciente."],momentRx=[/antes (?:de )?(?:tocar|contato com) (?:o )?paciente/i,/antes (?:de |da |do )?(?:realizar )?(?:procedimento )?(?:limpo|ass[eé]ptico)/i,/ap[oó]s (?:o )?(?:risco de )?exposi[cç][aã]o a fluidos corporais/i,/ap[oó]s (?:tocar|o contato com) (?:o )?paciente/i,/ap[oó]s (?:tocar|o contato com) (?:objetos|superf[ií]cies|[aá]reas|o ambiente|ambiente).{0,45}(?:pr[oó]xim|entorno|paciente)/i];const candidate=scope.slice(cases+1).filter(([,t])=>momentRx.some(rx=>rx.test(String(t)))).slice(0,5);if(candidate.length<4)return updates;
   const refs=(sources||[]).filter(x=>primaryScientificInstitution(x.url)).slice(0,2).map(x=>x.url).filter(Boolean),byIndex=new Map((updates||[]).map(u=>[Number(u.paragraph_index),u]));for(let i=0;i<Math.min(5,candidate.length);i++){const idx=candidate[i][0],old=String(baseline.get(idx)||candidate[i][1]||"");byIndex.set(idx,{...(byIndex.get(idx)||{}),paragraph_index:idx,old_text:old,new_text:canonical[i],reason:"Correção determinística da lista textual dos 5 Momentos para Higiene das Mãos na ordem oficial, preservando a revisão proposta.",references:refs});}if(candidate.length===4){const lastIdx=candidate[3][0],last=byIndex.get(lastIdx);last.new_text=canonical[3]+" "+canonical[4];byIndex.set(lastIdx,last);}return [...byIndex.values()];
 }
+function normalizeOfficialUpdateReferences(updates=[],sources=[]){
+  const byId=new Map((sources||[]).map(src=>[String(src.sourceId||"").toUpperCase(),src])),byUrl=new Map((sources||[]).map(src=>[normalizeUrl(src.url),src]));
+  return (updates||[]).map(update=>({...update,references:(Array.isArray(update.references)?update.references:[]).map(ref=>{const raw=String(ref||"").trim(),exact=raw.toUpperCase().match(/^FONTE_(\\d+)$/),src=exact?byId.get(`FONTE_${exact[1]}`):byUrl.get(normalizeUrl(raw));return src&&primaryScientificInstitution(src.url)?src.url:"";}).filter(Boolean)}));
+}
 function enforceScientificClaimSourceBinding(updates=[],sources=[]){
   const byUrl=new Map(sources.map(s=>[normalizeUrl(s.url),s]));
   const failures=[];
@@ -1145,6 +1149,7 @@ async function runAIRevision(prompt,requested,options={}){
             else if(p==="openai"&&openaiClient)repaired=await reviseWithOpenAI(repairPrompt);
             if(repaired?.result&&Array.isArray(repaired.result.updates)){
               if(e?.code==="CLINICAL_SEQUENCE_INTEGRITY_REJECTED")repaired.result.updates=deterministicFiveMomentsRepair(repaired.result.updates,options?.editableParagraphs||[],webResearch.sources||[]);
+              repaired.result.updates=normalizeOfficialUpdateReferences(repaired.result.updates,webResearch.sources||[]);
               const tavilyById=new Map((webResearch.sources||[]).map(src=>[String(src.sourceId||"").toUpperCase(),src]));
               const usedSourceUrls=new Set();
               repaired.result.updates=repaired.result.updates.map(update=>({...update,references:(Array.isArray(update.references)?update.references:[]).map(ref=>{const raw=String(ref||"").trim();const exact=raw.toUpperCase().match(/^FONTE_(\d+)$/);const src=exact?tavilyById.get(`FONTE_${exact[1]}`):null;if(src){usedSourceUrls.add(src.url);return src.url}return raw}).filter(Boolean)}));
