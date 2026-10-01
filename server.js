@@ -1127,7 +1127,8 @@ async function runAIRevision(prompt,requested,options={}){
       if(ai?.result&&Array.isArray(ai.result.updates)){
         ai.result.updates=deterministicFiveMomentsRepair(ai.result.updates,options?.editableParagraphs||[],webResearch?.sources||[]);
         if(webResearch){ai.result.updates=normalizeOfficialUpdateReferences(ai.result.updates,webResearch.sources||[]);enforceScientificClaimSourceBinding(ai.result.updates,webResearch.sources||[]);}
-        const clinicalCheck=validateClinicalAdvisory(ai.result.updates,options?.editableParagraphs||[]);\n        if(!clinicalCheck.ok){ai.result.validationWarnings=[...(ai.result.validationWarnings||[]),...clinicalCheck.warnings];ai.result.requiresProfessionalReview=true;}
+        const clinicalCheck=validateClinicalAdvisory(ai.result.updates,options?.editableParagraphs||[]);
+        if(!clinicalCheck.ok){ai.result.validationWarnings=[...(ai.result.validationWarnings||[]),...clinicalCheck.warnings];ai.result.requiresProfessionalReview=true;}
       }
       console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
       return ai;
