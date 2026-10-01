@@ -1021,7 +1021,7 @@ function deterministicFiveMomentsRepair(updates=[],baselineParagraphs=[],sources
 }
 function normalizeOfficialUpdateReferences(updates=[],sources=[]){
   const byId=new Map((sources||[]).map(src=>[String(src.sourceId||"").toUpperCase(),src])),byUrl=new Map((sources||[]).map(src=>[normalizeUrl(src.url),src]));
-  return (updates||[]).map(update=>({...update,references:(Array.isArray(update.references)?update.references:[]).map(ref=>{const raw=String(ref||"").trim(),exact=raw.toUpperCase().match(/^FONTE_(\\d+)$/),src=exact?byId.get(`FONTE_${exact[1]}`):byUrl.get(normalizeUrl(raw));return src&&primaryScientificInstitution(src.url)?src.url:"";}).filter(Boolean)}));
+  return (updates||[]).map(update=>({...update,references:(Array.isArray(update.references)?update.references:[]).map(ref=>{const raw=String(ref||"").trim(),exact=raw.toUpperCase().match(/^FONTE_(\d+)$/),src=exact?byId.get(`FONTE_${exact[1]}`):byUrl.get(normalizeUrl(raw));return src&&primaryScientificInstitution(src.url)?src.url:"";}).filter(Boolean)}));
 }
 function enforceScientificClaimSourceBinding(updates=[],sources=[]){
   const byUrl=new Map(sources.map(s=>[normalizeUrl(s.url),s]));
