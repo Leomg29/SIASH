@@ -1,0 +1,18 @@
+const fs=require("fs"),assert=require("assert"),p=require("../package.json");
+const s=fs.readFileSync("server.js","utf8"),html=fs.readFileSync("index.html","utf8");
+const a=s.indexOf("async function runAIRevision"),b=s.indexOf('app.get("/api/ai/status"',a),flow=s.slice(a,b);
+assert(a>=0&&b>a,"runAIRevision pipeline missing");
+assert(s.includes("function validateScientificAdvisory"),"scientific advisory validator missing");
+assert(s.includes("function validateClinicalAdvisory"),"clinical advisory validator missing");
+assert(s.includes("function appendProfessionalReviewWarnings"),"professional-review warning collector missing");
+assert(!flow.includes("enforceScientificClaimSourceBinding(ai.result.updates"),"main AI path must not hard-block on scientific binding");
+assert(!flow.includes("enforceScientificClaimSourceBinding(repaired.result.updates"),"repair path must not hard-block on scientific binding");
+assert(!flow.includes("enforceClinicalSequenceIntegrity(ai.result.updates"),"main AI path must not hard-block on clinical integrity");
+assert(!flow.includes("enforceClinicalSequenceIntegrity(repaired.result.updates"),"repair path must not hard-block on clinical integrity");
+assert(flow.includes("appendProfessionalReviewWarnings(ai.result,validateScientificAdvisory"),"main proposal must retain scientific warnings");
+assert(flow.includes("appendProfessionalReviewWarnings(ai.result,validateClinicalAdvisory"),"main proposal must retain clinical warnings");
+assert(flow.includes("appendProfessionalReviewWarnings(repaired.result,validateScientificAdvisory"),"repaired proposal must retain scientific warnings");
+assert(flow.includes("appendProfessionalReviewWarnings(repaired.result,validateClinicalAdvisory"),"repaired proposal must retain clinical warnings");
+assert(flow.includes("AI_WEB_RESEARCH_REQUIRED"),"absence of mandatory web research must remain blocking");
+assert.strictEqual(p.version,"0.14.55");assert(html.includes(p.version));
+console.log("v0.14.55 end-to-end advisory validation regression OK");
