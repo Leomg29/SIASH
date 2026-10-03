@@ -1424,8 +1424,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     // Se o POP precisa renovar a vigência, a ausência de mudança técnica NÃO é falha: cria-se uma
     // proposta de revisão periódica, preservando integralmente o conteúdo e exigindo a mesma aprovação humana.
     // Fora de um ciclo de revisão documental solicitado, permanece a proteção contra falsa revisão.
-    if(!traceable.length&&!hygieneBefore.needsHygiene&&!periodicReviewRequired&&!correctionRequested)throw new Error("A revisão não produziu alteração técnico-científica rastreável nem correção bibliográfica necessária. O POP vigente foi preservado.");
-    let contentRevised=baseDocument,verification={verified:true,actualChanges:0};
+    // v0.14.65: ausência legítima de mudança é resultado normal da revisão, não falha de geração.\n    let contentRevised=baseDocument,verification={verified:true,actualChanges:0};
     if(traceable.length){contentRevised=patchDocx(baseDocument,traceable);verification=verifyDocxRevision(baseDocument,contentRevised,traceable)}
     let withRefs={buffer:contentRevised,added:0,moved:0,coverage:[],representedByInstitutional:0,genericReferencesRemoved:0,legacyLabelsRemoved:0,wordEligibleReferences:0};
     if(traceable.length||hygieneBefore.needsHygiene||(periodicReviewRequired&&eligibleReferenceCount>0)){
@@ -1433,7 +1432,6 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     }
     const hygieneChanges=Number(withRefs.genericReferencesRemoved||0)+Number(withRefs.labelsRemoved||0);
     const periodicReviewOnly=periodicReviewRequired&&!traceable.length&&hygieneChanges<1;
-    if(!traceable.length&&!periodicReviewRequired&&hygieneChanges<1&&!correctionRequested)throw new Error("A SIASH não encontrou correção bibliográfica efetiva a aplicar. O POP vigente foi preservado.");
     verification.actualChanges=Number(verification.actualChanges??traceable.length)+hygieneChanges;
     verification.periodicReviewOnly=periodicReviewOnly;
     verification.periodicReviewRequired=periodicReviewRequired;
@@ -1465,7 +1463,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     }).join(" | ")}`
   :periodicReviewOnly
     ?"Revisão periódica concluída sem alteração técnico-científica do conteúdo. O documento segue para conferência e aprovação profissional."
-    :"Nenhuma alteração técnico-científica aplicada ao Word nesta proposta; permanece pendente de conferência profissional.";
+    :"Revisão concluída: nenhuma alteração técnico-científica ou bibliográfica necessária. O POP vigente foi preservado.";
     await audit(req.user.u,"SIASH Docs: proposta de revisão gerada pela IA para conferência profissional.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,periodic_review_only:periodicReviewOnly,periodic_review_required:periodicReviewRequired,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:false,requires_professional_review:true,validation_warnings:verification.validationWarnings||[],references_verified:classified.verified.length,references_pending:classified.pending.length});
     res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:validatedSummary,changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
