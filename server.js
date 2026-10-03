@@ -240,6 +240,25 @@ function patchDocx(buf,updates){
 }
 function normalizedText(s=""){return String(s||"").replace(/\s+/g," ").trim()}
 function normalizeComparableText(s=""){return normalizedText(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/^[✓✔•·\-–—\s]+/,"").replace(/\s*([;,.])\s*/g,"$1")}
+function targetedFinalWordCleanup(buf){
+  const paragraphs=docxParagraphs(buf),updates=[],repairs=[];
+  const sectionStart=paragraphs.findIndex(p=>/^(?:6\s*[-.)]?\s*)?procedimentos essenciais/i.test(String(p.text||"").trim())),sectionEnd=paragraphs.findIndex((p,i)=>i>sectionStart&&/^7\s*[-.)]?\s*/.test(String(p.text||"").trim()));
+  if(sectionStart>=0){
+    const scope=paragraphs.slice(sectionStart,sectionEnd>sectionStart?sectionEnd:paragraphs.length),complete=scope.find(p=>/antes de tocar o paciente/i.test(p.text)&&/antes de realizar procedimento limpo/i.test(p.text)&&/ap[oó]s risco de exposi[cç][aã]o a fluidos/i.test(p.text)&&/ap[oó]s tocar o paciente/i.test(p.text)&&/ap[oó]s tocar superf[ií]cies pr[oó]ximas/i.test(p.text));
+    if(complete){
+      let afterComplete=false;
+      for(const p of scope){
+        if(p.index===complete.index){afterComplete=true;continue}if(!afterComplete)continue;
+        if(/^[✓✔•·\s]*[a-e]\s*[).:-]/i.test(String(p.text||"").trim())&&/antes de tocar o paciente|antes de realizar procedimento limpo|ap[oó]s risco de exposi[cç][aã]o a fluidos|ap[oó]s tocar o paciente|ap[oó]s tocar superf[ií]cies pr[oó]ximas/i.test(p.text)){updates.push({paragraph_index:p.index,new_text:""});repairs.push(`Removida repetição dos 5 Momentos no parágrafo ${p.index}.`);}
+      }
+    }
+  }
+  for(const p of paragraphs){
+    if(/repetir todo o sequ[eê]ncia para a m[aã]o esquerda/i.test(p.text)){updates.push({paragraph_index:p.index,new_text:""});repairs.push(`Removida etapa redundante e gramaticalmente incorreta no parágrafo ${p.index}.`);}
+  }
+  if(!updates.length)return {buffer:buf,repairs:[]};
+  return {buffer:patchDocx(buf,updates),repairs};
+}
 function advisoryFinalDocumentQuality(buf){
   const paragraphs=docxParagraphs(buf),warnings=[];
   const seen=new Map();
@@ -1408,7 +1427,9 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     verification.bibliographyHygieneChanges=hygieneChanges;
     verification.genericReferencesRemoved=Number(withRefs.genericReferencesRemoved||0);
     verification.legacyLabelsRemoved=Number(withRefs.labelsRemoved||0);
-    const revised=withRefs.buffer;
+    const finalCleanup=targetedFinalWordCleanup(withRefs.buffer),revised=finalCleanup.buffer;
+    verification.targetedFinalRepairs=finalCleanup.repairs;
+    verification.actualChanges=Number(verification.actualChanges||0)+finalCleanup.repairs.length;
     appendVerificationWarnings(verification,advisoryFinalDocumentQuality(revised));
     if(Array.isArray(result.validationWarnings)&&result.validationWarnings.length)appendVerificationWarnings(verification,{ok:false,warnings:result.validationWarnings});
     // v0.13.3: não exige que toda URL retornada pela IA apareça literalmente no Word.
