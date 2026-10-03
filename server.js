@@ -247,7 +247,7 @@ function removeDocxParagraphs(buf,indexes=[]){
 }
 function orphanCheckmarkParagraphIndexes(buf){
   const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)return [];
-  const blocks=[...entry.getData().toString("utf8").matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map((m,index)=>({index,xml:m[0],text:[...m[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(x=>xmlDecode(x[1])).join("").replace(/\s+/g,"").trim(),numbered:/<w:numPr>[\s\S]*?<w:numId\s+w:val="\d+"\s*\/>[\s\S]*?<\/w:numPr>/.test(m[0])}));
+  const blocks=[...entry.getData().toString("utf8").matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map((m,index)=>({index,xml:m[0],text:[...m[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(x=>xmlDecode(x[1])).join("").replace(/\s+/g," ").trim(),numbered:/<w:numPr>[\s\S]*?<w:numId\s+w:val="\d+"\s*\/>[\s\S]*?<\/w:numPr>/.test(m[0])}));
   const section5=blocks.find(p=>/^5\s*[-.)]?\s*descri[cç][aã]o do procedimento/i.test(p.text)),section6=blocks.find(p=>/^6\s*[-.)]?\s*procedimentos essenciais/i.test(p.text)),section7=blocks.find(p=>/^7\s*[-.)]?\s*n[aã]o conformidade/i.test(p.text));
   const inTargetScope=index=>(section5&&section6&&index>section5.index&&index<section6.index)||(section6&&section7&&index>section6.index&&index<section7.index);
   return blocks.filter(p=>inTargetScope(p.index)&&p.numbered&&!p.text).map(p=>p.index);
