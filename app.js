@@ -685,7 +685,7 @@ function completePublication(i,vi,d,v,validator,finalization){
 }
 window.validateDocProposal=async(i,vi)=>{
  if(!requireProposalContext(i,vi))return;
- const _v=S.docs?.[i]?.versions?.[vi];if(_v?.createdBy==="SIASH Docs / IA"&&_v.aiVerified!==true)return alert("Publicação bloqueada: esta proposta de IA não possui verificação automática de integridade. Gere uma nova proposta ou solicite correção antes de publicar.");
+ const _v=S.docs?.[i]?.versions?.[vi];if(_v?.createdBy==="SIASH Docs / IA"&&_v.aiVerified!==true){const warnings=[...new Set(_v.aiVerification?.validationWarnings||[])];if(!confirm(`A verificação automática registrou pendências que exigem conferência profissional.${warnings.length?`\n\nAlertas:\n- ${warnings.join("\n- ")}`:""}\n\nVocê confirma que abriu e conferiu integralmente o Word antes de continuar?`))return;}
  const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;if(!canDocValidate(d))return alert("Seu perfil não possui permissão de validação neste setor.");if(!(v.wordKey||v.wordPath))return alert("Validação bloqueada: a publicação institucional exige o Word atualizado.");
  if(v.publicationPrepared)return finalizePreparedPublication(i,vi);
  if(!confirm(`Confirma que você abriu, conferiu e aprova tecnicamente a revisão ${v.revision} de ${d.code}?\n\nA SIASH agora vai PREPARAR o Word final, reutilizando a revisão institucional do ciclo quando ela já existir; somente um novo ciclo poderá criar nova revisão institucional. O documento ainda NÃO será publicado.`))return;
