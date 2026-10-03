@@ -1424,7 +1424,8 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     // Se o POP precisa renovar a vigência, a ausência de mudança técnica NÃO é falha: cria-se uma
     // proposta de revisão periódica, preservando integralmente o conteúdo e exigindo a mesma aprovação humana.
     // Fora de um ciclo de revisão documental solicitado, permanece a proteção contra falsa revisão.
-    // v0.14.65: ausência legítima de mudança é resultado normal da revisão, não falha de geração.\n    let contentRevised=baseDocument,verification={verified:true,actualChanges:0};
+    // v0.14.65: ausência legítima de mudança é resultado normal da revisão, não falha de geração.
+    let contentRevised=baseDocument,verification={verified:true,actualChanges:0};
     if(traceable.length){contentRevised=patchDocx(baseDocument,traceable);verification=verifyDocxRevision(baseDocument,contentRevised,traceable)}
     let withRefs={buffer:contentRevised,added:0,moved:0,coverage:[],representedByInstitutional:0,genericReferencesRemoved:0,legacyLabelsRemoved:0,wordEligibleReferences:0};
     if(traceable.length||hygieneBefore.needsHygiene||(periodicReviewRequired&&eligibleReferenceCount>0)){
