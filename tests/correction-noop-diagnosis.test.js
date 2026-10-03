@@ -1,9 +1,9 @@
 const fs=require("fs"),assert=require("assert");
 const s=fs.readFileSync("server.js","utf8"),p=require("../package.json"),i=fs.readFileSync("index.html","utf8");
 assert.ok(s.includes('const correctionRequested=!!String(correction_request||"").trim()'));
-assert.ok(s.includes('AI_CORRECTION_NO_EFFECTIVE_CHANGE'));
-assert.ok(s.includes('A proposta anterior foi preservada e nenhuma nova revisão foi criada.'));
-assert.ok(s.indexOf('AI_CORRECTION_NO_EFFECTIVE_CHANGE')<s.indexOf('Este POP foi classificado pela auditoria científica como REVISÃO NECESSÁRIA'));
+assert.ok(!s.includes('AI_CORRECTION_NO_EFFECTIVE_CHANGE'));
+assert.ok(s.includes('O Word da mesma revisão será preservado e seguirá para conferência profissional'));
+assert.ok(s.includes('correção sem delta textual'));
 const version=String(p.version||"");
 const parts=version.split(".").map(Number);
 assert.ok(parts.length===3&&parts[0]===0&&parts[1]===14&&parts[2]>=37,"release must preserve v0.14.37+ correction diagnosis");

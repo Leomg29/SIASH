@@ -8,5 +8,5 @@ assert(s.includes("pendentes de validação profissional"),"proposal-safe histor
 assert(s.includes("requires_professional_review:true"),"audit must preserve professional-review status");
 const q=s.indexOf("function advisoryFinalDocumentQuality"),r=s.indexOf("function appendVerificationWarnings",q),block=s.slice(q,r);
 assert(!block.includes("throw new Error"),"quality findings must warn, not block AI changes");
-assert.strictEqual(p.version,"0.14.56");assert(html.includes(p.version));
+assert(/^0\.14\.(?:5[6-9]|[6-9][0-9]|[1-9][0-9]{2,})$/.test(p.version),"version must retain or advance beyond v0.14.56");assert(html.includes(p.version));
 console.log("v0.14.56 non-blocking final Word quality regression OK");
