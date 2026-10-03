@@ -245,6 +245,13 @@ function removeDocxParagraphs(buf,indexes=[]){
   let idx=-1;const xml=entry.getData().toString("utf8"),patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{idx++;return remove.has(idx)?"":p;});
   zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return zip.toBuffer();
 }
+function orphanCheckmarkParagraphIndexes(buf){
+  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)return [];
+  const blocks=[...entry.getData().toString("utf8").matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map((m,index)=>({index,xml:m[0],text:[...m[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(x=>xmlDecode(x[1])).join("").replace(/\s+/g,"").trim()}));
+  const visible=blocks.filter(p=>p.text),section5=visible.find(p=>/^5\s*[-.)]?\s*descri[cç][aã]o do procedimento/i.test(p.text)),section6=visible.find(p=>/^6\s*[-.)]?\s*procedimentos essenciais/i.test(p.text)),section7=visible.find(p=>/^7\s*[-.)]?\s*n[aã]o conformidade/i.test(p.text));
+  const inTargetScope=index=>(section5&&section6&&index>section5.index&&index<section6.index)||(section6&&section7&&index>section6.index&&index<section7.index);
+  return blocks.filter(p=>inTargetScope(p.index)&&/^[✓✔]$/.test(p.text)).map(p=>p.index);
+}
 function targetedFinalWordCleanup(buf){
   const paragraphs=docxParagraphs(buf),removeIndexes=new Set(),repairs=[];
   const sectionStart=paragraphs.findIndex(p=>/^(?:6\s*[-.)]?\s*)?procedimentos essenciais/i.test(String(p.text||"").trim())),sectionEnd=paragraphs.findIndex((p,i)=>i>sectionStart&&/^7\s*[-.)]?\s*/.test(String(p.text||"").trim()));
@@ -264,6 +271,7 @@ function targetedFinalWordCleanup(buf){
   for(const p of paragraphs){
     if(/repetir todo o sequ[eê]ncia para a m[aã]o esquerda/i.test(p.text)){removeIndexes.add(p.index);repairs.push(`Removida integralmente a etapa redundante do parágrafo ${p.index}.`);}
   }
+  for(const index of orphanCheckmarkParagraphIndexes(buf)){removeIndexes.add(index);repairs.push(`Removido marcador ✓ órfão do parágrafo ${index}.`);}
   if(!removeIndexes.size)return {buffer:buf,repairs:[]};
   return {buffer:removeDocxParagraphs(buf,[...removeIndexes]),repairs};
 }
