@@ -1,0 +1,12 @@
+const fs=require("fs"),assert=require("assert"),p=require("../package.json");
+const s=fs.readFileSync("server.js","utf8"),html=fs.readFileSync("index.html","utf8");
+assert(s.includes("function advisoryFinalDocumentQuality"),"final Word advisory quality check missing");
+assert(s.includes("Conteúdo textual duplicado para conferência"),"duplicate-content warning missing");
+assert(s.includes("appendVerificationWarnings(verification,advisoryFinalDocumentQuality(revised))"),"final generated Word must be inspected");
+assert(!s.includes("Alterações técnico-científicas efetivamente aplicadas e validadas no Word:"),"proposal must not claim professional validation");
+assert(s.includes("pendentes de validação profissional"),"proposal-safe history wording missing");
+assert(s.includes("requires_professional_review:true"),"audit must preserve professional-review status");
+const q=s.indexOf("function advisoryFinalDocumentQuality"),r=s.indexOf("function appendVerificationWarnings",q),block=s.slice(q,r);
+assert(!block.includes("throw new Error"),"quality findings must warn, not block AI changes");
+assert.strictEqual(p.version,"0.14.56");assert(html.includes(p.version));
+console.log("v0.14.56 non-blocking final Word quality regression OK");
