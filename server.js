@@ -239,6 +239,24 @@ function patchDocx(buf,updates){
   zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return zip.toBuffer();
 }
 function normalizedText(s=""){return String(s||"").replace(/\s+/g," ").trim()}
+function normalizeComparableText(s=""){return normalizedText(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/^[✓✔•·\-–—\s]+/,"").replace(/\s*([;,.])\s*/g,"$1")}
+function advisoryFinalDocumentQuality(buf){
+  const paragraphs=docxParagraphs(buf),warnings=[];
+  const seen=new Map();
+  for(const p of paragraphs){
+    const key=normalizeComparableText(p.text);if(key.length<28)continue;
+    if(seen.has(key))warnings.push(`Conteúdo textual duplicado para conferência: parágrafos ${seen.get(key)} e ${p.index}.`);else seen.set(key,p.index);
+  }
+  const fiveMomentLines=paragraphs.filter(p=>/antes de tocar o paciente|antes de realizar procedimento limpo|ap[oó]s risco de exposi[cç][aã]o a fluidos|ap[oó]s tocar o paciente|ap[oó]s tocar superf[ií]cies pr[oó]ximas/i.test(p.text));
+  const compact=fiveMomentLines.map(p=>normalizeComparableText(p.text));
+  if(compact.length>1){const repeated=compact.filter((x,i,a)=>a.findIndex(y=>y===x)!==i);if(repeated.length)warnings.push("A lista dos 5 Momentos aparece repetida no estado final e deve ser conferida antes da publicação.");}
+  return {ok:warnings.length===0,warnings:[...new Set(warnings)]};
+}
+function appendVerificationWarnings(verification,check){
+  if(!verification||check?.ok!==false)return verification;
+  verification.validationWarnings=[...new Set([...(verification.validationWarnings||[]),...(check.warnings||[])].filter(Boolean))];
+  verification.requiresProfessionalReview=true;return verification;
+}
 function normalizeUrl(u=""){try{const x=new URL(String(u||"").trim());return /^https?:$/.test(x.protocol)?x.toString():""}catch(_){return ""}}
 function referenceTokens(s=""){
   const stop=new Set(["para","com","sem","das","dos","de","da","do","em","um","uma","e","a","o","as","os","ao","aos","à","às","na","no","nas","nos","por","sobre","the","and","for","of","in","to","on"]);
@@ -1392,6 +1410,8 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     verification.genericReferencesRemoved=Number(withRefs.genericReferencesRemoved||0);
     verification.legacyLabelsRemoved=Number(withRefs.labelsRemoved||0);
     const revised=withRefs.buffer;
+    appendVerificationWarnings(verification,advisoryFinalDocumentQuality(revised));
+    if(Array.isArray(result.validationWarnings)&&result.validationWarnings.length)appendVerificationWarnings(verification,{ok:false,warnings:result.validationWarnings});
     // v0.13.3: não exige que toda URL retornada pela IA apareça literalmente no Word.
     // Uma fonte pode já estar representada por uma referência institucional semanticamente equivalente;
     // nesse caso, repetir a URL criaria justamente a duplicidade que a v0.13.2 passou a impedir.
@@ -1401,7 +1421,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     verification.referencesVerified=classified.verified.length;
     verification.referencesPending=classified.pending.length;verification.referencePlacement="bibliography_section_verified";
     const validatedSummary=traceable.length
-  ?`Alterações técnico-científicas efetivamente aplicadas e validadas no Word: ${traceable.map((ch,i)=>{
+  ?`PROPOSTA de revisão — alterações técnico-científicas aplicadas no Word e pendentes de validação profissional: ${traceable.map((ch,i)=>{
       const before=String(ch.before_text||"").trim();
       const after=String(ch.new_text||"").trim();
       const reason=String(ch.reason||"").trim();
@@ -1409,8 +1429,8 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     }).join(" | ")}`
   :periodicReviewOnly
     ?"Revisão periódica concluída sem alteração técnico-científica do conteúdo. O documento segue para conferência e aprovação profissional."
-    :"Nenhuma alteração técnico-científica efetivamente aplicada e validada no Word.";
-    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada e validada estruturalmente pela IA.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,periodic_review_only:periodicReviewOnly,periodic_review_required:periodicReviewRequired,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:true,references_verified:classified.verified.length,references_pending:classified.pending.length});
+    :"Nenhuma alteração técnico-científica aplicada ao Word nesta proposta; permanece pendente de conferência profissional.";
+    await audit(req.user.u,"SIASH Docs: proposta de revisão gerada pela IA para conferência profissional.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,periodic_review_only:periodicReviewOnly,periodic_review_required:periodicReviewRequired,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:false,requires_professional_review:true,validation_warnings:verification.validationWarnings||[],references_verified:classified.verified.length,references_pending:classified.pending.length});
     res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:validatedSummary,changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
