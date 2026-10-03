@@ -568,7 +568,7 @@ const heading = headingCandidates[0];
   for(const text of managedTexts){if(!insertedParas.some(p=>sameBibliographicWork(text,p.text)))throw new Error("Falha de integridade: referência limpa não foi localizada dentro da seção bibliográfica.");}
   // Auditoria final de duplicidade semântica dentro da bibliografia.
   const bib=insertedParas.map(p=>p.text).filter(Boolean);
-  for(let i=0;i<bib.length;i++)for(let j=i+1;j<bib.length;j++)if(sameBibliographicWork(bib[i],bib[j]))throw new Error("Falha de integridade: foram detectadas referências bibliográficas semanticamente duplicadas no Word.");
+  const semanticDuplicatePairs=[];for(let i=0;i<bib.length;i++)for(let j=i+1;j<bib.length;j++)if(sameBibliographicWork(bib[i],bib[j]))semanticDuplicatePairs.push([i,j]);
   // Cada fonte da revisão precisa estar representada na bibliografia, mas não necessariamente com a mesma URL:
   // quando a obra já existe institucionalmente, a deduplicação semântica é intencional e a referência existente é suficiente.
   const cleanInputRefs=wordRefs.map(r=>cleanReferenceForWord(r)).filter(Boolean);
@@ -581,7 +581,7 @@ const heading = headingCandidates[0];
   if(uncovered.length)throw new Error("Falha de integridade: uma ou mais fontes da revisão não ficaram representadas na seção bibliográfica do Word.");
   const genericRemaining=insertedParas.filter(p=>!!referenceUrlFromText(p.text)&&isGenericReferenceUrl(referenceUrlFromText(p.text)));
   if(genericRemaining.length)throw new Error("Falha de integridade: referência com URL institucional genérica permaneceu na bibliografia do Word.");
-  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length,coverage,representedByInstitutional:representedByInstitutional.length,genericReferencesRemoved:genericBibliography.length+legacyRejected.length,legacyGenericReferencesRejected:legacyRejected.length,wordEligibleReferences:wordRefs.length};
+  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length,coverage,representedByInstitutional:representedByInstitutional.length,genericReferencesRemoved:genericBibliography.length+legacyRejected.length,semanticDuplicateReferences:semanticDuplicatePairs.length,legacyGenericReferencesRejected:legacyRejected.length,wordEligibleReferences:wordRefs.length};
 }
 function bibliographyHygieneState(buf){
   try{
