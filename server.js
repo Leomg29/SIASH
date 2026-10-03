@@ -1359,21 +1359,20 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
     const correctionNoop=correctionRequested&&!effective.length;
     if(correctionNoop){
-      const err=new Error("A IA analisou o pedido de correção, mas não produziu alteração real em relação ao Word da revisão proposta. A proposta anterior foi preservada e nenhuma nova revisão foi criada.");
-      err.code="AI_CORRECTION_NO_EFFECTIVE_CHANGE";
-      err.details={doc_code,updatesReceived:Array.isArray(result.updates)?result.updates.length:0,correctionRequested:true};
-      throw err;
+      result.validationWarnings=[...(result.validationWarnings||[]),"A IA analisou o pedido de correção, mas não propôs nova alteração textual. O Word da mesma revisão será preservado e seguirá para conferência profissional com os alertas de qualidade do estado final."];
+      result.requiresProfessionalReview=true;
+      console.warn(`[SIASH AI] correção sem delta textual | code=${doc_code} | proposta preservada para conferência profissional`);
     }
     if(scientificAudit?.status==="review"){
       console.log(`[SIASH AI] auditoria obrigatória | code=${doc_code} | updates_recebidos=${Array.isArray(result.updates)?result.updates.length:0} | alteracoes_reais=${effective.length} | achados=${scientificAudit.findings.length}`);
-      if(!effective.length)throw new Error("Este POP foi classificado pela auditoria científica como REVISÃO NECESSÁRIA. A IA não produziu alteração real nos parágrafos auditados; a proposta foi bloqueada para evitar simples renovação de vigência.");
+      if(!effective.length){result.validationWarnings=[...(result.validationWarnings||[]),"A auditoria científica indica revisão necessária, mas a IA não produziu novo delta textual neste ciclo. Conferência profissional obrigatória."];result.requiresProfessionalReview=true;}
     }
-    if(effective.some(x=>!Array.isArray(x.references)||!x.references.length))throw new Error("A IA propôs alteração técnico-científica sem referência específica. A proposta foi bloqueada para conferência segura.");
+    if(effective.some(x=>!Array.isArray(x.references)||!x.references.length)){result.validationWarnings=[...(result.validationWarnings||[]),"Há alteração proposta sem referência específica vinculada. Conferir a rastreabilidade antes da publicação."];result.requiresProfessionalReview=true;}
     const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&(x.title||x.url));
     const norm=s=>normalizedText(s).toLowerCase();
     const sourceKeys=candidateSources.flatMap(x=>[norm(x.title),norm(x.url)]).filter(Boolean);
     const unlinked=effective.filter(ch=>!(ch.references||[]).some(ref=>{const n=norm(ref);return sourceKeys.some(k=>k===n||k.includes(n)||n.includes(k))}));
-    if(unlinked.length)throw new Error(`A IA citou referência específica em alteração(ões), mas não forneceu os dados bibliográficos correspondentes para rastreamento (parágrafos: ${unlinked.map(x=>x.paragraph_index).join(", ")}). A proposta foi bloqueada.`);
+    if(unlinked.length){result.validationWarnings=[...(result.validationWarnings||[]),`Há referência citada sem correspondência bibliográfica rastreável nos parágrafos: ${unlinked.map(x=>x.paragraph_index).join(", ")}. Conferir antes da publicação.`];result.requiresProfessionalReview=true;}
     const classified=candidateSources.length?await classifyReferenceUrls(candidateSources):{verified:[],pending:[]};
     const references=[...classified.verified,...classified.pending];
     const eligibleReferenceCount=references.filter(x=>x?.wordEligible===true).length;
