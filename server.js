@@ -1379,17 +1379,17 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     const officialEligibleReferenceCount=references.filter(x=>x?.wordEligible===true&&isOfficialScientificReference(x)).length;
     let traceable=[],excludedChanges=[];
     if(effective.length){
-      if(!references.length)throw new Error("A IA não retornou referências identificáveis para conferência. A proposta foi bloqueada; o POP vigente permanece inalterado.");
+      if(!references.length){result.validationWarnings=[...(result.validationWarnings||[]),"A proposta contém alterações sem referências bibliográficas identificáveis. Conferência profissional obrigatória."];result.requiresProfessionalReview=true;}
       traceable=effective.filter(ch=>(ch.references||[]).some(ref=>references.some(src=>src.wordEligible===true&&sourceMatchesChangeReference(ref,src))));
       excludedChanges=effective.filter(ch=>!traceable.includes(ch));
-      if(!traceable.length)throw new Error("As alterações propostas ficaram sustentadas apenas por fontes genéricas ou não identificáveis. A SIASH não inseriu essas fontes no Word e bloqueou a proposta para proteger a bibliografia institucional.");
+      if(!traceable.length&&effective.length){traceable=effective;result.validationWarnings=[...(result.validationWarnings||[]),"As alterações não obtiveram vínculo bibliográfico elegível automático. Foram preservadas na proposta para conferência profissional; não publicar sem revisar as fontes."];result.requiresProfessionalReview=true;}
     }
-    if(periodicReviewRequired&&!traceable.length&&(eligibleReferenceCount<2||officialEligibleReferenceCount<1))throw new Error(`Revisão periódica sem alteração bloqueada: são necessárias pelo menos 2 referências específicas elegíveis e 1 fonte oficial/autoridade reconhecida. Recebidas: ${eligibleReferenceCount} elegível(is), ${officialEligibleReferenceCount} oficial(is).`);
+    if(periodicReviewRequired&&!traceable.length&&(eligibleReferenceCount<2||officialEligibleReferenceCount<1)){result.validationWarnings=[...(result.validationWarnings||[]),`Revisão periódica com referências insuficientes para validação automática: ${eligibleReferenceCount} elegível(is), ${officialEligibleReferenceCount} oficial(is). Conferir profissionalmente.`];result.requiresProfessionalReview=true;}
     // v0.14.6 — separa revisão documental periódica de alteração técnico-científica.
     // Se o POP precisa renovar a vigência, a ausência de mudança técnica NÃO é falha: cria-se uma
     // proposta de revisão periódica, preservando integralmente o conteúdo e exigindo a mesma aprovação humana.
     // Fora de um ciclo de revisão documental solicitado, permanece a proteção contra falsa revisão.
-    if(!traceable.length&&!hygieneBefore.needsHygiene&&!periodicReviewRequired)throw new Error("A revisão não produziu alteração técnico-científica rastreável nem correção bibliográfica necessária. O POP vigente foi preservado.");
+    if(!traceable.length&&!hygieneBefore.needsHygiene&&!periodicReviewRequired&&!correctionRequested)throw new Error("A revisão não produziu alteração técnico-científica rastreável nem correção bibliográfica necessária. O POP vigente foi preservado.");
     let contentRevised=baseDocument,verification={verified:true,actualChanges:0};
     if(traceable.length){contentRevised=patchDocx(baseDocument,traceable);verification=verifyDocxRevision(baseDocument,contentRevised,traceable)}
     let withRefs={buffer:contentRevised,added:0,moved:0,coverage:[],representedByInstitutional:0,genericReferencesRemoved:0,legacyLabelsRemoved:0,wordEligibleReferences:0};
@@ -1398,7 +1398,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     }
     const hygieneChanges=Number(withRefs.genericReferencesRemoved||0)+Number(withRefs.labelsRemoved||0);
     const periodicReviewOnly=periodicReviewRequired&&!traceable.length&&hygieneChanges<1;
-    if(!traceable.length&&!periodicReviewRequired&&hygieneChanges<1)throw new Error("A SIASH não encontrou correção bibliográfica efetiva a aplicar. O POP vigente foi preservado.");
+    if(!traceable.length&&!periodicReviewRequired&&hygieneChanges<1&&!correctionRequested)throw new Error("A SIASH não encontrou correção bibliográfica efetiva a aplicar. O POP vigente foi preservado.");
     verification.actualChanges=Number(verification.actualChanges??traceable.length)+hygieneChanges;
     verification.periodicReviewOnly=periodicReviewOnly;
     verification.periodicReviewRequired=periodicReviewRequired;
@@ -1414,8 +1414,8 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     // v0.13.3: não exige que toda URL retornada pela IA apareça literalmente no Word.
     // Uma fonte pode já estar representada por uma referência institucional semanticamente equivalente;
     // nesse caso, repetir a URL criaria justamente a duplicidade que a v0.13.2 passou a impedir.
-    if(!periodicReviewOnly&&(!withRefs.coverage?.length||withRefs.coverage.some(x=>!x.represented)))throw new Error("Falha de integridade ao consolidar as referências no Word. A proposta não foi liberada.");
-    if(periodicReviewOnly&&withRefs.coverage?.some(x=>!x.represented))throw new Error("Falha de integridade ao consolidar as referências da revisão periódica no Word. A proposta não foi liberada.");
+    if(!periodicReviewOnly&&traceable.length&&(!withRefs.coverage?.length||withRefs.coverage.some(x=>!x.represented))){appendVerificationWarnings(verification,{ok:false,warnings:["Nem todas as referências foram consolidadas automaticamente no Word. Conferir bibliografia antes da publicação."]});}
+    if(periodicReviewOnly&&withRefs.coverage?.some(x=>!x.represented)){appendVerificationWarnings(verification,{ok:false,warnings:["Há referência da revisão periódica pendente de consolidação no Word. Conferir antes da publicação."]});}
     verification.referencesAdded=withRefs.added;
     verification.referencesVerified=classified.verified.length;
     verification.referencesPending=classified.pending.length;verification.referencePlacement="bibliography_section_verified";
