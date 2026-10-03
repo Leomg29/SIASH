@@ -1,0 +1,15 @@
+name: SIASH v0.14.58 frontend advisory pipeline
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check app.js
+      - run: node --check server.js
+      - run: node tests/frontend-advisory-pipeline.test.js
