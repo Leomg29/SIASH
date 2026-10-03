@@ -1,0 +1,14 @@
+name: SIASH v0.14.56 non-blocking Word quality
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: node --check server.js
+      - run: node tests/nonblocking-final-word-quality.test.js

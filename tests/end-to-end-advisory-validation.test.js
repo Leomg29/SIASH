@@ -14,5 +14,5 @@ assert(flow.includes("appendProfessionalReviewWarnings(ai.result,validateClinica
 assert(flow.includes("appendProfessionalReviewWarnings(repaired.result,validateScientificAdvisory"),"repaired proposal must retain scientific warnings");
 assert(flow.includes("appendProfessionalReviewWarnings(repaired.result,validateClinicalAdvisory"),"repaired proposal must retain clinical warnings");
 assert(flow.includes("AI_WEB_RESEARCH_REQUIRED"),"absence of mandatory web research must remain blocking");
-assert.strictEqual(p.version,"0.14.55");assert(html.includes(p.version));
+assert(/^0\.14\.(?:5[5-9]|[6-9][0-9]|[1-9][0-9]{2,})$/.test(p.version),"version must retain or advance beyond v0.14.55");assert(html.includes(p.version));
 console.log("v0.14.55 end-to-end advisory validation regression OK");
