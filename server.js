@@ -240,8 +240,13 @@ function patchDocx(buf,updates){
 }
 function normalizedText(s=""){return String(s||"").replace(/\s+/g," ").trim()}
 function normalizeComparableText(s=""){return normalizedText(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/^[✓✔•·\-–—\s]+/,"").replace(/\s*([;,.])\s*/g,"$1")}
+function removeDocxParagraphs(buf,indexes=[]){
+  const remove=new Set((indexes||[]).map(Number)),zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry||!remove.size)return buf;
+  let idx=-1;const xml=entry.getData().toString("utf8"),patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{idx++;return remove.has(idx)?"":p;});
+  zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return zip.toBuffer();
+}
 function targetedFinalWordCleanup(buf){
-  const paragraphs=docxParagraphs(buf),updates=[],repairs=[];
+  const paragraphs=docxParagraphs(buf),removeIndexes=new Set(),repairs=[];
   const sectionStart=paragraphs.findIndex(p=>/^(?:6\s*[-.)]?\s*)?procedimentos essenciais/i.test(String(p.text||"").trim())),sectionEnd=paragraphs.findIndex((p,i)=>i>sectionStart&&/^7\s*[-.)]?\s*/.test(String(p.text||"").trim()));
   if(sectionStart>=0){
     const scope=paragraphs.slice(sectionStart,sectionEnd>sectionStart?sectionEnd:paragraphs.length),complete=scope.find(p=>/antes de tocar o paciente/i.test(p.text)&&/antes de realizar procedimento limpo/i.test(p.text)&&/ap[oó]s risco de exposi[cç][aã]o a fluidos/i.test(p.text)&&/ap[oó]s tocar o paciente/i.test(p.text)&&/ap[oó]s tocar superf[ií]cies pr[oó]ximas/i.test(p.text));
@@ -249,15 +254,18 @@ function targetedFinalWordCleanup(buf){
       let afterComplete=false;
       for(const p of scope){
         if(p.index===complete.index){afterComplete=true;continue}if(!afterComplete)continue;
-        if(/^[✓✔•·\s]*[a-e]\s*[).:-]/i.test(String(p.text||"").trim())&&/antes de tocar o paciente|antes de realizar procedimento limpo|ap[oó]s risco de exposi[cç][aã]o a fluidos|ap[oó]s tocar o paciente|ap[oó]s tocar superf[ií]cies pr[oó]ximas/i.test(p.text)){updates.push({paragraph_index:p.index,new_text:""});repairs.push(`Removida repetição dos 5 Momentos no parágrafo ${p.index}.`);}
+        const t=String(p.text||"").trim();
+        const repeatedMoment=/^[✓✔•·\s]*[a-e]\s*[).:-]/i.test(t)&&/antes de tocar o paciente|antes de realizar procedimento limpo|ap[oó]s risco de exposi[cç][aã]o a fluidos|ap[oó]s tocar o paciente|ap[oó]s tocar superf[ií]cies pr[oó]ximas/i.test(t);
+        const repeatedDrying=/friccionar a prepara[cç][aã]o alco[oó]lica em todas as superf[ií]cies das m[aã]os at[eé] a secagem completa/i.test(t);
+        if(repeatedMoment||repeatedDrying){removeIndexes.add(p.index);repairs.push(`Removido parágrafo redundante da seção 6: ${p.index}.`);}
       }
     }
   }
   for(const p of paragraphs){
-    if(/repetir todo o sequ[eê]ncia para a m[aã]o esquerda/i.test(p.text)){updates.push({paragraph_index:p.index,new_text:""});repairs.push(`Removida etapa redundante e gramaticalmente incorreta no parágrafo ${p.index}.`);}
+    if(/repetir todo o sequ[eê]ncia para a m[aã]o esquerda/i.test(p.text)){removeIndexes.add(p.index);repairs.push(`Removida integralmente a etapa redundante do parágrafo ${p.index}.`);}
   }
-  if(!updates.length)return {buffer:buf,repairs:[]};
-  return {buffer:patchDocx(buf,updates),repairs};
+  if(!removeIndexes.size)return {buffer:buf,repairs:[]};
+  return {buffer:removeDocxParagraphs(buf,[...removeIndexes]),repairs};
 }
 function advisoryFinalDocumentQuality(buf){
   const paragraphs=docxParagraphs(buf),warnings=[];
