@@ -1,0 +1,11 @@
+const fs=require("fs"),assert=require("assert"),p=require("../package.json"),s=fs.readFileSync("server.js","utf8"),html=fs.readFileSync("index.html","utf8");
+assert(s.includes("19A) AUDITORIA → DELTA:"),"audit-to-delta instruction missing");
+assert(s.includes("19B) LEG-UTIN-024:"),"LEG-UTIN-024 focused audit instruction missing");
+assert(s.includes("cuidado do coto umbilical"),"umbilical-care audit target missing");
+assert(s.includes("preservação do vérnix"),"vernix audit target missing");
+assert(s.includes("não encerre com 0 alterações apenas porque a bibliografia foi consultada"),"zero-delta false conclusion guard missing");
+assert(s.includes("A auditoria científica indica revisão necessária, mas a IA não produziu novo delta textual neste ciclo."),"professional-review fallback must remain");
+assert(s.includes("let contentRevised=baseDocument"),"v0.14.66 declaration must remain");
+assert(/^0\.14\.(?:6[7-9]|[7-9][0-9]|[1-9][0-9]{2,})$/.test(p.version));
+assert(html.includes(p.version));
+console.log("v0.14.67 audit-to-delta regression OK");
