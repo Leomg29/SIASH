@@ -1,6 +1,6 @@
 const fs=require("fs"),assert=require("assert"),p=require("../package.json"),s=fs.readFileSync("server.js","utf8"),html=fs.readFileSync("index.html","utf8");
 assert(s.includes("const textualPrefix=(String(before).match(/^\\s*((?:\\d{1,3}|[A-Za-z])[.)]\\s+)/)||[])[1]||\"\""),"textual numbering preservation missing");
-assert(s.includes("const safeNewText=textualPrefix&&!replacementHasPrefix?textualPrefix+newText:newText"),"number/list prefix repair missing");
+assert(s.includes('const safeNewText=textualPrefix?textualPrefix+newText.replace(/^\\s*(?:\\d{1,3}|[A-Za-z])[.)]\\s+/," ").trimStart():newText')||s.includes('const safeNewText=textualPrefix?textualPrefix+newText.replace(/^\\s*(?:\\d{1,3}|[A-Za-z])[.)]\\s+/,""):newText'),"exact number/list prefix repair missing");
 assert(s.includes("NÃO INVENTE REGRA LOCAL"),"local-policy prompt guard missing");
 assert(s.includes("REFERÊNCIA TÉCNICA DIRETA"),"direct technical-reference rule missing");
 assert(s.includes("REVISÃO TEXTUAL"),"controlled orthographic review missing");
