@@ -1356,7 +1356,7 @@ const SCIENTIFIC_AUDIT_POP={
 };
 function auditPop(code){return SCIENTIFIC_AUDIT_POP[String(code||"").trim()]||null}
 function isOfficialScientificReference(ref){try{const host=new URL(String(ref?.url||"")).hostname.toLowerCase().replace(/^www\./,"");return host==="gov.br"||host.endsWith(".gov.br")||host==="cofen.gov.br"||host.endsWith(".cofen.gov.br")||host.includes("coren-")||host==="sbp.com.br"||host.endsWith(".sbp.com.br")||host==="who.int"||host.endsWith(".who.int")||host==="cdc.gov"||host.endsWith(".cdc.gov");}catch{return false}}
-function latestReferenceYearInDoc(paragraphs){const sec=referenceSectionInfo(paragraphs);if(!sec)return null;const years=[];for(const p of paragraphs){if(p.index<=sec.headingIndex||(sec.stopIndex!=null&&p.index>=sec.stopIndex))continue;for(const y of normalizedText(p.text).match(/(?:19|20)\d{2}/g)||[])years.push(Number(y));}return years.length?Math.max(...years):null;}
+function latestReferenceYearInDoc(paragraphs){const sec=referenceSectionInfo(paragraphs);if(!sec)return null;const years=[];for(const p of paragraphs){if(p.index<=sec.headingIndex||(sec.stopIndex!=null&&p.index>=sec.stopIndex))continue;for(const y of normalizedText(p.text).match(/\b(?:19|20)\d{2}\b/g)||[])years.push(Number(y));}return years.length?Math.max(...years):null;}
 app.post("/api/ai/revise-pop",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente o Administrador Proprietário pode iniciar revisão com IA."});
   try{
