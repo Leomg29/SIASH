@@ -317,7 +317,7 @@ function wordReferenceEligibility(ref){
   if(!isSpecificBibliographicTitle(title))return {eligible:false,reason:"Título insuficiente para identificar uma publicação técnica específica."};
   if(!url)return {eligible:false,reason:"URL ausente ou inválida; a fonte fica somente na auditoria da SIASH."};
   if(isGenericReferenceUrl(url))return {eligible:false,reason:"Página institucional genérica não é referência bibliográfica e não será inserida no Word."};
-  if(/\\b(lança|lancamento|lançamento|not[ií]cia|news|blog|divulga|anuncia)\\b/i.test(title)&&!/[.]pdf(?:$|[?#])/i.test(url))return {eligible:false,reason:"Página de notícia/divulgação não substitui o documento técnico específico citado e não será inserida no Word."};
+  if(/\b(lança|lancamento|lançamento|not[ií]cia|news|blog|divulga|anuncia)\b/i.test(title)&&!/[.]pdf(?:$|[?#])/i.test(url))return {eligible:false,reason:"Página de notícia/divulgação não substitui o documento técnico específico citado e não será inserida no Word."};
   return {eligible:true,reason:"Fonte possui título bibliográfico identificável e endereço específico."};
 }
 function sourceMatchesChangeReference(ref,source){
@@ -617,11 +617,9 @@ function effectiveAIUpdates(paragraphs,updates,allowed){
     if(!allowed.has(index)||!newText)continue;
     const before=originalByIndex.get(index);if(before==null)continue;
     if(institutionalStructureProtectedText(before))continue;
-    const textualPrefix=(String(before).match(/^\\s*((?:\\d{1,3}|[A-Za-z])[.)]\\s+)/)||[])[1]||"";
-    const safeNewText=textualPrefix&&!new RegExp("^\\\\s*"+textualPrefix.replace(/[.*+?^${}()|[\\]\\\\]/g,"\\\\const before=originalByIndex.get(index);if(before==null)continue;
-    if(institutionalStructureProtectedText(before))continue;
-    if(comparisonNormalizedText(before)===comparisonNormalizedText(newText))continue;
-    dedup.set(index,{paragraph_index:index,before_text:before,new_text:newText,reason:String(u?.reason||"").trim(),references:Array.isArray(u?.references)?u.references.map(String).filter(Boolean):[]});")).test(newText)?textualPrefix+newText:newText;
+    const textualPrefix=(String(before).match(/^\s*((?:\d{1,3}|[A-Za-z])[.)]\s+)/)||[])[1]||"";
+    const replacementHasPrefix=/^\s*(?:\d{1,3}|[A-Za-z])[.)]\s+/.test(newText);
+    const safeNewText=textualPrefix&&!replacementHasPrefix?textualPrefix+newText:newText;
     if(comparisonNormalizedText(before)===comparisonNormalizedText(safeNewText))continue;
     dedup.set(index,{paragraph_index:index,before_text:before,new_text:safeNewText,reason:String(u?.reason||"").trim(),references:Array.isArray(u?.references)?u.references.map(String).filter(Boolean):[]});
   }
