@@ -1,0 +1,12 @@
+const fs=require("fs"),assert=require("assert"),p=require("../package.json"),s=fs.readFileSync("server.js","utf8"),html=fs.readFileSync("index.html","utf8");
+assert(s.includes("const textualPrefix=(String(before).match(/^\\s*((?:\\d{1,3}|[A-Za-z])[.)]\\s+)/)"),"textual numbering preservation missing");
+assert(s.includes("const safeNewText=textualPrefix&&!replacementHasPrefix?textualPrefix+newText:newText"),"number/list prefix repair missing");
+assert(s.includes("NÃO INVENTE REGRA LOCAL"),"local-policy prompt guard missing");
+assert(s.includes("REFERÊNCIA TÉCNICA DIRETA"),"direct technical-reference rule missing");
+assert(s.includes("REVISÃO TEXTUAL"),"controlled orthographic review missing");
+assert(s.includes("introducesLocalPolicy"),"deterministic local-policy detector missing");
+assert(s.includes("Página de notícia/divulgação não substitui o documento técnico específico"),"promotional reference rejection missing");
+assert(s.includes("let contentRevised=baseDocument"),"v0.14.66 declaration regression");
+assert(/^0\.14\.(?:6[8-9]|[7-9][0-9]|[1-9][0-9]{2,})$/.test(p.version));
+assert(html.includes(p.version));
+console.log("v0.14.68 evidence/structure/quality regression OK");
