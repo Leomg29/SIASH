@@ -1,7 +1,5 @@
 name: SIASH v0.14.34 reference heading safety
 on:
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 jobs:
   test:

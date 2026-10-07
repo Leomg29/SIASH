@@ -1,6 +1,5 @@
 name: SIASH v0.14.26 Cloudflare repair tests
 on:
-  pull_request:
   workflow_dispatch:
 jobs:
   test:

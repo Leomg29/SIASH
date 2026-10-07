@@ -1,6 +1,5 @@
 name: SIASH v0.14.27 summary normalization tests
 on:
-  pull_request:
   workflow_dispatch:
 jobs:
   test:

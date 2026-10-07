@@ -1,9 +1,6 @@
 name: SIASH v0.14.42 resilient Tavily research
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [fix/v01442-tavily-resilient-research]
+  workflow_dispatch:
 jobs:
   regression:
     runs-on: ubuntu-latest

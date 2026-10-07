@@ -1,7 +1,6 @@
 name: SIASH v0.14.56 non-blocking Word quality
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest

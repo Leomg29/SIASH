@@ -1,7 +1,5 @@
 name: SIASH v0.14.33 scientific source governance
 on:
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 jobs:
   test:

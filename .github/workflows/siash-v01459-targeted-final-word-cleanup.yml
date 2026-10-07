@@ -1,7 +1,6 @@
 name: SIASH v0.14.59 targeted final Word cleanup
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest

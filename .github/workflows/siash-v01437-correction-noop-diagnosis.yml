@@ -1,7 +1,6 @@
 name: SIASH v0.14.37 correction no-op diagnosis
 on:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest

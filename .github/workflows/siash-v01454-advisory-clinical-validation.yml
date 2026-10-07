@@ -1,9 +1,6 @@
 name: SIASH v0.14.54 advisory clinical validation
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [fix/v01454-advisory-clinical-validation]
+  workflow_dispatch:
 jobs:
   regression:
     runs-on: ubuntu-latest

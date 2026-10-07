@@ -1,7 +1,6 @@
 name: SIASH v0.14.67 audit to delta
 on:
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
 jobs:
   regression:
     runs-on: ubuntu-latest

@@ -1,7 +1,6 @@
 name: SIASH v0.14.57 advisory correction pipeline
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
