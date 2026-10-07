@@ -1,6 +1,5 @@
 name: SIASH v0.14.31 audit actionability
 on:
-  pull_request:
   workflow_dispatch:
 jobs:
   test:
