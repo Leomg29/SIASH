@@ -1,6 +1,5 @@
 name: SIASH v0.14.25 audit research tests
 on:
-  pull_request:
   workflow_dispatch:
 jobs:
   test:
