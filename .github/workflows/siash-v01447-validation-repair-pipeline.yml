@@ -1,9 +1,6 @@
 name: SIASH v0.14.47 validation repair pipeline
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [fix/v01447-validation-repair-pipeline]
+  workflow_dispatch:
 jobs:
   regression:
     runs-on: ubuntu-latest
