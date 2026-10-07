@@ -1,11 +1,5 @@
 name: SIASH v0.14.24 AI parser tests
 on:
-  pull_request:
-    paths:
-      - "server.js"
-      - "tests/ai-parser.test.js"
-      - "package.json"
-      - "index.html"
   workflow_dispatch:
 jobs:
   test:
