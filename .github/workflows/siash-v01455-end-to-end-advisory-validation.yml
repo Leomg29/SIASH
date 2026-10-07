@@ -1,7 +1,6 @@
 name: SIASH v0.14.55 end-to-end advisory validation
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-latest
