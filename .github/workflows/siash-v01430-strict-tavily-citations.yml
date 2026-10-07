@@ -1,6 +1,5 @@
 name: SIASH v0.14.30 strict Tavily citations
 on:
-  pull_request:
   workflow_dispatch:
 jobs:
   test:
