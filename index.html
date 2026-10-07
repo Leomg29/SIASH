@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>SIASH | HospitalIA UTIN — Alpha Consolidada v0.14.68</title>
+<title>SIASH | HospitalIA UTIN — Alpha Consolidada v0.14.69</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
   <div class="login-card">
     <div class="brand-mark">SIASH</div>
     <h1>HospitalIA</h1>
-    <p class="muted">UTI Neonatal • Alpha Consolidada v0.14.68</p>
+    <p class="muted">UTI Neonatal • Alpha Consolidada v0.14.69</p>
     <div id="owner-setup" class="owner-setup hidden">
       <div class="security-badge">Primeiro acesso do Proprietário</div>
       <p class="muted">Crie aqui a credencial exclusiva do Administrador Proprietário. Esta etapa aparece somente enquanto não houver proprietário configurado neste navegador.</p>
@@ -41,7 +41,7 @@
 
 <div id="app-view" class="app-shell hidden">
 <aside class="sidebar">
-  <div class="sidebar-brand"><div class="brand-mark small">SIASH</div><div><strong>HospitalIA</strong><span>UTIN • v0.14.68</span></div></div>
+  <div class="sidebar-brand"><div class="brand-mark small">SIASH</div><div><strong>HospitalIA</strong><span>UTIN • v0.14.69</span></div></div>
   <nav>
     <button data-view="dashboard" class="nav-item active">Dashboard</button>
     <button data-view="plantao" class="nav-item">Meu Plantão</button>
@@ -134,8 +134,18 @@
       <label>Extubação programada<input id="d-extub-prog" type="number" min="0" value="0"></label>
       <label>Extubação acidental<input id="d-extub" type="number" min="0" value="0"></label>
       <label>Lesão por pressão<input id="d-lpp" type="number" min="0" value="0"></label>
-      <label>Hipotermia<input id="d-hypothermia" type="number" min="0" value="0"></label>
-      <label>Hipertermia<input id="d-hyperthermia" type="number" min="0" value="0"></label>
+      <label>Hipotermia — automático<input id="d-hypothermia" type="number" min="0" value="0" readonly><small>Calculado pelos eventos térmicos registrados por leito nesta data.</small></label>
+      <label>Hipertermia — automático<input id="d-hyperthermia" type="number" min="0" value="0" readonly><small>Calculado pelos eventos térmicos registrados por leito nesta data.</small></label>
+      <div class="full">
+        <div class="info-box"><strong>Evento térmico por leito</strong><br>Registre cada episódio abaixo. O SIASH identifica o RN pelo identificador não nominal atualmente associado ao leito e atualiza os indicadores automaticamente.</div>
+        <div class="form-grid four" style="margin-top:12px">
+          <label>Leito<select id="thermal-bed" class="bed-select"></select></label>
+          <label>Alteração<select id="thermal-type"><option>Hipotermia</option><option>Hipertermia</option></select></label>
+          <label>Observação<input id="thermal-note" placeholder="Opcional"></label>
+          <label>&nbsp;<button type="button" id="thermal-add" class="secondary">Registrar evento</button></label>
+        </div>
+        <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Data</th><th>Leito</th><th>RN</th><th>Alteração</th><th>Observação</th><th>Ação</th></tr></thead><tbody id="thermal-table"></tbody></table></div>
+      </div>
       <label class="span2">Observação<input id="d-obs" placeholder="Opcional"></label>
       <div class="full form-actions"><button class="primary" type="submit">Salvar dados do dia</button><button type="button" id="daily-clear" class="secondary">Limpar</button></div>
     </form>
