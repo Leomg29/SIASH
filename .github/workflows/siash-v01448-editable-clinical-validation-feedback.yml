@@ -1,9 +1,6 @@
 name: SIASH v0.14.48 editable clinical validation feedback
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [fix/v01448-editable-clinical-validation-feedback]
+  workflow_dispatch:
 jobs:
   regression:
     runs-on: ubuntu-latest
