@@ -1,6 +1,5 @@
 name: SIASH correction regeneration
 on:
-  pull_request:
   workflow_dispatch:
 jobs:
   test:
