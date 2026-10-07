@@ -1,9 +1,6 @@
 name: SIASH v0.14.52 functional clinical repair
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [fix/v01452-functional-clinical-repair]
+  workflow_dispatch:
 jobs:
   regression:
     runs-on: ubuntu-latest
