@@ -1,5 +1,7 @@
 name: SIASH v01418 final Word sanitization
-on: [push]
+on:
+  push:
+    branches: [fix/v0.14.18-final-word-sanitization]
 permissions:
   contents: write
 jobs:
@@ -21,3 +23,4 @@ jobs:
           git add app.js server.js index.html package.json
           git commit -m 'SIASH v0.14.18 sanitize final published Word' || exit 0
           git push origin HEAD:fix/v0.14.18-final-word-sanitization
+
