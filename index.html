@@ -359,7 +359,8 @@
 
 <!-- COMPARATIVO -->
 <section id="view-comparativo" class="view hidden">
-  <div class="hero"><div><h3>Comparativo Mensal</h3><p>Comparação gráfica do mês atual com os dois meses anteriores.</p></div></div>
+  <div class="hero"><div><h3>Comparativo Mensal</h3><p>Comparação dos indicadores assistenciais nos últimos 3, 6 ou 12 meses.</p></div></div>
+  <div class="panel" style="margin-bottom:14px;padding:12px"><label for="comparison-period">Período de comparação </label><select id="comparison-period"><option value="3">Últimos 3 meses</option><option value="6">Últimos 6 meses</option><option value="12">Últimos 12 meses</option></select></div>
   <div class="comparison-grid">
     <article class="panel comparison-panel"><div class="panel-head"><h3>Taxa de ocupação</h3><span>mês a mês</span></div><div id="comparison-occ" class="bar-chart comparison-chart"></div></article>
     <article class="panel comparison-panel"><div class="panel-head"><h3>Média de permanência</h3><span>mês a mês</span></div><div id="comparison-los" class="bar-chart comparison-chart"></div></article>
@@ -368,6 +369,7 @@
     <article class="panel comparison-panel"><div class="panel-head"><h3>Hipertermia</h3><span>eventos mensais</span></div><div id="comparison-hyperthermia" class="bar-chart comparison-chart"></div></article>
     <article class="panel comparison-panel"><div class="panel-head"><h3>Eventos térmicos</h3><span>hipotermia + hipertermia</span></div><div id="comparison-thermal" class="bar-chart comparison-chart"></div></article>
   </div>
+  <h3>Indicadores Assistenciais — Comparativo Mensal</h3><div class="comparison-grid"><article class="panel comparison-panel"><div class="panel-head"><h3>Admissões</h3><span>total mensal</span></div><div id="comparison-adm" class="bar-chart comparison-chart"></div></article><article class="panel comparison-panel"><div class="panel-head"><h3>Altas</h3><span>total mensal</span></div><div id="comparison-altas" class="bar-chart comparison-chart"></div></article><article class="panel comparison-panel"><div class="panel-head"><h3>Óbitos</h3><span>total mensal</span></div><div id="comparison-deaths" class="bar-chart comparison-chart"></div></article><article class="panel comparison-panel"><div class="panel-head"><h3>Transferências</h3><span>total mensal</span></div><div id="comparison-transf" class="bar-chart comparison-chart"></div></article><article class="panel comparison-panel"><div class="panel-head"><h3>PICCs inseridos</h3><span>total mensal</span></div><div id="comparison-picc" class="bar-chart comparison-chart"></div></article><article class="panel comparison-panel"><div class="panel-head"><h3>Extubações acidentais</h3><span>total mensal</span></div><div id="comparison-extub" class="bar-chart comparison-chart"></div></article><article class="panel comparison-panel"><div class="panel-head"><h3>Lesões por pressão</h3><span>total mensal</span></div><div id="comparison-lpp" class="bar-chart comparison-chart"></div></article><article class="panel comparison-panel"><div class="panel-head"><h3>RN-dia em ventilação mecânica</h3><span>total mensal</span></div><div id="comparison-vmDays" class="bar-chart comparison-chart"></div></article><article class="panel comparison-panel"><div class="panel-head"><h3>Programa PIPA</h3><span>total mensal</span></div><div id="comparison-pipa" class="bar-chart comparison-chart"></div></article></div>
   <article class="panel comparison-summary"><p id="comparison-text" class="summary-text"></p></article>
 </section>
 
