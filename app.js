@@ -281,9 +281,11 @@ function fillMonthSelect(id){const sel=$(id),cur=sel.value;sel.innerHTML=allMont
 function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Pediatria",c.altaPediatria],["Altas → Leito Canguru",c.altaCanguru],["Altas p/ Pediatria/Canguru (total)",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("");const g={};S.pipa.filter(x=>x.month===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
 function renderComparison(){
  const current=currentMonth(),parts=current.split("-").map(Number),months=[];
- for(let offset=-2;offset<=0;offset++){const d=new Date(parts[0],parts[1]-1+offset,1);months.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}`)}
+ const period=Number($("comparison-period")?.value)||3;
+ for(let offset=1-period;offset<=0;offset++){const d=new Date(parts[0],parts[1]-1+offset,1);months.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}`)}
  const data=months.map(m=>({m,...monthStats(m)})),label=x=>x.m.slice(5)+"/"+x.m.slice(2,4);
  const bars=(id,key,format=v=>String(v),minimum=1)=>{const max=Math.max(minimum,...data.map(x=>+x[key]||0));$(id).innerHTML=data.map(x=>`<div class="bar-item"><div class="bar-value">${format(+x[key]||0,x)}</div><div class="bar" style="height:${Math.max(2,(+x[key]||0)/max*100)}%"></div><div class="bar-label">${label(x)}</div></div>`).join("")};
+ ["adm","altas","deaths","transf","picc","extub","lpp","vmDays","pipa"].forEach(k=>bars("comparison-"+k,k));
  bars("comparison-occ","occ",v=>fmt(v,1)+"%",100);
  bars("comparison-los","los",(v,x)=>x.outs?fmt(v,1):"—",1);
  bars("comparison-pd","pd",v=>String(v),1);
@@ -291,8 +293,8 @@ function renderComparison(){
  bars("comparison-hyperthermia","hyperthermia",v=>String(v),1);
  const thermal=data.map(x=>({...x,thermal:(+x.hypothermia||0)+(+x.hyperthermia||0)})),maxThermal=Math.max(1,...thermal.map(x=>x.thermal));
  $("comparison-thermal").innerHTML=thermal.map(x=>`<div class="bar-item"><div class="bar-value">${x.thermal}</div><div class="bar" style="height:${Math.max(2,x.thermal/maxThermal*100)}%"></div><div class="bar-label">${label(x)}</div></div>`).join("");
- const a=data[1],b=data[2],d=b.occ-a.occ,pdDiff=b.pd-a.pd;
- $("comparison-text").textContent=`Últimos 3 meses: ${months.map(m=>m.split("-").reverse().join("/")).join(" • ")}. Entre ${a.m.split("-").reverse().join("/")} e ${b.m.split("-").reverse().join("/")}, a taxa de ocupação apresentou ${d>=0?"aumento":"redução"} de ${fmt(Math.abs(d),1)} ponto(s) percentual(is), e pacientes-dia ${pdDiff>=0?"aumentou":"reduziu"} em ${Math.abs(pdDiff)}. No mês atual foram registrados ${b.hypothermia} evento(s) de hipotermia e ${b.hyperthermia} de hipertermia.`;
+ const a=data[data.length-2],b=data[data.length-1],d=b.occ-a.occ,pdDiff=b.pd-a.pd;
+ $("comparison-text").textContent=`Últimos ${period} meses: ${months.map(m=>m.split("-").reverse().join("/")).join(" • ")}. Entre ${a.m.split("-").reverse().join("/")} e ${b.m.split("-").reverse().join("/")}, a taxa de ocupação apresentou ${d>=0?"aumento":"redução"} de ${fmt(Math.abs(d),1)} ponto(s) percentual(is), e pacientes-dia ${pdDiff>=0?"aumentou":"reduziu"} em ${Math.abs(pdDiff)}. No mês atual foram registrados ${b.hypothermia} evento(s) de hipotermia e ${b.hyperthermia} de hipertermia.`;
 }
 function addMonths(dateStr,n){if(!dateStr)return"";const d=new Date(dateStr+"T12:00:00");d.setMonth(d.getMonth()+n);return d.toISOString().slice(0,10)}
 const DOCS_DB="siash_docs_files_v1",DOCS_DB_STORE="files";
@@ -951,3 +953,6 @@ $("doc-access-form")?.addEventListener("submit",e=>{
 });
 renderAll();
 // v0.12.8 — base consolidada: cadastro assistido de novos documentos + conferência técnica em janela; preserva todas as regras v0.12.5.
+
+// Comparativo mensal: alteração do período sem modificar registros.
+document.getElementById("comparison-period")?.addEventListener("change",renderComparison);
