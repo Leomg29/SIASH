@@ -2,6 +2,11 @@
 (function(){
   const original=renderIndicators;
   // Reaproveita a renderização oficial; não altera a persistência de dados.
+  function formatNumber(value){
+    const n=Number(value);
+    if(!Number.isFinite(n))return "0";
+    return n.toLocaleString("pt-BR",{minimumFractionDigits:0,maximumFractionDigits:2});
+  }
   function barChart(title,items,maxValue,suffix=""){
     const panel=document.createElement("article");panel.className="panel";
     const head=document.createElement("div");head.className="panel-head";
@@ -10,12 +15,12 @@
     if(!items.length){content.textContent="Sem lançamentos nesta competência.";panel.appendChild(content);return panel;}
     const max=Math.max(1,maxValue||0,...items.map(x=>Number(x.value)||0));
     items.forEach(item=>{
-      const line=document.createElement("div");line.style.cssText="display:grid;grid-template-columns:minmax(90px,145px) 1fr 70px;gap:10px;align-items:center;font-size:13px";
+      const line=document.createElement("div");line.style.cssText="display:grid;grid-template-columns:minmax(90px,145px) minmax(48px,1fr) minmax(65px,auto);gap:10px;align-items:center;font-size:13px";
       const label=document.createElement("span");label.textContent=item.label;
       const track=document.createElement("div");track.style.cssText="background:#edf1f3;border-radius:6px;overflow:hidden;height:14px";
       const fill=document.createElement("div");fill.style.cssText="background:#995a35;height:100%;width:"+Math.max(0,Math.min(100,(Number(item.value)||0)/max*100))+"%";
       track.appendChild(fill);
-      const value=document.createElement("strong");value.style.textAlign="right";value.textContent=String(item.value)+suffix;
+      const value=document.createElement("strong");value.style.cssText="text-align:right;min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums";value.textContent=formatNumber(item.value)+suffix;
       line.append(label,track,value);content.appendChild(line);
     });panel.appendChild(content);return panel;
   }
