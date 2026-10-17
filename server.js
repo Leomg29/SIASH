@@ -132,7 +132,7 @@ async function migrateLegacyPending(){
   try{
     await client.query('BEGIN');
     const state=await client.query('SELECT payload FROM siash_state WHERE id=1 FOR SHARE');
-    const legacy=state.rows[0]?.payload?.pending;
+    const legacy=state.rows[0]?.payload?.state?.pending;
     if(Array.isArray(legacy)){
       for(let i=0;i<legacy.length;i++){
         const p=legacy[i];if(!p||typeof p!=='object')continue;
