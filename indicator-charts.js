@@ -41,5 +41,6 @@
     container.appendChild(grid);
   }
   renderIndicators=function(){original();renderCharts();};
-  // A primeira renderização já é feita por app.js; evita execução duplicada.
+  // app.js renderiza antes deste script; desenha os gráficos na carga inicial.
+  if(document.getElementById("indicator-month"))renderCharts();
 })();
