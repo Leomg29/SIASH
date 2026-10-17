@@ -1476,12 +1476,15 @@ app.get("/api/users",auth,async(req,res)=>{
 });
 app.post("/api/users",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente Administrador Proprietário."});
-  const username=String(req.body.username||"").trim(), password=String(req.body.password||""), role=req.body.role==="owner"?"owner":"operational";
-  if(!username||password.length<8)return res.status(400).json({error:"Dados inválidos."});
+  const username=String(req.body?.username||"").trim(),password=String(req.body?.password||"");
+  if(!/^[a-zA-Z0-9._-]{3,64}$/.test(username)||password.length<10||password.length>128)
+    return res.status(400).json({error:"Login: 3 a 64 caracteres (letras, números, ponto, hífen ou sublinhado). Senha: 10 a 128 caracteres."});
   const hash=await bcrypt.hash(password,12);
-  await pool.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,$3) ON CONFLICT(username) DO UPDATE SET password_hash=EXCLUDED.password_hash,role=EXCLUDED.role",[username,hash,role]);
-  await audit(req.user.u,"Usuário Cloud criado/alterado.",{username,role});
-  res.json({ok:true});
+  try{
+    await pool.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,'operational')",[username,hash]);
+  }catch(e){if(e.code==="23505")return res.status(409).json({error:"Este login já existe. Nenhuma senha foi alterada."});throw e}
+  await audit(req.user.u,"Usuário operacional Cloud criado.",{username});
+  res.status(201).json({ok:true,username});
 });
 
 app.use(express.static(__dirname,{extensions:["html"]}));
