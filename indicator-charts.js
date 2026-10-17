@@ -18,9 +18,10 @@
       const line=document.createElement("div");line.style.cssText="display:grid;grid-template-columns:minmax(90px,145px) minmax(48px,1fr) minmax(65px,auto);gap:10px;align-items:center;font-size:13px";
       const label=document.createElement("span");label.textContent=item.label;
       const track=document.createElement("div");track.style.cssText="background:#edf1f3;border-radius:6px;overflow:hidden;height:14px";
-      const fill=document.createElement("div");fill.style.cssText="background:#995a35;height:100%;width:"+Math.max(0,Math.min(100,(Number(item.value)||0)/max*100))+"%";
+      const missing=item.value===null||item.value===undefined;
+      const fill=document.createElement("div");fill.style.cssText="background:#995a35;height:100%;width:"+(missing?0:Math.max(0,Math.min(100,(Number(item.value)||0)/max*100)))+"%";
       track.appendChild(fill);
-      const value=document.createElement("strong");value.style.cssText="text-align:right;min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums";value.textContent=formatNumber(item.value)+suffix;
+      const value=document.createElement("strong");value.style.cssText="text-align:right;min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums";value.textContent=missing?"Sem dados":formatNumber(item.value)+suffix;
       line.append(label,track,value);content.appendChild(line);
     });panel.appendChild(content);return panel;
   }
@@ -36,7 +37,7 @@
     return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
   }
   function monthlyChart(label,key,months){
-    const items=months.map(m=>({label:m.slice(5)+"/"+m.slice(0,4),value:Number(monthStats(m)[key])||0}));
+    const items=months.map(m=>{const stats=monthStats(m);return {label:m.slice(5)+"/"+m.slice(0,4),value:stats.days?Number(stats[key])||0:null};});
     return barChart(label,items,["occ"].includes(key)?100:undefined,key==="occ"?"%":key==="los"?" d":"");
   }
   function renderCharts(){
@@ -49,12 +50,12 @@
     container.replaceChildren();
     const heading=document.createElement("h3");heading.textContent="Painel gráfico completo dos indicadores";
     const note=document.createElement("p");note.className="muted";
-    note.textContent="Atualização automática pelos lançamentos existentes. Comparativos dos últimos seis meses até a competência selecionada; meses sem dados aparecem zerados. Valores atuais são mostrados separadamente.";
+    note.textContent="Atualização automática pelos lançamentos existentes. Comparativos dos últimos seis meses até a competência selecionada; meses sem lançamentos diários são identificados como "Sem dados", sem confundir ausência de registros com valor zero. Valores atuais são mostrados separadamente.";
     container.append(heading,note);
     const daily=rows.map(r=>({label:r.date.slice(8,10)+"/"+r.date.slice(5,7),value:Number(r.internados)||0}));
     const evolution=document.createElement("div");evolution.className="comparison-grid";
     evolution.appendChild(barChart("Pacientes-dia por data",daily));
-    evolution.appendChild(barChart("Ocupação mensal (%)",months.map(m=>({label:m.slice(5)+"/"+m.slice(0,4),value:Number(monthStats(m).occ.toFixed(1))})),100,"%"));
+    evolution.appendChild(barChart("Ocupação mensal (%)",months.map(m=>({label:m.slice(5)+"/"+m.slice(0,4),value:monthStats(m).days?Number(monthStats(m).occ.toFixed(2)):null})),100,"%"));
     evolution.appendChild(monthlyChart("Pacientes-dia por mês","pd",months));
     evolution.appendChild(monthlyChart("Média de permanência por mês","los",months));
     container.appendChild(evolution);
