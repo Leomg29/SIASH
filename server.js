@@ -39,6 +39,7 @@ async function initDb(){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_by TEXT
     );
+    ALTER TABLE siash_state ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 1;
     CREATE TABLE IF NOT EXISTS siash_documents(
       doc_key TEXT PRIMARY KEY,
       file_name TEXT,
@@ -193,18 +194,26 @@ app.get("/api/pending/:id/history",auth,async(req,res)=>{
 });
 
 app.get("/api/state",auth,async(req,res)=>{
-  const q=await pool.query("SELECT payload,updated_at,updated_by FROM siash_state WHERE id=1");
+  const q=await pool.query("SELECT payload,updated_at,updated_by,revision FROM siash_state WHERE id=1");
   if(!q.rows.length) return res.json({exists:false});
-  res.json({exists:true,payload:q.rows[0].payload,updated_at:q.rows[0].updated_at,updated_by:q.rows[0].updated_by});
+  res.json({exists:true,payload:q.rows[0].payload,updated_at:q.rows[0].updated_at,updated_by:q.rows[0].updated_by,revision:Number(q.rows[0].revision)});
 });
 app.put("/api/state",auth,async(req,res)=>{
-  const payload=req.body?.payload;
-  if(!payload || typeof payload!=="object") return res.status(400).json({error:"Estado inválido."});
-  const client=await pool.connect();try{await client.query("BEGIN");const cur=await client.query("SELECT payload FROM siash_state WHERE id=1 FOR UPDATE");if(cur.rows.length)await client.query("INSERT INTO siash_state_history(payload,saved_by,reason) VALUES($1,$2,$3)",[cur.rows[0].payload,req.user.u,req.body?.reason||"Antes de atualização do estado"]);await client.query(`
-    INSERT INTO siash_state(id,payload,updated_at,updated_by) VALUES(1,$1,NOW(),$2)
-    ON CONFLICT(id) DO UPDATE SET payload=EXCLUDED.payload,updated_at=NOW(),updated_by=EXCLUDED.updated_by
-  `,[payload,req.user.u]);await client.query("COMMIT")}catch(e){await client.query("ROLLBACK");throw e}finally{client.release()}
-  res.json({ok:true,updated_at:new Date().toISOString()});
+  const payload=req.body?.payload,base=Number(req.body?.base_revision);
+  if(!payload||typeof payload!=="object"||Array.isArray(payload))return res.status(400).json({error:"Estado inválido."});
+  if(!Number.isSafeInteger(base)||base<1)return res.status(428).json({error:"Atualize a sessão para sincronizar a versão dos dados antes de salvar."});
+  const client=await pool.connect();
+  try{
+    await client.query("BEGIN");
+    const cur=await client.query("SELECT payload,revision FROM siash_state WHERE id=1 FOR UPDATE");
+    if(!cur.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"Estado central não encontrado. Recarregue os dados.",conflict:true});}
+    const current=Number(cur.rows[0].revision);
+    if(current!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Outro profissional salvou alterações antes de você. Seus dados locais foram preservados; não atualize a página antes de exportar ou conferir seus lançamentos.",conflict:true,current_revision:current});}
+    await client.query("INSERT INTO siash_state_history(payload,saved_by,reason) VALUES($1,$2,$3)",[cur.rows[0].payload,req.user.u,req.body?.reason||"Antes de atualização do estado"]);
+    const updated=await client.query("UPDATE siash_state SET payload=$1,updated_at=NOW(),updated_by=$2,revision=revision+1 WHERE id=1 RETURNING revision,updated_at",[payload,req.user.u]);
+    await client.query("COMMIT");
+    return res.json({ok:true,revision:Number(updated.rows[0].revision),updated_at:updated.rows[0].updated_at});
+  }catch(e){try{await client.query("ROLLBACK")}catch(_){}throw e}finally{client.release()}
 });
 app.put("/api/state/init",auth,async(req,res)=>{
   const exists=await pool.query("SELECT 1 FROM siash_state WHERE id=1");
