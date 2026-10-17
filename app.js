@@ -279,7 +279,7 @@ let sharedPending=[],pendingLoaded=false,pendingLoading=false;
 async function loadSharedPending(){
  if(!SIASH_CLOUD.token||pendingLoading)return;
  pendingLoading=true;
- try{const data=await cloudJson("/api/pending");sharedPending=data.items||[];pendingLoaded=true;renderPending();const counter=$("m-pendencias");if(counter)counter.textContent=sharedPending.filter(p=>p.status!=="Concluída").length+S.pending.filter(p=>!p.done).length;}
+ try{const data=await cloudJson("/api/pending");sharedPending=data.items||[];pendingLoaded=true;renderPending();const counter=$("m-pendencias");if(counter)counter.textContent=sharedPending.filter(p=>p.status!=="Concluída").length;}
  catch(e){pendingLoaded=false;renderPending();showToast("Não foi possível sincronizar pendências: "+e.message,3000)}
  finally{pendingLoading=false}
 }
@@ -290,10 +290,10 @@ function renderPending(){
   const options=["Pendente","Em andamento","Concluída"].map(st=>`<option value="${st}" ${p.status===st?"selected":""}>${st}</option>`).join("");
   return `<div class="pending-row" style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid #ddd"><span style="flex:1;min-width:210px"><strong>${safe(label)}</strong> • ${safe(p.priority)} — ${safe(p.description)}<br><small>Criada por ${safe(p.created_by)} · ${safe(new Date(p.created_at).toLocaleString("pt-BR"))}${p.updated_by?" · Atualizada por "+safe(p.updated_by):""}</small></span><label>Situação<select data-pending-id="${p.id}">${options}</select></label><button type="button" class="secondary" data-history-id="${p.id}">Histórico</button></div>`;
  }).join("");
- const legacy=S.pending.length?`<h4>Registros anteriores (histórico legado)</h4>`+S.pending.map((p,i)=>`<div class="pending-row"><input type="checkbox" ${p.done?"checked":""} onchange="togglePending(${i})"><span><strong>${safe(p.bed)}</strong> • ${safe(p.priority)} — ${safe(p.text)}</span></div>`).join(""):"";
+ const legacy=!pendingLoaded&&S.pending.length?`<h4>Registros anteriores (aguardando migração)</h4>`+S.pending.map(p=>`<div class="pending-row"><span><strong>${safe(p.bed)}</strong> • ${safe(p.priority)} — ${safe(p.text)} · ${p.done?"Concluída":"Pendente"}</span></div>`).join(""):"";
  list.innerHTML=(pendingLoaded?(cloud||'<p class="muted">Nenhuma pendência compartilhada cadastrada.</p>'):'<p class="muted">Pendências compartilhadas aguardando sincronização.</p>')+legacy;
 }
-window.togglePending=i=>{S.pending[i].done=!S.pending[i].done;save()}
+// Registros legados são migrados no servidor; evitar alterações locais que causem divergência.
 async function changeSharedPending(id,status){
  try{await cloudJson("/api/pending/"+id,{method:"PATCH",body:JSON.stringify({status})});await loadSharedPending();showToast("Pendência atualizada",1400)}
  catch(e){alert("Não foi possível atualizar: "+e.message);await loadSharedPending()}
