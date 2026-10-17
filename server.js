@@ -139,7 +139,7 @@ async function migrateLegacyPending(){
         const description=String(p.text||'').trim().slice(0,2000);
         if(!description)continue;
         const rawBed=String(p.bed||'').trim();
-        const match=rawBed.match(/(?:Leito\\s*0*)?(\\d{1,2})/i);
+        const match=rawBed.match(/(?:Leito\s*0*)?(\d{1,2})/i);
         const bed=match&&Number(match[1])>=1&&Number(match[1])<=10?String(Number(match[1])):null;
         const priority=['Normal','Alta','Crítica'].includes(p.priority)?p.priority:'Normal';
         const status=p.done?'Concluída':'Pendente';
