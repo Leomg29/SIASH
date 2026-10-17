@@ -288,7 +288,7 @@ function renderPending(){
  const cloud=sharedPending.map(p=>{
   const label=p.scope==="sector"?"Geral / Setor":"Leito "+pad(Number(p.bed));
   const options=["Pendente","Em andamento","Concluída"].map(st=>`<option value="${st}" ${p.status===st?"selected":""}>${st}</option>`).join("");
-  return `<div class="pending-row" style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid #ddd"><span style="flex:1;min-width:210px"><strong>${safe(label)}</strong> • ${safe(p.priority)} — ${safe(p.description)}<br><small>Criada por ${safe(p.created_by)} · ${safe(new Date(p.created_at).toLocaleString("pt-BR"))}${p.updated_by?" · Atualizada por "+safe(p.updated_by):""}</small></span><label>Situação<select data-pending-id="${p.id}">${options}</select></label><button type="button" class="secondary" data-history-id="${p.id}">Histórico</button></div>`;
+  return `<div class="pending-row" style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid #ddd"><span style="flex:1;min-width:210px"><strong>${safe(label)}</strong> • ${safe(p.priority)} — ${safe(p.description)}<br><small>Criada por ${safe(p.created_by)} · ${safe(new Date(p.created_at).toLocaleString("pt-BR"))}${p.updated_by?" · Atualizada por "+safe(p.updated_by):""}</small></span><label>Situação<select data-pending-id="${p.id}">${options}</select></label>${p.status!=="Concluída"?`<button type="button" class="primary" data-complete-id="${p.id}">Marcar concluída</button>`:`<strong style="color:#28734b">✓ Concluída</strong>`}<button type="button" class="secondary" data-history-id="${p.id}">Histórico</button></div>`;
  }).join("");
  const legacy=!pendingLoaded&&S.pending.length?`<h4>Registros anteriores (aguardando migração)</h4>`+S.pending.map(p=>`<div class="pending-row"><span><strong>${safe(p.bed)}</strong> • ${safe(p.priority)} — ${safe(p.text)} · ${p.done?"Concluída":"Pendente"}</span></div>`).join(""):"";
  list.innerHTML=(pendingLoaded?(cloud||'<p class="muted">Nenhuma pendência compartilhada cadastrada.</p>'):'<p class="muted">Pendências compartilhadas aguardando sincronização.</p>')+legacy;
@@ -844,6 +844,7 @@ $("pending-scope").addEventListener("change",()=>{$("pending-bed-wrap").style.di
 $("pending-refresh").addEventListener("click",loadSharedPending);
 $("pending-list").addEventListener("change",e=>{const id=e.target.dataset.pendingId;if(id)changeSharedPending(id,e.target.value)});
 $("pending-list").addEventListener("click",async e=>{
+ const complete=e.target.closest("[data-complete-id]");if(complete){await changeSharedPending(complete.dataset.completeId,"Concluída");return;}
  const id=e.target.dataset.historyId;if(!id)return;
  try{const data=await cloudJson("/api/pending/"+id+"/history");alert((data.items||[]).map(x=>new Date(x.created_at).toLocaleString("pt-BR")+" — "+x.actor+": "+x.action+" ("+(x.previous_status||"—")+" → "+(x.new_status||"—")+")").join("\n")||"Sem histórico.")}
  catch(err){alert(err.message)}
