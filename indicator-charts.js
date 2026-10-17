@@ -1,6 +1,7 @@
 /* SIASH — gráficos automáticos de indicadores. Apenas leitura; não altera dados. */
 (function(){
   const original=renderIndicators;
+  // Reaproveita a renderização oficial; não altera a persistência de dados.
   function barChart(title,items,maxValue,suffix=""){
     const panel=document.createElement("article");panel.className="panel";
     const head=document.createElement("div");head.className="panel-head";
@@ -32,7 +33,7 @@
     const grid=document.createElement("div");grid.className="comparison-grid";
     grid.appendChild(barChart("Pacientes-dia por data",daily));
     grid.appendChild(barChart("Admissões e saídas",[{label:"Admissões",value:stats.adm},{label:"Altas",value:stats.altas},{label:"Transferências",value:stats.transf},{label:"Óbitos",value:stats.deaths}]));
-    grid.appendChild(barChart("PICC",[{label:"Inseridos",value:stats.picc},{label:"Retirados",value:stats.piccRemoved},{label:"PICC-dia",value:stats.piccDays}]));
+    grid.appendChild(barChart("PICC",[{label:"Inseridos no mês",value:stats.picc},{label:"Retirados no mês",value:stats.piccRemoved},{label:"PICC-dia",value:stats.piccDays}]));
     grid.appendChild(barChart("Ventilação mecânica",[{label:"VM-dia",value:stats.vmDays},{label:"Intubações",value:stats.intub},{label:"Extubações programadas",value:stats.extubProg},{label:"Extubações acidentais",value:stats.extub}]));
     grid.appendChild(barChart("Segurança assistencial",[{label:"Hipotermia",value:stats.hypothermia},{label:"Hipertermia",value:stats.hyperthermia},{label:"Lesões por pressão",value:stats.lpp}]));
     const pct=Number(stats.occ)||0;
@@ -40,5 +41,5 @@
     container.appendChild(grid);
   }
   renderIndicators=function(){original();renderCharts();};
-  if(document.getElementById("indicator-month"))renderCharts();
+  // A primeira renderização já é feita por app.js; evita execução duplicada.
 })();
