@@ -50,7 +50,7 @@
     container.replaceChildren();
     const heading=document.createElement("h3");heading.textContent="Painel gráfico completo dos indicadores";
     const note=document.createElement("p");note.className="muted";
-    note.textContent="Atualização automática pelos lançamentos existentes. Comparativos dos últimos seis meses até a competência selecionada; meses sem lançamentos diários são identificados como "Sem dados", sem confundir ausência de registros com valor zero. Valores atuais são mostrados separadamente.";
+    note.textContent="Atualização automática pelos lançamentos existentes. Comparativos dos últimos seis meses até a competência selecionada; meses sem lançamentos diários são identificados como 'Sem dados', sem confundir ausência de registros com valor zero. Valores atuais são mostrados separadamente.";
     container.append(heading,note);
     const daily=rows.map(r=>({label:r.date.slice(8,10)+"/"+r.date.slice(5,7),value:Number(r.internados)||0}));
     const evolution=document.createElement("div");evolution.className="comparison-grid";
