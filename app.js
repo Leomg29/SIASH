@@ -32,12 +32,12 @@ async function cloudLoadAfterLogin(){
  const remote=await cloudJson("/api/state");
  if(remote.exists&&remote.payload?.state){
    S=remote.payload.state; if(remote.payload.security)setSecurityState(remote.payload.security);
-   normalize();localStorage.setItem(STORE,JSON.stringify(S));SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");return true;
+   normalize();localStorage.setItem(STORE,JSON.stringify(S));SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
  }
  const localRaw=localStorage.getItem(STORE);
  if(localRaw){
    await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
-   SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");return true;
+   SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
  }
  return false;
 }
@@ -275,8 +275,30 @@ window.deletePicc=i=>{
 
 function renderPipa(){const m=$("pipa-month").value||currentMonth();if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>x.month===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>`<tr><td>${r.month.split("-").reverse().join("/")}</td><td>${safe(r.city)}</td><td>${r.qty}</td><td>${safe(r.note)}</td><td><button class="ghost" onclick="deletePipa(${S.pipa.length-1-idx})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="5">Nenhum encaminhamento registrado.</td></tr>'}
 window.deletePipa=i=>{S.pipa.splice(i,1);save()}
-function renderPending(){$("pending-list").innerHTML=S.pending.length?S.pending.map((p,i)=>`<div class="pending-row"><input type="checkbox" ${p.done?"checked":""} onchange="togglePending(${i})"><span><strong>${safe(p.bed)}</strong> • ${safe(p.priority)} — ${safe(p.text)}</span></div>`).join(""):'<span class="muted">Sem pendências.</span>'}
-window.togglePending=i=>{S.pending[i].done=!S.pending[i].done;save()}
+let sharedPending=[],pendingLoaded=false,pendingLoading=false;
+async function loadSharedPending(){
+ if(!SIASH_CLOUD.token||pendingLoading)return;
+ pendingLoading=true;
+ try{const data=await cloudJson("/api/pending");sharedPending=data.items||[];pendingLoaded=true;renderPending();const counter=$("m-pendencias");if(counter)counter.textContent=sharedPending.filter(p=>p.status!=="Concluída").length;}
+ catch(e){pendingLoaded=false;renderPending();showToast("Não foi possível sincronizar pendências: "+e.message,3000)}
+ finally{pendingLoading=false}
+}
+function renderPending(){
+ const list=$("pending-list");if(!list)return;
+ const cloud=sharedPending.map(p=>{
+  const label=p.scope==="sector"?"Geral / Setor":"Leito "+pad(Number(p.bed));
+  const options=["Pendente","Em andamento","Concluída"].map(st=>`<option value="${st}" ${p.status===st?"selected":""}>${st}</option>`).join("");
+  return `<div class="pending-row" style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid #ddd"><span style="flex:1;min-width:210px"><strong>${safe(label)}</strong> • ${safe(p.priority)} — ${safe(p.description)}<br><small>Criada por ${safe(p.created_by)} · ${safe(new Date(p.created_at).toLocaleString("pt-BR"))}${p.updated_by?" · Atualizada por "+safe(p.updated_by):""}</small></span><label>Situação<select data-pending-id="${p.id}">${options}</select></label>${p.status!=="Concluída"?`<button type="button" class="primary" data-complete-id="${p.id}">Marcar concluída</button>`:`<strong style="color:#28734b">✓ Concluída</strong>`}<button type="button" class="secondary" data-history-id="${p.id}">Histórico</button></div>`;
+ }).join("");
+ const legacy=!pendingLoaded&&S.pending.length?`<h4>Registros anteriores (aguardando migração)</h4>`+S.pending.map(p=>`<div class="pending-row"><span><strong>${safe(p.bed)}</strong> • ${safe(p.priority)} — ${safe(p.text)} · ${p.done?"Concluída":"Pendente"}</span></div>`).join(""):"";
+ list.innerHTML=(pendingLoaded?(cloud||'<p class="muted">Nenhuma pendência compartilhada cadastrada.</p>'):'<p class="muted">Pendências compartilhadas aguardando sincronização.</p>')+legacy;
+}
+// Registros legados são migrados no servidor; evitar alterações locais que causem divergência.
+async function changeSharedPending(id,status){
+ try{await cloudJson("/api/pending/"+id,{method:"PATCH",body:JSON.stringify({status})});await loadSharedPending();showToast("Pendência atualizada",1400)}
+ catch(e){alert("Não foi possível atualizar: "+e.message);await loadSharedPending()}
+}
+
 function fillMonthSelect(id){const sel=$(id),cur=sel.value;sel.innerHTML=allMonths().map(m=>`<option value="${m}">${m.split("-").reverse().join("/")}</option>`).join("");sel.value=allMonths().includes(cur)?cur:currentMonth()}
 function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Pediatria",c.altaPediatria],["Altas → Leito Canguru",c.altaCanguru],["Altas p/ Pediatria/Canguru (total)",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("");const g={};S.pipa.filter(x=>x.month===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
 function renderComparison(){
@@ -761,7 +783,7 @@ async function runCloudflareFallbackDiagnostic(){
  }finally{btn.disabled=false}
 }
 function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderHuddle();renderRH();renderSettings();renderAdmin();applyPermissions()}
-document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));btn.classList.add("active");document.querySelectorAll(".view").forEach(v=>v.classList.add("hidden"));$("view-"+btn.dataset.view).classList.remove("hidden");$("page-title").textContent=btn.textContent;renderAll();if(btn.dataset.view==="administracao")loadAdminUsers()}))
+document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));btn.classList.add("active");document.querySelectorAll(".view").forEach(v=>v.classList.add("hidden"));$("view-"+btn.dataset.view).classList.remove("hidden");$("page-title").textContent=btn.textContent;renderAll();if(btn.dataset.view==="administracao")loadAdminUsers();if(btn.dataset.view==="pendencias")loadSharedPending()}))
 $("admin-user-form").addEventListener("submit",async e=>{
  e.preventDefault();
  if(!isOwner())return alert("Somente o Administrador Proprietário pode cadastrar usuários.");
@@ -839,7 +861,22 @@ $("picc-removal-form").addEventListener("submit",e=>{
 
 $("pipa-form").addEventListener("submit",e=>{e.preventDefault();if(!$("pipa-month").value||!$("pipa-city").value)return alert("Informe competência e município.");S.pipa.push({month:$("pipa-month").value,city:$("pipa-city").value,qty:+$("pipa-qty").value||0,note:$("pipa-note").value.trim(),updated:nowBR()});$("pipa-qty").value=0;$("pipa-note").value="";save()})
 $("pipa-month").addEventListener("change",renderPipa)
-$("pending-form").addEventListener("submit",e=>{e.preventDefault();S.pending.push({bed:$("pending-bed").value,priority:$("pending-priority").value,text:$("pending-text").value.trim(),done:false});$("pending-text").value="";save()})
+$("pending-form").addEventListener("submit",async e=>{
+ e.preventDefault();
+ const scope=$("pending-scope").value,description=$("pending-text").value.trim();
+ if(!description)return;
+ try{await cloudJson("/api/pending",{method:"POST",body:JSON.stringify({scope,bed:$("pending-bed").value,priority:$("pending-priority").value,description})});$("pending-text").value="";await loadSharedPending();showToast("Pendência compartilhada registrada",1600)}
+ catch(err){alert("Pendência não salva: "+err.message)}
+});
+$("pending-scope").addEventListener("change",()=>{$("pending-bed-wrap").style.display=$("pending-scope").value==="sector"?"none":""});
+$("pending-refresh").addEventListener("click",loadSharedPending);
+$("pending-list").addEventListener("change",e=>{const id=e.target.dataset.pendingId;if(id)changeSharedPending(id,e.target.value)});
+$("pending-list").addEventListener("click",async e=>{
+ const complete=e.target.closest("[data-complete-id]");if(complete){await changeSharedPending(complete.dataset.completeId,"Concluída");return;}
+ const id=e.target.dataset.historyId;if(!id)return;
+ try{const data=await cloudJson("/api/pending/"+id+"/history");alert((data.items||[]).map(x=>new Date(x.created_at).toLocaleString("pt-BR")+" — "+x.actor+": "+x.action+" ("+(x.previous_status||"—")+" → "+(x.new_status||"—")+")").join("\n")||"Sem histórico.")}
+ catch(err){alert(err.message)}
+});
 $("indicator-month").addEventListener("change",renderIndicators)
 
 
