@@ -723,6 +723,18 @@ function hideDocNewPanel(){$("doc-new-panel").classList.add("hidden");$("doc-for
 function renderHuddle(){const total=S.huddle.length,done=S.huddle.filter(x=>x.done).length,open=total-done,now=Date.now(),over=S.huddle.filter(x=>!x.done&&x.deadline&&new Date(x.deadline).getTime()<now).length;$("h-open").textContent=open;$("h-done").textContent=done;$("h-overdue").textContent=over;$("h-resolution").textContent=total?Math.round(done/total*100)+"%":"0%";$("huddle-table").innerHTML=S.huddle.map((x,i)=>`<tr><td>${safe(x.sector)}</td><td>${safe(x.problem)}</td><td>${safe(x.action)}</td><td>${safe(x.owner)}</td><td>${x.deadline?new Date(x.deadline).toLocaleString("pt-BR"):"—"}</td><td>${safe(x.priority)}</td><td class="${x.done?"status-ok":(x.deadline&&new Date(x.deadline).getTime()<now?"status-bad":"status-warn")}">${x.done?"Concluída":"Aberta"}</td><td><button class="ghost" onclick="toggleHuddle(${i})">${x.done?"Reabrir":"Concluir"}</button></td></tr>`).join("")||'<tr><td colspan="8">Nenhuma ação registrada.</td></tr>'}
 window.toggleHuddle=i=>{S.huddle[i].done=!S.huddle[i].done;save()}
 function renderRH(){$("rh-table").innerHTML=[...S.rh].reverse().map(x=>`<tr><td>${safe(x.type)}</td><td>${safe(x.name)}</td><td>${safe(x.detail)}</td><td>${safe(x.status)}</td></tr>`).join("")||'<tr><td colspan="4">Nenhuma solicitação registrada.</td></tr>'}
+let adminUsersLoading=false;
+async function loadAdminUsers(){
+ if(!isOwner()||!SIASH_CLOUD.token||adminUsersLoading)return;
+ adminUsersLoading=true;
+ try{
+  const users=await cloudJson("/api/users");
+  const count=$("admin-operational-count");if(count)count.textContent=users.filter(u=>u.role==="operational").length;
+  const list=$("admin-user-list");
+  if(list)list.innerHTML='<table><thead><tr><th>Login</th><th>Perfil</th><th>Cadastro</th></tr></thead><tbody>'+users.map(u=>'<tr><td>'+safe(u.username)+'</td><td>'+(u.role==="owner"?"Administrador Proprietário":"Operacional")+'</td><td>'+safe(new Date(u.created_at).toLocaleDateString("pt-BR"))+'</td></tr>').join("")+'</tbody></table>';
+ }catch(e){const el=$("admin-user-feedback");if(el)el.textContent="Falha ao consultar usuários: "+e.message}
+ finally{adminUsersLoading=false}
+}
 function renderAdmin(){const sec=securityState()||{};if($("admin-owner-name"))$("admin-owner-name").textContent=SESSION.user||sec.ownerUser||"—";if($("admin-audit-count"))$("admin-audit-count").textContent=(sec.audit||[]).length;if($("admin-audit"))$("admin-audit").innerHTML=(sec.audit||[]).slice(0,15).map(x=>`<div class="event"><strong>${safe(x.when)} • ${safe(x.user)}</strong><br>${safe(x.action)}</div>`).join("")||'<span class="muted">Nenhuma alteração administrativa registrada.</span>'}
 function renderSettings(){
  $("s-unit").value=S.settings.unit;$("s-beds").value=S.settings.beds;$("s-intensive").value=S.settings.intensive;$("s-intermediate").value=S.settings.intermediate;$("s-target").value=S.settings.target;$("s-hospital").value=S.settings.hospital;
@@ -749,7 +761,23 @@ async function runCloudflareFallbackDiagnostic(){
  }finally{btn.disabled=false}
 }
 function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderHuddle();renderRH();renderSettings();renderAdmin();applyPermissions()}
-document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));btn.classList.add("active");document.querySelectorAll(".view").forEach(v=>v.classList.add("hidden"));$("view-"+btn.dataset.view).classList.remove("hidden");$("page-title").textContent=btn.textContent;renderAll()}))
+document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));btn.classList.add("active");document.querySelectorAll(".view").forEach(v=>v.classList.add("hidden"));$("view-"+btn.dataset.view).classList.remove("hidden");$("page-title").textContent=btn.textContent;renderAll();if(btn.dataset.view==="administracao")loadAdminUsers()}))
+$("admin-user-form").addEventListener("submit",async e=>{
+ e.preventDefault();
+ if(!isOwner())return alert("Somente o Administrador Proprietário pode cadastrar usuários.");
+ const username=$("admin-new-user").value.trim(),password=$("admin-new-pass").value,confirmPass=$("admin-new-pass-confirm").value,feedback=$("admin-user-feedback");
+ if(!/^[a-zA-Z0-9._-]{3,64}$/.test(username))return feedback.textContent="Informe um login de 3 a 64 caracteres, sem espaços.";
+ if(password.length<10||password.length>128)return feedback.textContent="A senha deve ter de 10 a 128 caracteres.";
+ if(password!==confirmPass)return feedback.textContent="As senhas não coincidem.";
+ const button=e.currentTarget.querySelector('button[type="submit"]');button.disabled=true;feedback.textContent="Cadastrando...";
+ try{
+  await cloudJson("/api/users",{method:"POST",body:JSON.stringify({username,password})});
+  $("admin-new-pass").value="";$("admin-new-pass-confirm").value="";$("admin-new-user").value="";
+  feedback.textContent="Usuário operacional cadastrado com sucesso.";await loadAdminUsers();
+ }catch(err){feedback.textContent="Cadastro não realizado: "+err.message}
+ finally{button.disabled=false}
+});
+$("admin-users-refresh").addEventListener("click",loadAdminUsers);
 $("owner-create-btn").addEventListener("click",async()=>{
  const user=$("owner-user").value.trim(),pass=$("owner-pass").value,pass2=$("owner-pass2").value;
  if(!user)return alert("Informe o usuário proprietário.");if(pass.length<10)return alert("A senha proprietária deve ter pelo menos 10 caracteres.");if(pass!==pass2)return alert("As senhas não coincidem.");
