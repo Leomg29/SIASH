@@ -30,7 +30,7 @@
     const note=document.createElement("p");note.className="muted";note.textContent="Dados da competência selecionada. Correções e exclusões dos lançamentos são refletidas automaticamente.";
     container.append(heading,note);
     const grid=document.createElement("div");grid.className="comparison-grid";
-    grid.appendChild(barChart("Pacientes-dia por data",daily,stats.ld));
+    grid.appendChild(barChart("Pacientes-dia por data",daily));
     grid.appendChild(barChart("Admissões e saídas",[{label:"Admissões",value:stats.adm},{label:"Altas",value:stats.altas},{label:"Transferências",value:stats.transf},{label:"Óbitos",value:stats.deaths}]));
     grid.appendChild(barChart("PICC",[{label:"Inseridos",value:stats.picc},{label:"Retirados",value:stats.piccRemoved},{label:"PICC-dia",value:stats.piccDays}]));
     grid.appendChild(barChart("Ventilação mecânica",[{label:"VM-dia",value:stats.vmDays},{label:"Intubações",value:stats.intub},{label:"Extubações programadas",value:stats.extubProg},{label:"Extubações acidentais",value:stats.extub}]));
