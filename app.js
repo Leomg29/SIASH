@@ -845,7 +845,7 @@ $("pending-refresh").addEventListener("click",loadSharedPending);
 $("pending-list").addEventListener("change",e=>{const id=e.target.dataset.pendingId;if(id)changeSharedPending(id,e.target.value)});
 $("pending-list").addEventListener("click",async e=>{
  const id=e.target.dataset.historyId;if(!id)return;
- try{const data=await cloudJson("/api/pending/"+id+"/history");alert((data.items||[]).map(x=>new Date(x.created_at).toLocaleString("pt-BR")+" — "+x.actor+": "+x.action+" ("+(x.previous_status||"—")+" → "+(x.new_status||"—")+")").join("\\n")||"Sem histórico.")}
+ try{const data=await cloudJson("/api/pending/"+id+"/history");alert((data.items||[]).map(x=>new Date(x.created_at).toLocaleString("pt-BR")+" — "+x.actor+": "+x.action+" ("+(x.previous_status||"—")+" → "+(x.new_status||"—")+")").join("\n")||"Sem histórico.")}
  catch(err){alert(err.message)}
 });
 $("indicator-month").addEventListener("change",renderIndicators)
