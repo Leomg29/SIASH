@@ -31,7 +31,6 @@
     {title:"Ventilação mecânica",items:[["VM-dia","vmDays"],["Intubações","intub"],["Extubações programadas","extubProg"],["Extubações acidentais","extub"]]},
     {title:"Segurança do paciente",items:[["Lesões por pressão","lpp"],["Hipotermia","hypothermia"],["Hipertermia","hyperthermia"]]}
   ];
-  const formatValue=(n,key)=>["occ","los"].includes(key)?(Number(n)||0).toLocaleString("pt-BR",{maximumFractionDigits:1}):String(Number(n)||0);
   function monthBefore(m,offset){
     const p=m.split("-").map(Number),d=new Date(p[0],p[1]-1+offset,1);
     return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
