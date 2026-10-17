@@ -19,26 +19,59 @@
       line.append(label,track,value);content.appendChild(line);
     });panel.appendChild(content);return panel;
   }
+  const GROUPS=[
+    {title:"Gestão assistencial",items:[["Pacientes-dia","pd"],["Leitos-dia","ld"],["Dias lançados","days"],["Taxa de ocupação (%)","occ"],["Média de permanência (dias)","los"]]},
+    {title:"Movimentação e desfechos",items:[["Admissões","adm"],["Saídas","outs"],["Altas","altas"],["Transferências","transf"],["Óbitos","deaths"],["Altas para Pediatria","altaPediatria"],["Altas para Canguru","altaCanguru"],["Altas Pediatria/Canguru (total)","canguru"]]},
+    {title:"PIPA e procedimentos",items:[["PIPA","pipa"],["PICCs inseridos","picc"],["PICCs retirados","piccRemoved"],["PICC-dia","piccDays"],["Testes do pezinho","pezinho"]]},
+    {title:"Ventilação mecânica",items:[["VM-dia","vmDays"],["Intubações","intub"],["Extubações programadas","extubProg"],["Extubações acidentais","extub"]]},
+    {title:"Segurança do paciente",items:[["Lesões por pressão","lpp"],["Hipotermia","hypothermia"],["Hipertermia","hyperthermia"]]}
+  ];
+  const formatValue=(n,key)=>["occ","los"].includes(key)?(Number(n)||0).toLocaleString("pt-BR",{maximumFractionDigits:1}):String(Number(n)||0);
+  function monthBefore(m,offset){
+    const p=m.split("-").map(Number),d=new Date(p[0],p[1]-1+offset,1);
+    return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+  }
+  function monthlyChart(label,key,months){
+    const items=months.map(m=>({label:m.slice(5)+"/"+m.slice(0,4),value:Number(monthStats(m)[key])||0}));
+    return barChart(label,items,["occ"].includes(key)?100:undefined,key==="occ"?"%":key==="los"?" d":"");
+  }
   function renderCharts(){
     const container=document.getElementById("siash-indicator-charts");
     if(!container)return;
-    const month=document.getElementById("indicator-month").value;
-    const stats=monthStats(month);
-    const rows=stats.rows||[];
-    const daily=rows.map(r=>({label:r.date.slice(8,10)+"/"+r.date.slice(5,7),value:Number(r.internados)||0}));
+    const selected=document.getElementById("indicator-month");
+    if(!selected||!selected.value)return;
+    const month=selected.value,stats=monthStats(month),rows=stats.rows||[];
+    const months=[-5,-4,-3,-2,-1,0].map(i=>monthBefore(month,i));
     container.replaceChildren();
-    const heading=document.createElement("h3");heading.textContent="Evolução automática dos indicadores";
-    const note=document.createElement("p");note.className="muted";note.textContent="Dados da competência selecionada. Correções e exclusões dos lançamentos são refletidas automaticamente.";
+    const heading=document.createElement("h3");heading.textContent="Painel gráfico completo dos indicadores";
+    const note=document.createElement("p");note.className="muted";
+    note.textContent="Atualização automática pelos lançamentos existentes. Comparativos dos últimos seis meses até a competência selecionada; meses sem dados aparecem zerados. Valores atuais são mostrados separadamente.";
     container.append(heading,note);
-    const grid=document.createElement("div");grid.className="comparison-grid";
-    grid.appendChild(barChart("Pacientes-dia por data",daily));
-    grid.appendChild(barChart("Admissões e saídas",[{label:"Admissões",value:stats.adm},{label:"Altas",value:stats.altas},{label:"Transferências",value:stats.transf},{label:"Óbitos",value:stats.deaths}]));
-    grid.appendChild(barChart("PICC",[{label:"Inseridos no mês",value:stats.picc},{label:"Retirados no mês",value:stats.piccRemoved},{label:"PICC-dia",value:stats.piccDays}]));
-    grid.appendChild(barChart("Ventilação mecânica",[{label:"VM-dia",value:stats.vmDays},{label:"Intubações",value:stats.intub},{label:"Extubações programadas",value:stats.extubProg},{label:"Extubações acidentais",value:stats.extub}]));
-    grid.appendChild(barChart("Segurança assistencial",[{label:"Hipotermia",value:stats.hypothermia},{label:"Hipertermia",value:stats.hyperthermia},{label:"Lesões por pressão",value:stats.lpp}]));
-    const pct=Number(stats.occ)||0;
-    grid.appendChild(barChart("Taxa de ocupação",[{label:"Ocupação",value:Number(pct.toFixed(1))}],100,"%"));
-    container.appendChild(grid);
+    const daily=rows.map(r=>({label:r.date.slice(8,10)+"/"+r.date.slice(5,7),value:Number(r.internados)||0}));
+    const evolution=document.createElement("div");evolution.className="comparison-grid";
+    evolution.appendChild(barChart("Pacientes-dia por data",daily));
+    evolution.appendChild(barChart("Ocupação mensal (%)",months.map(m=>({label:m.slice(5)+"/"+m.slice(0,4),value:Number(monthStats(m).occ.toFixed(1))})),100,"%"));
+    evolution.appendChild(monthlyChart("Pacientes-dia por mês","pd",months));
+    evolution.appendChild(monthlyChart("Média de permanência por mês","los",months));
+    container.appendChild(evolution);
+    const h=document.createElement("h3");h.textContent="Indicadores da competência";container.appendChild(h);
+    GROUPS.forEach(group=>{
+      const grid=document.createElement("div");grid.className="comparison-grid";
+      const items=group.items.map(([label,key])=>({label,value:Number(stats[key])||0}));
+      grid.appendChild(barChart(group.title,items));
+      group.items.forEach(([label,key])=>grid.appendChild(monthlyChart(label+" — evolução mensal",key,months)));
+      container.appendChild(grid);
+    });
+    const current=document.createElement("h3");current.textContent="Situação atual (não acumulativa)";container.appendChild(current);
+    const currentGrid=document.createElement("div");currentGrid.className="comparison-grid";
+    const activePiccs=S.picc.filter(x=>x.status==="Ativo").length;
+    currentGrid.appendChild(barChart("PICCs ativos agora",[{label:"Ativos",value:activePiccs}]));
+    const latest=rows.length?rows[rows.length-1]:null;
+    currentGrid.appendChild(barChart("RN em VM — último dia lançado no mês",latest?[{label:latest.date.slice(8,10)+"/"+latest.date.slice(5,7),value:Number(latest.vm)||0}]:[]));
+    container.appendChild(currentGrid);
+    const pipa=S.pipa.filter(x=>x.month===month).reduce((a,x)=>{const city=String(x.city||"Não informado");a[city]=(a[city]||0)+(Number(x.qty)||0);return a;},{});
+    const cities=Object.entries(pipa).sort((a,b)=>b[1]-a[1]).map(([label,value])=>({label,value}));
+    container.appendChild(barChart("PIPA por município",cities));
   }
   renderIndicators=function(){original();renderCharts();};
   // app.js renderiza antes deste script; desenha os gráficos na carga inicial.
