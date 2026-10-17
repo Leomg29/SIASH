@@ -11,13 +11,16 @@ const SIASH_CLOUD={
  enabled:location.protocol==="http:"||location.protocol==="https:",
  token:sessionStorage.getItem("siash_cloud_token")||"",
  lastSync:null,
- syncing:false
+ syncing:false,
+ revision:null,
+ conflict:false,
+ editGeneration:0
 };
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
 async function cloudJson(url,opts={}){
  const res=await fetch(url,{...opts,headers:cloudHeaders({"Content-Type":"application/json",...(opts.headers||{})})});
  const data=await res.json().catch(()=>({}));
- if(!res.ok)throw new Error(data.error||`Erro Cloud ${res.status}`);
+ if(!res.ok){const err=new Error(data.error||`Erro Cloud ${res.status}`);err.status=res.status;err.conflict=!!data.conflict;throw err;}
  return data;
 }
 async function cloudHealth(){if(!SIASH_CLOUD.enabled)return {ok:false,local:true};try{return await cloudJson("/api/health")}catch(e){return {ok:false,error:e.message}}}
@@ -31,26 +34,51 @@ async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
  const remote=await cloudJson("/api/state");
  if(remote.exists&&remote.payload?.state){
+   SIASH_CLOUD.revision=remote.revision;SIASH_CLOUD.conflict=false;
    S=remote.payload.state; if(remote.payload.security)setSecurityState(remote.payload.security);
    normalize();localStorage.setItem(STORE,JSON.stringify(S));SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
  }
  const localRaw=localStorage.getItem(STORE);
  if(localRaw){
    await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
-   SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
+   SIASH_CLOUD.revision=1;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
  }
  return false;
 }
 let cloudSaveTimer=null;
 function scheduleCloudSave(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
+ SIASH_CLOUD.editGeneration++;
+ if(SIASH_CLOUD.conflict){updateCloudBadge("CONFLITO · cópia local preservada",true);return;}
  clearTimeout(cloudSaveTimer);
  cloudSaveTimer=setTimeout(async()=>{
-   if(SIASH_CLOUD.syncing)return;SIASH_CLOUD.syncing=true;updateCloudBadge("Salvando…");
-   try{const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado")}
-   catch(e){console.error(e);updateCloudBadge("Offline · dados locais preservados",true)}
-   finally{SIASH_CLOUD.syncing=false}
+   if(SIASH_CLOUD.syncing){scheduleCloudSaveRetry();return;}
+   if(SIASH_CLOUD.conflict)return;
+   if(!Number.isSafeInteger(SIASH_CLOUD.revision)){updateCloudBadge("Sessão sem revisão · recarregue com segurança",true);return;}
+   SIASH_CLOUD.syncing=true;updateCloudBadge("Salvando…");
+   const generation=SIASH_CLOUD.editGeneration;
+   try{
+     const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
+     SIASH_CLOUD.revision=r.revision;
+     SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
+     updateCloudBadge("Sincronizado");
+   }catch(e){
+     console.error(e);
+     if(e.conflict||e.status===409||e.status===428){
+       SIASH_CLOUD.conflict=true;
+       localStorage.setItem(STORE,JSON.stringify(S));
+       updateCloudBadge("CONFLITO · dados locais preservados",true);
+       alert("ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
+     }else updateCloudBadge("Falha de rede · dados locais preservados",true);
+   }finally{
+     SIASH_CLOUD.syncing=false;
+     if(!SIASH_CLOUD.conflict&&generation!==SIASH_CLOUD.editGeneration)scheduleCloudSaveRetry();
+   }
  },350);
+}
+function scheduleCloudSaveRetry(){
+ clearTimeout(cloudSaveTimer);
+ cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict){SIASH_CLOUD.editGeneration++;scheduleCloudSave()}},450);
 }
 function updateCloudBadge(text,bad=false){
  const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad)
