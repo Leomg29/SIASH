@@ -54,6 +54,28 @@ async function initDb(){
       saved_by TEXT,
       reason TEXT
     );
+    CREATE TABLE IF NOT EXISTS siash_pending_tasks(
+      id BIGSERIAL PRIMARY KEY,
+      scope TEXT NOT NULL CHECK(scope IN ('bed','sector')),
+      bed TEXT,
+      priority TEXT NOT NULL CHECK(priority IN ('Normal','Alta','Crítica')),
+      description TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Pendente' CHECK(status IN ('Pendente','Em andamento','Concluída')),
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS siash_pending_history(
+      id BIGSERIAL PRIMARY KEY,
+      task_id BIGINT NOT NULL REFERENCES siash_pending_tasks(id),
+      actor TEXT NOT NULL,
+      action TEXT NOT NULL,
+      previous_status TEXT,
+      new_status TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
     CREATE TABLE IF NOT EXISTS siash_cloud_audit(
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -99,6 +121,46 @@ app.post("/api/login", async(req,res)=>{
     return res.status(401).json({error:"Usuário ou senha inválidos."});
   const u=q.rows[0]; await audit(username,"Login Cloud.");
   res.json({token:tokenFor(u),role:u.role,user:u.username});
+});
+
+// Pendências independentes do snapshot geral: concorrência segura entre plantões.
+app.get("/api/pending",auth,async(req,res)=>{
+  const q=await pool.query("SELECT * FROM siash_pending_tasks ORDER BY (status='Concluída'), created_at DESC, id DESC LIMIT 500");
+  res.json({items:q.rows});
+});
+app.post("/api/pending",auth,async(req,res)=>{
+  const scope=req.body?.scope==='sector'?'sector':'bed';
+  const bed=scope==='bed'?String(req.body?.bed||'').trim():null;
+  const priority=String(req.body?.priority||'Normal');
+  const description=String(req.body?.description||'').trim();
+  if((scope==='bed'&&!/^(?:[1-9]|10)$/.test(bed))||!['Normal','Alta','Crítica'].includes(priority)||!description||description.length>2000)
+    return res.status(400).json({error:'Confira leito, prioridade e descrição (máximo 2000 caracteres).'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const q=await client.query("INSERT INTO siash_pending_tasks(scope,bed,priority,description,created_by) VALUES($1,$2,$3,$4,$5) RETURNING *",[scope,bed,priority,description,req.user.u]);
+    await client.query("INSERT INTO siash_pending_history(task_id,actor,action,new_status) VALUES($1,$2,'Criada','Pendente')",[q.rows[0].id,req.user.u]);
+    await client.query('COMMIT');res.status(201).json({item:q.rows[0]});
+  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+});
+app.patch("/api/pending/:id",auth,async(req,res)=>{
+  const id=Number(req.params.id),status=String(req.body?.status||'');
+  if(!Number.isSafeInteger(id)||id<1||!['Pendente','Em andamento','Concluída'].includes(status))
+    return res.status(400).json({error:'Situação inválida.'});
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const previous=await client.query('SELECT status FROM siash_pending_tasks WHERE id=$1 FOR UPDATE',[id]);
+    if(!previous.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Pendência não encontrada.'});}
+    const old=previous.rows[0].status;
+    const q=await client.query("UPDATE siash_pending_tasks SET status=$2,updated_by=$3,updated_at=NOW(),completed_at=CASE WHEN $2='Concluída' THEN NOW() ELSE NULL END WHERE id=$1 RETURNING *",[id,status,req.user.u]);
+    if(old!==status)await client.query("INSERT INTO siash_pending_history(task_id,actor,action,previous_status,new_status) VALUES($1,$2,'Situação alterada',$3,$4)",[id,req.user.u,old,status]);
+    await client.query('COMMIT');res.json({item:q.rows[0]});
+  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+});
+app.get("/api/pending/:id/history",auth,async(req,res)=>{
+  const id=Number(req.params.id);if(!Number.isSafeInteger(id)||id<1)return res.status(400).json({error:'Identificador inválido.'});
+  const q=await pool.query('SELECT actor,action,previous_status,new_status,created_at FROM siash_pending_history WHERE task_id=$1 ORDER BY id DESC',[id]);res.json({items:q.rows});
 });
 
 app.get("/api/state",auth,async(req,res)=>{
