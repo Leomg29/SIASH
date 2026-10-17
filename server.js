@@ -65,8 +65,11 @@ async function initDb(){
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_by TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      completed_at TIMESTAMPTZ
+      completed_at TIMESTAMPTZ,
+      legacy_key TEXT UNIQUE
     );
+    ALTER TABLE siash_pending_tasks ADD COLUMN IF NOT EXISTS legacy_key TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS siash_pending_legacy_key_unique ON siash_pending_tasks(legacy_key);
     CREATE TABLE IF NOT EXISTS siash_pending_history(
       id BIGSERIAL PRIMARY KEY,
       task_id BIGINT NOT NULL REFERENCES siash_pending_tasks(id),
@@ -124,7 +127,34 @@ app.post("/api/login", async(req,res)=>{
 });
 
 // Pendências independentes do snapshot geral: concorrência segura entre plantões.
+async function migrateLegacyPending(){
+  const client=await pool.connect();
+  try{
+    await client.query('BEGIN');
+    const state=await client.query('SELECT payload FROM siash_state WHERE id=1 FOR SHARE');
+    const legacy=state.rows[0]?.payload?.pending;
+    if(Array.isArray(legacy)){
+      for(let i=0;i<legacy.length;i++){
+        const p=legacy[i];if(!p||typeof p!=='object')continue;
+        const description=String(p.text||'').trim().slice(0,2000);
+        if(!description)continue;
+        const rawBed=String(p.bed||'').trim();
+        const match=rawBed.match(/(?:Leito\\s*0*)?(\\d{1,2})/i);
+        const bed=match&&Number(match[1])>=1&&Number(match[1])<=10?String(Number(match[1])):null;
+        const priority=['Normal','Alta','Crítica'].includes(p.priority)?p.priority:'Normal';
+        const status=p.done?'Concluída':'Pendente';
+        const q=await client.query(
+          "INSERT INTO siash_pending_tasks(scope,bed,priority,description,status,created_by,updated_by,completed_at,legacy_key) VALUES($1,$2,$3,$4,$5,'Legado SIASH',NULL,CASE WHEN $5='Concluída' THEN NOW() ELSE NULL END,$6) ON CONFLICT(legacy_key) DO NOTHING RETURNING id",
+          [bed?'bed':'sector',bed,priority,description,status,'siash-state-pending-'+i]
+        );
+        if(q.rows.length)await client.query("INSERT INTO siash_pending_history(task_id,actor,action,new_status) VALUES($1,'Migração SIASH','Importada do histórico',$2)",[q.rows[0].id,status]);
+      }
+    }
+    await client.query('COMMIT');
+  }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
+}
 app.get("/api/pending",auth,async(req,res)=>{
+  await migrateLegacyPending();
   const q=await pool.query("SELECT * FROM siash_pending_tasks ORDER BY (status='Concluída'), created_at DESC, id DESC LIMIT 500");
   res.json({items:q.rows});
 });
