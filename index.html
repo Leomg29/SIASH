@@ -333,13 +333,14 @@
   <div class="hero"><div><h3>Pendências para Continuidade</h3><p>O que precisa atravessar a troca de plantão.</p></div></div>
   <article class="panel">
     <form id="pending-form" class="form-grid three">
-      <label>Leito / referência<select id="pending-bed" class="bed-select"><option value="Geral / Setor">Geral / Setor</option></select></label>
+      <label>Tipo de demanda<select id="pending-scope"><option value="bed">Relacionada a leito</option><option value="sector">Demanda geral do setor</option></select></label>
+      <label id="pending-bed-wrap">Leito / referência<select id="pending-bed" class="bed-select"><option value="Geral / Setor">Geral / Setor</option></select></label>
       <label>Prioridade<select id="pending-priority"><option>Normal</option><option>Alta</option><option>Crítica</option></select></label>
       <label>Pendência<input id="pending-text" required></label>
       <button class="primary" type="submit">Adicionar</button>
     </form>
   </article>
-  <article class="panel"><div id="pending-list"></div></article>
+  <article class="panel"><div class="panel-head"><h3>Pendências compartilhadas</h3><button type="button" id="pending-refresh" class="secondary">Atualizar pendências</button></div><p class="muted">Demandas de leitos e do setor visíveis aos profissionais autenticados. Situações críticas exigem comunicação verbal imediata.</p><div id="pending-list"></div></article>
 </section>
 
 <!-- INDICADORES -->
