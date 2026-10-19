@@ -160,7 +160,7 @@ function normalizeBackupObject(data){
 async function applyBackupData(data,toCloud=false){
  data=normalizeBackupObject(data);S=data.state;if(data.security){const safeSec={...data.security};delete safeSec.ownerHash;delete safeSec.ownerUser;const current=securityState()||{};setSecurityState({...safeSec,ownerHash:current.ownerHash,ownerUser:current.ownerUser})}normalize();localStorage.setItem(STORE,JSON.stringify(S));
  for(const d of data.documents||[]){const bytes=Uint8Array.from(atob(d.data),c=>c.charCodeAt(0)),blob=new Blob([bytes],{type:d.type||"application/octet-stream"});await putDocBlob(d.key,blob)}
- if(toCloud&&SIASH_CLOUD.enabled&&SIASH_CLOUD.token){await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),reason:"Snapshot automático antes da migração de backup"})});updateCloudBadge("Backup migrado para Cloud")}
+ if(toCloud&&SIASH_CLOUD.enabled&&SIASH_CLOUD.token){await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision,reason:"Migração de backup autorizada"})});updateCloudBadge("Backup migrado para Cloud")}
  renderAll();showToast(toCloud?"Backup migrado para Cloud":"Backup preparado",1800);return data
 }
 async function importBackupFile(file,toCloud=false){
