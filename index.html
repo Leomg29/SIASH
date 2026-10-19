@@ -125,8 +125,8 @@
       <label>Transferências<input id="d-transferencias" type="number" min="0" value="0"></label>
       <label>Óbitos<input id="d-obitos" type="number" min="0" value="0"></label>
       <label>Encaminhamentos PIPA<input id="d-pipa" type="number" min="0" value="0"></label>
-      <label>Alta → Pediatria<input id="d-alta-pediatria" type="number" min="0" value="0"><small>Quantidade de RNs com alta da UTIN para Pediatria.</small></label>
-      <label>Alta → Leito Canguru<input id="d-alta-canguru" type="number" min="0" value="0"><small>Quantidade de RNs com alta da UTIN para leito Canguru.</small></label>
+      <input id="d-alta-pediatria" type="hidden" value="0">
+      <label>Alta → Leito Canguru<input id="d-alta-canguru" type="number" min="0" value="0"><small>Subconjunto das Altas: RNs encaminhados ao cuidado canguru na Pediatria. Não somar novamente às Altas.</small></label>
       <label>PICCs inseridos nesta data — automático<input id="d-picc" type="number" min="0" value="0" readonly><small>Calculado pela data de inserção registrada na Gestão de PICC. Total na competência: <strong id="d-picc-month">0</strong>.</small></label>
       <label>Teste do pezinho<input id="d-pezinho" type="number" min="0" value="0"></label>
       <label>Intubações no dia<input id="d-intub" type="number" min="0" value="0"></label>
@@ -163,7 +163,7 @@
     <article class="metric-card"><span>RN em VM atualmente</span><strong id="d-kpi-vm-current">0</strong></article>
     <article class="metric-card"><span>VM-dia na competência</span><strong id="d-kpi-vm-days">0</strong></article>
   </div>
-  <article class="panel"><div class="panel-head"><h3>Histórico da competência</h3><span>um registro por dia</span></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Internados</th><th>Adm.</th><th>Altas</th><th>Transf.</th><th>Óbitos</th><th>PIPA</th><th>→ Pediatria</th><th>→ Canguru</th><th>PICC</th><th>Pezinho</th><th>Intub.</th><th>RN em VM</th><th>Extub. prog.</th><th>Extub. acid.</th><th>Ação</th></tr></thead><tbody id="daily-table"></tbody></table></div></article>
+  <article class="panel"><div class="panel-head"><h3>Histórico da competência</h3><span>um registro por dia</span></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Internados</th><th>Adm.</th><th>Altas</th><th>Transf.</th><th>Óbitos</th><th>PIPA</th><th>→ Canguru</th><th>PICC</th><th>Pezinho</th><th>Intub.</th><th>RN em VM</th><th>Extub. prog.</th><th>Extub. acid.</th><th>Ação</th></tr></thead><tbody id="daily-table"></tbody></table></div></article>
 </section>
 
 <!-- LEITOS -->
