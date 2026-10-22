@@ -5,6 +5,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+concurrency:
+  group: siash-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -17,9 +21,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
       - name: Install dependencies
-        run: npm ci
+        run: npm install --ignore-scripts --no-package-lock --no-audit --no-fund
       - name: Syntax check
         run: |
           node --check server.js
@@ -29,11 +32,17 @@ jobs:
         run: |
           set -euo pipefail
           count=0
+          failed=0
           for test_file in tests/*.test.js; do
             [ -e "$test_file" ] || continue
             echo "::group::$test_file"
-            node "$test_file"
+            if ! node "$test_file"; then
+              failed=$((failed + 1))
+            fi
             echo "::endgroup::"
             count=$((count + 1))
           done
-          echo "Executed $count regression test files."
+          echo "Executed $count regression test files; failures: $failed."
+          [ "$count" -gt 0 ]
+          [ "$failed" -eq 0 ]
+
