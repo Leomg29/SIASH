@@ -13,6 +13,6 @@ assert(server.includes("Fundação Oswaldo Cruz/FIOCRUZ"),"AI prompt must priori
 assert(server.includes("Fiocruz IFF Fundação Oswaldo Cruz"),"research query must include Fiocruz/IFF");
 assert(server.includes('if(domainMatches(host,"fiocruz.br"))return "FIOCRUZ";'),"Fiocruz must remain a primary scientific institution");
 assert(server.includes('"fiocruz.br"'),"Fiocruz domain must remain preferred");
-assert.strictEqual(pkg.version,"0.14.38");
-assert((html.match(/0\.14\.38/g)||[]).length>=2,"UI must display v0.14.38");
+assert(/^0\.14\.\d+$/.test(pkg.version),"invalid consolidated version");
+assert(html.split(pkg.version).length-1>=2,"UI must display current package version");
 console.log("v0.14.38 structure/source governance tests passed");
