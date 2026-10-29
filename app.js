@@ -1,5 +1,8 @@
 const $=id=>document.getElementById(id);
 const STORE="siash_utin_consolidada_v08";
+const CLOUD_PENDING_STORE="siash_cloud_pending_v1";
+function markCloudPending(){localStorage.setItem(CLOUD_PENDING_STORE,"1")}
+function clearCloudPending(){localStorage.removeItem(CLOUD_PENDING_STORE)}
 const SECURITY_STORE="siash_security_v09";
 let SESSION={authenticated:false,role:null,user:null};
 const OPERATIONAL_USERS={"coordenacao.utin":"siash"};
@@ -32,6 +35,12 @@ async function cloudAuthenticate(username,password,bootstrap=false){
 function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
+ if(localStorage.getItem(CLOUD_PENDING_STORE)==="1"){
+   SIASH_CLOUD.conflict=true;
+   updateCloudBadge("Alterações locais pendentes · reconciliação necessária",true);
+   alert("Há alterações locais ainda não confirmadas no Cloud. Para evitar perda de registros, o SIASH não carregará o estado remoto sobre esta cópia. Preserve o navegador e solicite conciliação antes de continuar.");
+   return false;
+ }
  const remote=await cloudJson("/api/state");
  if(remote.exists&&remote.payload?.state){
    SIASH_CLOUD.revision=remote.revision;SIASH_CLOUD.conflict=false;
@@ -41,7 +50,7 @@ async function cloudLoadAfterLogin(){
  const localRaw=localStorage.getItem(STORE);
  if(localRaw){
    await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
-   SIASH_CLOUD.revision=1;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
+   SIASH_CLOUD.revision=1;SIASH_CLOUD.conflict=false;clearCloudPending();SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
  }
  return false;
 }
@@ -60,6 +69,7 @@ function scheduleCloudSave(){
    try{
      const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
      SIASH_CLOUD.revision=r.revision;
+     if(generation===SIASH_CLOUD.editGeneration)clearCloudPending();
      SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
      updateCloudBadge("Sincronizado");
    }catch(e){
@@ -223,7 +233,7 @@ function normalize(){if(!S.settings)S.settings=blankState().settings;if(!S.daily
 S.beds.forEach((b,i)=>{if(typeof b.isolation==="undefined")b.isolation=i>=8;if(!b.profile)b.profile=b.type||"Intensivo";delete b.type});
 if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.movements)S.movements=[];if(!S.checklist)S.checklist=blankState().checklist;if(!S.events)S.events=[];if(!S.care)S.care={};if(!S.picc)S.picc=[];S.picc.forEach(x=>{if(!x.insertDate)x.insertDate=isoFromLegacyWhen(x.when);if(!x.status)x.status="Ativo";if(x.status==="Retirado"&&!x.removalDate)x.removalDate=x.insertDate});if(!S.pipa)S.pipa=[];if(!S.pending)S.pending=[];if(!S.thermalEvents)S.thermalEvents=[];if(!S.docs)S.docs=[];normalizeDocs();if(!S.huddle)S.huddle=[];if(!S.rh)S.rh=[]}
 normalize();localStorage.setItem(STORE,JSON.stringify(S));
-function save(){localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
+function save(){if(SIASH_CLOUD.enabled)markCloudPending();localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
 function currentMonth(){return monthOf(todayISO())}
 function pipaMonthTotal(m){return S.pipa.filter(x=>x.month===m).reduce((total,row)=>total+(+row.qty||0),0)}
 function thermalCount(date,type){return S.thermalEvents.filter(x=>x.date===date&&x.type===type).length}
