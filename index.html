@@ -47,6 +47,7 @@
     <button data-view="plantao" class="nav-item">Meu Plantão</button>
     <button data-view="lancamento" class="nav-item">Lançamento Diário</button>
     <button data-view="leitos" class="nav-item">Gestão de Leitos</button>
+    <button data-view="dietas" class="nav-item">Mapa de Dietas</button>
     <button data-view="checklist" class="nav-item">Checklist do Plantão</button>
     <button data-view="assistencia" class="nav-item">SAE / Evolução</button>
     <button data-view="picc" class="nav-item">PICC e Dispositivos</button>
@@ -164,6 +165,21 @@
     <article class="metric-card"><span>VM-dia na competência</span><strong id="d-kpi-vm-days">0</strong></article>
   </div>
   <article class="panel"><div class="panel-head"><h3>Histórico da competência</h3><span>um registro por dia</span></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Internados</th><th>Adm.</th><th>Altas</th><th>Transf.</th><th>Óbitos</th><th>PIPA</th><th>→ Canguru</th><th>PICC</th><th>Pezinho</th><th>Intub.</th><th>RN em VM</th><th>Extub. prog.</th><th>Extub. acid.</th><th>Ação</th></tr></thead><tbody id="daily-table"></tbody></table></div></article>
+</section>
+
+<!-- MAPA DE DIETAS -->
+<section id="view-dietas" class="view hidden">
+  <div class="hero"><div><h3>Mapa de Dietas — 24 horas</h3><p>Requisição diária para lactarista. Rascunho reaproveitado do último mapa emitido, sujeito à conferência da prescrição vigente.</p></div></div>
+  <article class="panel">
+    <div class="panel-head"><h3>Mapa diário</h3><span id="diet-status">Rascunho</span></div>
+    <div class="grid-2"><label>Data <input type="date" id="diet-date"></label><div><button type="button" id="diet-load">Carregar mapa</button></div></div>
+    <p id="diet-source" class="muted"></p>
+    <p class="muted">Transição: preparar cada fórmula separadamente, no volume prescrito. Alternativas: preparar somente uma das fórmulas, nunca somar volumes. Não há alteração automática de prescrição.</p>
+    <div class="table-wrap"><table><thead><tr><th>Leito</th><th>Identificação do RN</th><th>Modalidade</th><th>Fórmula 1</th><th>Volume 1 (mL)</th><th>Fórmula 2</th><th>Volume 2 (mL)</th><th>Intervalo</th><th>Observação</th></tr></thead><tbody id="diet-rows"></tbody></table></div>
+    <p><label>Responsável pela elaboração <input id="diet-author" type="text" maxlength="120"></label></p>
+    <p><label><input id="diet-check" type="checkbox"> Conferi os leitos, fórmulas, volumes e intervalos com a prescrição vigente antes da emissão.</label></p>
+    <div class="actions"><button type="button" id="diet-save">Salvar rascunho</button> <button type="button" id="diet-issue" class="primary">Confirmar e emitir mapa</button> <button type="button" id="diet-print">Imprimir mapa emitido</button></div>
+  </article>
 </section>
 
 <!-- LEITOS -->
@@ -597,5 +613,7 @@
 <script src="jszip.min.js"></script>
 <script src="app.js"></script>
 <script src="indicator-charts.js"></script>
+<script src="diet-map.js"></script>
+<script>initDietMap();</script>
 </body>
 </html>
