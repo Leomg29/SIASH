@@ -231,7 +231,7 @@ function blankState(){return{
 let S=JSON.parse(localStorage.getItem(STORE)||"null")||blankState();
 function normalize(){if(!S.settings)S.settings=blankState().settings;if(!S.daily)S.daily=[];if(!S.beds||S.beds.length!==10)S.beds=blankState().beds;
 S.beds.forEach((b,i)=>{if(typeof b.isolation==="undefined")b.isolation=i>=8;if(!b.profile)b.profile=b.type||"Intensivo";delete b.type});
-if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.movements)S.movements=[];if(!S.checklist)S.checklist=blankState().checklist;if(!S.events)S.events=[];if(!S.care)S.care={};if(!S.picc)S.picc=[];S.picc.forEach(x=>{if(!x.insertDate)x.insertDate=isoFromLegacyWhen(x.when);if(!x.status)x.status="Ativo";if(x.status==="Retirado"&&!x.removalDate)x.removalDate=x.insertDate});if(!S.pipa)S.pipa=[];if(!S.pending)S.pending=[];if(!S.thermalEvents)S.thermalEvents=[];if(!S.docs)S.docs=[];normalizeDocs();if(!S.huddle)S.huddle=[];if(!S.rh)S.rh=[]}
+if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.movements)S.movements=[];if(!S.checklist)S.checklist=blankState().checklist;if(!S.events)S.events=[];if(!S.care)S.care={};if(!S.picc)S.picc=[];S.picc.forEach(x=>{if(!x.insertDate)x.insertDate=isoFromLegacyWhen(x.when);if(!x.status)x.status="Ativo";if(x.status==="Retirado"&&!x.removalDate)x.removalDate=x.insertDate});if(!S.pipa)S.pipa=[];if(!S.pending)S.pending=[];if(!S.thermalEvents)S.thermalEvents=[];if(!S.docs)S.docs=[];normalizeDocs();if(!S.huddle)S.huddle=[];if(!S.rh)S.rh=[];if(!Array.isArray(S.dietMaps))S.dietMaps=[];if(!Array.isArray(S.dietMapHistory))S.dietMapHistory=[]}
 normalize();localStorage.setItem(STORE,JSON.stringify(S));
 function save(){if(SIASH_CLOUD.enabled)markCloudPending();localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
 function currentMonth(){return monthOf(todayISO())}
@@ -825,7 +825,7 @@ async function runCloudflareFallbackDiagnostic(){
    out.innerHTML=`<strong>FALHOU:</strong> ${safe(e.message||"Não foi possível concluir o diagnóstico.")}`;
  }finally{btn.disabled=false}
 }
-function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderHuddle();renderRH();renderSettings();renderAdmin();applyPermissions()}
+function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderHuddle();renderRH();renderSettings();renderAdmin();if(typeof renderDietMap==="function")renderDietMap();applyPermissions()}
 document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));btn.classList.add("active");document.querySelectorAll(".view").forEach(v=>v.classList.add("hidden"));$("view-"+btn.dataset.view).classList.remove("hidden");$("page-title").textContent=btn.textContent;renderAll();if(btn.dataset.view==="administracao")loadAdminUsers();if(btn.dataset.view==="pendencias")loadSharedPending()}))
 $("admin-user-form").addEventListener("submit",async e=>{
  e.preventDefault();
