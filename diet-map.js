@@ -119,9 +119,13 @@ function printMap(){
  if(SIASH_CLOUD.enabled&&(SIASH_CLOUD.conflict||localStorage.getItem(CLOUD_PENDING_STORE)==="1")){alert("A sincronização Cloud está pendente. Confirme a sincronização antes de imprimir.");return;}
  const lines=current.rows.map(r=>{
  const f1=r.milk1?esc(r.milk1)+" — "+esc(r.vol1)+" mL":"";
- const f2=r.milk2?esc(r.milk2)+" — "+esc(r.mode==="alternativa"?r.vol1:r.vol2)+" mL":"";
+ const f2=r.milk2?esc(r.milk2)+" — "+esc(r.vol2)+" mL":"";
+ const isAlternative=r.mode==="alternativa"&&r.milk1&&r.milk2;
+ const dietText=isAlternative
+  ?esc(r.milk1)+" / "+esc(r.milk2)+" — "+esc(r.vol1)+" mL"
+  :f1+(f2?"<br>"+f2:"");
  const mode=r.mode==="transicao"?"TRANSIÇÃO: preparar separadamente":r.mode==="alternativa"?"ALTERNATIVAS: preparar somente uma":"";
- return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+esc(r.rn)+'</td><td>'+f1+(f2?"<br>"+f2:"")+(mode?"<br><strong>"+mode+"</strong>":"")+'</td><td>'+((r.rn&&r.milk1&&r.vol1)?esc(r.interval):'')+'</td></tr>';
+ return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+esc(r.rn)+'</td><td>'+dietText+(mode?"<br><strong>"+mode+"</strong>":"")+'</td><td>'+((r.rn&&r.milk1&&r.vol1)?esc(r.interval):'')+'</td></tr>';
  }).join("");
  const w=window.open("","_blank");
  if(!w){alert("Permita a janela de impressão neste navegador.");return;}
