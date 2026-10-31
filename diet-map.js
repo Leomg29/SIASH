@@ -1,0 +1,107 @@
+/* SIASH Mapa de Dietas — rascunho clínico; não prescreve nem altera volumes automaticamente. */
+(function(){
+const $d=id=>document.getElementById(id);
+const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const dateNow=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
+const emptyRow=(n,rn="")=>({bed:n,rn,mode:"unica",milk1:"",vol1:"",milk2:"",vol2:"",interval:"3/3 h",note:""});
+const occupied=b=>b&&b.status==="Ocupado"&&String(b.rn||"").trim();
+const rowsForBeds=()=>Array.from({length:10},(_,i)=>emptyRow(i+1,occupied(S.beds[i])?S.beds[i].rn:""));
+const mapList=()=>Array.isArray(S.dietMaps)?S.dietMaps:[];
+let draft=null;
+const selected=()=>($d("diet-date")?.value||dateNow());
+function load(){
+ const date=selected(),saved=mapList().find(m=>m.date===date);
+ if(saved){draft=JSON.parse(JSON.stringify(saved));}
+ else {
+  const prior=mapList().filter(m=>m.date<date&&m.status==="emitido").sort((a,b)=>b.date.localeCompare(a.date))[0];
+  const base=prior?JSON.parse(JSON.stringify(prior.rows)):rowsForBeds();
+  draft={date,status:"rascunho",source:prior?.date||null,rows:base,author:"",checked:false};
+  draft.rows=Array.from({length:10},(_,i)=>{
+   const b=S.beds[i],r=draft.rows.find(x=>+x.bed===i+1)||emptyRow(i+1);
+   const current=occupied(b)?String(b.rn).trim():"";
+   if(!current||current!==String(r.rn||"").trim())return emptyRow(i+1,current);
+   return {...r,bed:i+1};
+  });
+ }
+ render();
+}
+function read(){
+ if(!draft)return;
+ draft.rows.forEach((r,i)=>{
+  const prefix="diet-"+i+"-";
+  for(const k of ["rn","mode","milk1","vol1","milk2","vol2","interval","note"]){const e=$d(prefix+k);if(e)r[k]=e.value;}
+ });
+ draft.author=$d("diet-author").value.trim();
+ draft.checked=$d("diet-check").checked;
+}
+function validate(){
+ if(!draft.author)return "Informe o responsável pela elaboração.";
+ if(!draft.checked)return "Confirme a conferência com a prescrição vigente.";
+ for(const r of draft.rows){
+  if(!r.rn)continue;
+  if(!r.milk1&&!r.vol1&&!r.milk2&&!r.vol2)continue; // RN sem dieta registrada
+  const a=Number(r.vol1),b=Number(r.vol2);
+  if(!r.milk1||!r.vol1||!Number.isFinite(a)||a<=0)return "Leito "+r.bed+": informe primeira fórmula e volume válido.";
+  if(r.mode!=="unica"&&(!r.milk2||r.milk1.trim().toLowerCase()===r.milk2.trim().toLowerCase()))return "Leito "+r.bed+": informe duas fórmulas distintas.";
+  if(r.mode==="transicao"&&(!r.vol2||!Number.isFinite(b)||b<=0))return "Leito "+r.bed+": informe o volume da segunda fórmula.";
+ }
+ return "";
+}
+function render(){
+ if(!$d("diet-rows")||!draft)return;
+ $d("diet-source").textContent=draft.source?"Rascunho baseado no mapa emitido de "+draft.source+"; confira todas as prescrições.":"Mapa novo; confira todas as prescrições.";
+ $d("diet-author").value=draft.author||"";
+ $d("diet-check").checked=!!draft.checked;
+ $d("diet-status").textContent=draft.status==="emitido"?"Mapa emitido — alterações exigem nova emissão":"Rascunho não emitido";
+ $d("diet-rows").innerHTML=draft.rows.map((r,i)=>{
+ const field=(k,type="text",attrs="")=>'<input id="diet-'+i+'-'+k+'" type="'+type+'" value="'+esc(r[k])+'" '+attrs+'>';
+ const sel='<select id="diet-'+i+'-mode">'+[["unica","Dieta única"],["transicao","Transição (preparos separados)"],["alternativa","Alternativas (uma ou outra)"]].map(([v,t])=>'<option value="'+v+'" '+(r.mode===v?"selected":"")+'>'+t+'</option>').join("")+'</select>';
+ return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+field("rn")+'</td><td>'+sel+'</td><td>'+field("milk1")+'</td><td>'+field("vol1","number",'min="0" step="0.1"')+'</td><td>'+field("milk2")+'</td><td>'+field("vol2","number",'min="0" step="0.1" '+(r.mode!=="transicao"?"disabled":""))+'</td><td>'+field("interval")+'</td><td>'+field("note")+'</td></tr>';
+ }).join("");
+ draft.rows.forEach((r,i)=>{$d("diet-"+i+"-mode").addEventListener("change",()=>{read();render()})});
+}
+function persist(emit=false){
+ read();
+ if(emit){const err=validate();if(err){alert(err);return;}
+  if(!confirm("Conferiu todas as dietas com a prescrição vigente? Emitir mapa de 24 horas?"))return;
+  draft.status="emitido";draft.issuedAt=new Date().toISOString();draft.issuedBy=SESSION.user||draft.author;
+ }else if(draft.status==="emitido"){draft.status="rascunho";draft.issuedAt=null;}
+ S.dietMaps=S.dietMaps||[];
+ const ix=S.dietMaps.findIndex(m=>m.date===draft.date);
+ if(ix>=0){
+  const old=S.dietMaps[ix];
+  if(old.status==="emitido"){S.dietMapHistory=S.dietMapHistory||[];S.dietMapHistory.push(JSON.parse(JSON.stringify(old)));}
+  S.dietMaps[ix]=JSON.parse(JSON.stringify(draft));
+ }else S.dietMaps.push(JSON.parse(JSON.stringify(draft)));
+ save();
+ render();
+ alert(emit?"Mapa emitido e salvo. Verifique o indicador Cloud: Sincronizado antes de imprimir.":"Rascunho salvo. Verifique a sincronização Cloud.");
+}
+function printMap(){
+ read();
+ if(draft.status!=="emitido"){alert("Emita o mapa antes de imprimir.");return;}
+ const current=mapList().find(m=>m.date===draft.date);
+ if(!current||current.status!=="emitido"){alert("Mapa ainda não salvo.");return;}
+ if(SIASH_CLOUD.enabled&&(SIASH_CLOUD.conflict||localStorage.getItem(CLOUD_PENDING_STORE)==="1")){alert("A sincronização Cloud está pendente. Confirme a sincronização antes de imprimir.");return;}
+ const lines=current.rows.map(r=>{
+ const f1=r.milk1?esc(r.milk1)+" — "+esc(r.vol1)+" mL":"";
+ const f2=r.milk2?esc(r.milk2)+" — "+esc(r.mode==="alternativa"?r.vol1:r.vol2)+" mL":"";
+ const mode=r.mode==="transicao"?"TRANSIÇÃO: preparar separadamente":r.mode==="alternativa"?"ALTERNATIVAS: preparar somente uma":"";
+ return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+esc(r.rn)+'</td><td>'+f1+(f2?"<br>"+f2:"")+(mode?"<br><strong>"+mode+"</strong>":"")+'</td><td>'+esc(r.interval)+'</td></tr>';
+ }).join("");
+ const w=window.open("","_blank");
+ if(!w){alert("Permita a janela de impressão neste navegador.");return;}
+ w.document.write('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Mapa de Dietas '+esc(current.date)+'</title><style>body{font:12px Arial;margin:18mm;color:#222}h2,h3{text-align:center;margin:5px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{border:1px solid #555;padding:7px;vertical-align:top}th{background:#9b6038;color:white}p{margin:12px 0}@page{size:A4 portrait;margin:12mm}</style><h3>FUNDAÇÃO HOSPITALAR DR. MOISÉS MAGALHÃES FREIRE</h3><h2>UTI NEONATAL | REQUISIÇÃO DE DIETAS</h2><p>Data: '+esc(current.date)+' &nbsp; Validade: 24 horas</p><p>Conferir as informações com a prescrição vigente antes do preparo e da administração.</p><table><thead><tr><th>LEITO</th><th>IDENTIFICAÇÃO DO RN</th><th>DIETA / VOLUME POR TIPO</th><th>INTERVALO</th></tr></thead><tbody>'+lines+'</tbody></table><p style="margin-top:36px">Responsável pela elaboração: '+esc(current.author)+'</p></html>');
+ w.document.close();w.focus();w.print();
+}
+window.renderDietMap=function(){if($d("diet-date")&&!draft){$d("diet-date").value=dateNow();load()}};
+window.initDietMap=function(){
+ if(!$d("diet-date"))return;
+ $d("diet-date").value=dateNow();
+ $d("diet-date").addEventListener("change",load);
+ $d("diet-load").addEventListener("click",load);
+ $d("diet-save").addEventListener("click",()=>persist(false));
+ $d("diet-issue").addEventListener("click",()=>persist(true));
+ $d("diet-print").addEventListener("click",printMap);
+};
+})();
