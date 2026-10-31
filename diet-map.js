@@ -4,6 +4,12 @@ const $d=id=>document.getElementById(id);
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const dateNow=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
 const emptyRow=(n,rn="")=>({bed:n,rn,mode:"unica",milk1:"",vol1:"",milk2:"",vol2:"",interval:"3/3 h",note:""});
+const MILK_OPTIONS=["Neocate","Pregomim","Aptamil Pré","Aptamil 1","LHP"];
+const milkSelect=(i,k,value)=>{
+ const current=String(value||"").trim();
+ const options=current&&!MILK_OPTIONS.includes(current)?[current,...MILK_OPTIONS]:MILK_OPTIONS;
+ return '<select id="diet-'+i+'-'+k+'"><option value="">Selecione a fórmula</option>'+options.map(v=>'<option value="'+esc(v)+'" '+(current===v?'selected':'')+'>'+esc(v)+(v===current&&!MILK_OPTIONS.includes(v)?' (registro anterior)':'')+'</option>').join("")+"</select>";
+};
 const occupied=b=>b&&b.status==="Ocupado"&&String(b.rn||"").trim();
 const rowsForBeds=()=>Array.from({length:10},(_,i)=>emptyRow(i+1,occupied(S.beds[i])?S.beds[i].rn:""));
 const mapList=()=>Array.isArray(S.dietMaps)?S.dietMaps:[];
@@ -56,7 +62,7 @@ function render(){
  $d("diet-rows").innerHTML=draft.rows.map((r,i)=>{
  const field=(k,type="text",attrs="")=>'<input id="diet-'+i+'-'+k+'" type="'+type+'" value="'+esc(r[k])+'" '+attrs+'>';
  const sel='<select id="diet-'+i+'-mode">'+[["unica","Dieta única"],["transicao","Transição (preparos separados)"],["alternativa","Alternativas (uma ou outra)"]].map(([v,t])=>'<option value="'+v+'" '+(r.mode===v?"selected":"")+'>'+t+'</option>').join("")+'</select>';
- return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+field("rn")+'</td><td>'+sel+'</td><td>'+field("milk1")+'</td><td>'+field("vol1","number",'min="0" step="0.1"')+'</td><td>'+field("milk2")+'</td><td>'+field("vol2","number",'min="0" step="0.1" '+(r.mode!=="transicao"?"disabled":""))+'</td><td>'+field("interval")+'</td><td>'+field("note")+'</td></tr>';
+ return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+field("rn")+'</td><td>'+sel+'</td><td>'+milkSelect(i,"milk1",r.milk1)+'</td><td>'+field("vol1","number",'min="0" step="0.1"')+'</td><td>'+milkSelect(i,"milk2",r.milk2)+'</td><td>'+field("vol2","number",'min="0" step="0.1" '+(r.mode!=="transicao"?"disabled":""))+'</td><td>'+field("interval")+'</td><td>'+field("note")+'</td></tr>';
  }).join("");
  draft.rows.forEach((r,i)=>{$d("diet-"+i+"-mode").addEventListener("change",()=>{read();render()})});
 }
