@@ -3,7 +3,7 @@
 const $d=id=>document.getElementById(id);
 const esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const dateNow=()=>new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
-const emptyRow=(n,rn="")=>({bed:n,rn,mode:"unica",milk1:"",vol1:"",milk2:"",vol2:"",interval:"3/3 h",note:""});
+const emptyRow=(n,rn="")=>({bed:n,rn,mode:"unica",milk1:"",vol1:"",milk2:"",vol2:"",interval:"",note:""});
 const MILK_OPTIONS=["Neocate","Pregomim","Aptamil Pré","Aptamil 1","LHP"];
 const milkSelect=(i,k,value)=>{
  const current=String(value||"").trim();
@@ -80,6 +80,7 @@ function validate(){
  }
  return "";
 }
+function hasDiet(r){return !!(String(r.milk1||"").trim()&&Number(r.vol1)>0);}
 function render(){
  if(!$d("diet-rows")||!draft)return;
  $d("diet-source").textContent=draft.source?"Rascunho baseado no mapa emitido de "+draft.source+"; confira todas as prescrições.":"Mapa novo; confira todas as prescrições.";
@@ -89,9 +90,9 @@ function render(){
  $d("diet-rows").innerHTML=draft.rows.map((r,i)=>{
  const field=(k,type="text",attrs="")=>'<input id="diet-'+i+'-'+k+'" type="'+type+'" value="'+esc(r[k])+'" '+attrs+'>';
  const sel='<select id="diet-'+i+'-mode">'+[["unica","Dieta única"],["transicao","Transição (preparos separados)"],["alternativa","Alternativas (uma ou outra)"]].map(([v,t])=>'<option value="'+v+'" '+(r.mode===v?"selected":"")+'>'+t+'</option>').join("")+'</select>';
- return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+field("rn")+'</td><td>'+sel+'</td><td>'+milkSelect(i,"milk1",r.milk1)+'</td><td>'+field("vol1","number",'min="0" step="0.1"')+'</td><td>'+milkSelect(i,"milk2",r.milk2)+'</td><td>'+field("vol2","number",'min="0" step="0.1" '+(r.mode!=="transicao"?"disabled":""))+'</td><td>'+field("interval")+'</td><td>'+field("note")+'</td></tr>';
+ return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+field("rn")+'</td><td>'+sel+'</td><td>'+milkSelect(i,"milk1",r.milk1)+'</td><td>'+field("vol1","number",'min="0" step="0.1"')+'</td><td>'+milkSelect(i,"milk2",r.milk2)+'</td><td>'+field("vol2","number",'min="0" step="0.1" '+(r.mode!=="transicao"?"disabled":""))+'</td><td>'+field("interval","text",hasDiet(r)?"":'placeholder="Sem dieta" disabled')+'</td><td>'+field("note")+'</td></tr>';
  }).join("");
- draft.rows.forEach((r,i)=>{$d("diet-"+i+"-mode").addEventListener("change",()=>{read();render()})});
+ draft.rows.forEach((r,i)=>{const prefix="diet-"+i+"-";$d(prefix+"mode").addEventListener("change",()=>{read();render()});for(const key of ["milk1","vol1"]){$d(prefix+key).addEventListener("change",()=>{read();if(!hasDiet(draft.rows[i]))draft.rows[i].interval="";else if(!draft.rows[i].interval)draft.rows[i].interval="3/3 h";render()})}});
 }
 function persist(emit=false){
  read();
