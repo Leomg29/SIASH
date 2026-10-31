@@ -120,7 +120,7 @@ function printMap(){
  const f1=r.milk1?esc(r.milk1)+" — "+esc(r.vol1)+" mL":"";
  const f2=r.milk2?esc(r.milk2)+" — "+esc(r.mode==="alternativa"?r.vol1:r.vol2)+" mL":"";
  const mode=r.mode==="transicao"?"TRANSIÇÃO: preparar separadamente":r.mode==="alternativa"?"ALTERNATIVAS: preparar somente uma":"";
- return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+esc(r.rn)+'</td><td>'+f1+(f2?"<br>"+f2:"")+(mode?"<br><strong>"+mode+"</strong>":"")+'</td><td>'+esc(r.interval)+'</td></tr>';
+ return '<tr><td>'+String(r.bed).padStart(2,"0")+'</td><td>'+esc(r.rn)+'</td><td>'+f1+(f2?"<br>"+f2:"")+(mode?"<br><strong>"+mode+"</strong>":"")+'</td><td>'+((r.rn&&r.milk1&&r.vol1)?esc(r.interval):'')+'</td></tr>';
  }).join("");
  const w=window.open("","_blank");
  if(!w){alert("Permita a janela de impressão neste navegador.");return;}
