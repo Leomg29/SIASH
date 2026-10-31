@@ -17,7 +17,7 @@ let draft=null;
 const selected=()=>($d("diet-date")?.value||dateNow());
 function load(){
  const date=selected(),saved=mapList().find(m=>m.date===date);
- if(saved){draft=JSON.parse(JSON.stringify(saved));}
+ if(saved){draft=JSON.parse(JSON.stringify(saved));reconcileBeds();}
  else {
   const prior=mapList().filter(m=>m.date<date&&m.status==="emitido").sort((a,b)=>b.date.localeCompare(a.date))[0];
   const base=prior?JSON.parse(JSON.stringify(prior.rows)):rowsForBeds();
@@ -29,7 +29,34 @@ function load(){
    return {...r,bed:i+1};
   });
  }
+ reconcileBeds();
  render();
+}
+// Reconcilia o mapa em edição com a ocupação atual, preservando a dieta do mesmo RN ao mudar de leito.
+function reconcileBeds(){
+ if(!draft)return false;
+ const original=draft.rows||[];
+ const currentBeds=Array.from({length:10},(_,i)=>({bed:i+1,rn:occupied(S.beds[i])?String(S.beds[i].rn).trim():""}));
+ const oldByRn=new Map();
+ for(const r of original){const key=String(r.rn||"").trim().toLocaleLowerCase("pt-BR");if(key&&!oldByRn.has(key))oldByRn.set(key,r);}
+ let changed=false;
+ const next=currentBeds.map(({bed,rn})=>{
+  const old=original.find(r=>+r.bed===bed)||emptyRow(bed);
+  if(!rn){if(old.rn)changed=true;return emptyRow(bed);}
+  const same=String(old.rn||"").trim()===rn;
+  const source=same?old:(oldByRn.get(rn.toLocaleLowerCase("pt-BR"))||emptyRow(bed,rn));
+  if(!same||+source.bed!==bed)changed=true;
+  return {...source,bed,rn};
+ });
+ if(changed){
+  draft.rows=next;
+  if(draft.status==="emitido"){
+   // A emissão anterior permanece no histórico; alterações assistenciais exigem nova conferência.
+   draft.status="rascunho";draft.issuedAt=null;draft.checked=false;
+   draft.source=draft.date;
+  }else draft.checked=false;
+ }
+ return changed;
 }
 function read(){
  if(!draft)return;
@@ -100,7 +127,7 @@ function printMap(){
  w.document.write('<!doctype html><html lang="pt-BR"><meta charset="utf-8"><title>Mapa de Dietas '+esc(current.date)+'</title><style>body{font:12px Arial;margin:18mm;color:#222}h2,h3{text-align:center;margin:5px}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{border:1px solid #555;padding:7px;vertical-align:top}th{background:#9b6038;color:white}p{margin:12px 0}@page{size:A4 portrait;margin:12mm}</style><h3>FUNDAÇÃO HOSPITALAR DR. MOISÉS MAGALHÃES FREIRE</h3><h2>UTI NEONATAL | REQUISIÇÃO DE DIETAS</h2><p>Data: '+esc(current.date)+' &nbsp; Validade: 24 horas</p><p>Conferir as informações com a prescrição vigente antes do preparo e da administração.</p><table><thead><tr><th>LEITO</th><th>IDENTIFICAÇÃO DO RN</th><th>DIETA / VOLUME POR TIPO</th><th>INTERVALO</th></tr></thead><tbody>'+lines+'</tbody></table><p style="margin-top:36px">Responsável pela elaboração: '+esc(current.author)+'</p></html>');
  w.document.close();w.focus();w.print();
 }
-window.renderDietMap=function(){if($d("diet-date")&&!draft){$d("diet-date").value=dateNow();load()}};
+window.renderDietMap=function(){if(!$d("diet-date"))return;if(!draft){$d("diet-date").value=dateNow();load();return;}if(selected()!==draft.date){load();return;}read();if(reconcileBeds())render();};
 window.initDietMap=function(){
  if(!$d("diet-date"))return;
  $d("diet-date").value=dateNow();
