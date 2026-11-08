@@ -15,7 +15,14 @@
   function instant(value) {
     if (typeof value !== "string" || !OFFSET_TIME.test(value) || !Number.isFinite(Date.parse(value)))
       throw new Error("Data/hora inválida ou sem fuso explícito");
-    return Date.parse(value);
+    const parsed = Date.parse(value);
+    const parts = value.match(/^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})/);
+    const year = Number(parts[1]), month = Number(parts[2]), day = Number(parts[3]);
+    const hour = Number(parts[4]), minute = Number(parts[5]), second = Number(parts[6]);
+    const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (month < 1 || month > 12 || day < 1 || day > days || hour > 23 || minute > 59 || second > 59)
+      throw new Error("Data/hora inexistente");
+    return parsed;
   }
   function midnight(date) {
     if (typeof date !== "string" || !DATE.test(date)) throw new Error("Data de censo inválida");
@@ -58,9 +65,10 @@
       if (seenAdmissions.has(row.id)) throw new Error("ID de internação duplicado");
       seenAdmissions.add(row.id);
       const d = row.discharge;
-      if (!d || d.type !== "Alta" || d.pipaReferred !== true) continue;
-      if (seenExits.has(d.id)) throw new Error("Evento de alta duplicado");
+      if (!d) continue;
+      if (seenExits.has(d.id)) throw new Error("Evento de saída duplicado");
       seenExits.add(d.id);
+      if (d.type !== "Alta" || d.pipaReferred !== true) continue;
       // O mês da alta é determinado no fuso hospitalar, não no UTC do navegador.
       const localDate = new Date(instant(d.at) - 3 * 3600000).toISOString().slice(0, 10);
       if (localDate.slice(0, 7) === month) result.push({
