@@ -9,6 +9,8 @@ on:
       - 'censo-bed-history.js'
       - 'censo-revision.js'
       - 'censo-sync-decision.js'
+      - 'app.js'
+      - 'index.html'
       - 'tests/censo-sync-decision.test.js'
       - 'tests/censo-revision.test.js'
       - 'tests/censo-bed-history.test.js'
@@ -27,6 +29,6 @@ jobs:
         with:
           node-version: '22'
       - name: Validar sintaxe
-        run: node --check censo-core.js && node --check censo-bed-rules.js && node --check censo-bed-history.js && node --check censo-revision.js && node --check censo-sync-decision.js && node --check tests/censo-core.test.js && node --check tests/censo-bed-rules.test.js && node --check tests/censo-bed-history.test.js && node --check tests/censo-revision.test.js && node --check tests/censo-sync-decision.test.js
+        run: node --check app.js && node --check censo-core.js && node --check censo-bed-rules.js && node --check censo-bed-history.js && node --check censo-revision.js && node --check censo-sync-decision.js && node --check tests/censo-core.test.js && node --check tests/censo-bed-rules.test.js && node --check tests/censo-bed-history.test.js && node --check tests/censo-revision.test.js && node --check tests/censo-sync-decision.test.js
       - name: Testar regras de censo e PIPA
         run: node --test tests/censo-core.test.js tests/censo-bed-rules.test.js tests/censo-bed-history.test.js tests/censo-revision.test.js tests/censo-sync-decision.test.js
