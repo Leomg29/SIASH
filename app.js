@@ -126,6 +126,9 @@ function showCloudReconciliationPanel(){
 function updateCloudBadge(text,bad=false){
  const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);
  if(/CONFLITO|pendentes|reconciliação/i.test(text))showCloudReconciliationPanel();
+ else if(!bad&&/Sincronizado|Dados locais migrados/i.test(text)){
+  const panel=document.getElementById("siash-reconciliation-panel");if(panel)panel.hidden=true;
+ }
 }
 async function uploadDocCloud(key,file){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token||!file)return;
