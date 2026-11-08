@@ -20,7 +20,7 @@
   function midnight(date) {
     if (typeof date !== "string" || !DATE.test(date)) throw new Error("Data de censo inválida");
     const ms = Date.parse(date + "T00:00:00-03:00");
-    if (!Number.isFinite(ms) || new Date(ms - 3 * 3600000).toISOString().slice(0, 10) !== date)
+    if (!Number.isFinite(ms) || new Date(ms - (-3) * 3600000).toISOString().slice(0, 10) !== date)
       throw new Error("Data de censo inexistente");
     return ms;
   }
@@ -59,7 +59,7 @@
       if (seenExits.has(d.id)) throw new Error("Evento de alta duplicado");
       seenExits.add(d.id);
       // O mês da alta é determinado no fuso hospitalar, não no UTC do navegador.
-      const localDate = new Date(instant(d.at) - 3 * 3600000).toISOString().slice(0, 10);
+      const localDate = new Date(instant(d.at) - (-3) * 3600000).toISOString().slice(0, 10);
       if (localDate.slice(0, 7) === month) result.push({
         admissionId: row.id, dischargeId: d.id, date: localDate,
         municipality: row.originMunicipality.trim()
