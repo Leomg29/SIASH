@@ -51,7 +51,7 @@
     });
   }
   function pipaReferrals(admissions, month) {
-    if (typeof month !== "string" || !/^\d{4}-\d{2}$/.test(month)) throw new Error("Competência inválida");
+    if (typeof month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error("Competência inválida");
     const seenAdmissions = new Set(), seenExits = new Set(), result = [];
     for (const row of admissions) {
       assertAdmission(row);
