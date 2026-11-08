@@ -28,10 +28,13 @@
     if (!row || typeof row !== "object" || !row.id || !row.admittedAt || !row.originMunicipality)
       throw new Error("Internação sem ID, admissão ou município de origem");
     instant(row.admittedAt);
+    if (typeof row.id !== "string" || !row.id.trim() ||
+        typeof row.originMunicipality !== "string" || !row.originMunicipality.trim())
+      throw new Error("Identificação ou município inválido");
     if (row.discharge) {
       if (!row.discharge.id || !row.discharge.at || !["Alta", "Transferência", "Óbito"].includes(row.discharge.type))
         throw new Error("Saída incompleta");
-      if (instant(row.discharge.at) < instant(row.admittedAt)) throw new Error("Saída anterior à admissão");
+      if (instant(row.discharge.at) <= instant(row.admittedAt)) throw new Error("Saída anterior à admissão");
       if (row.discharge.pipaReferred && row.discharge.type !== "Alta")
         throw new Error("PIPA somente após alta");
     }
