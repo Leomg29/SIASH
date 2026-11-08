@@ -90,8 +90,42 @@ function scheduleCloudSaveRetry(){
  clearTimeout(cloudSaveTimer);
  cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict){SIASH_CLOUD.editGeneration++;scheduleCloudSave()}},450);
 }
+function showCloudReconciliationPanel(){
+ if(typeof document==="undefined")return;
+ let panel=document.getElementById("siash-reconciliation-panel");
+ if(!panel){
+  panel=document.createElement("section");panel.id="siash-reconciliation-panel";
+  panel.setAttribute("role","alert");panel.style.cssText="padding:12px;margin:10px 16px;border:2px solid #a85a19;border-radius:8px;background:#fff7ed;color:#44240b";
+  const heading=document.createElement("strong");heading.textContent="Sincronização pendente — não sobrescreva os dados";panel.appendChild(heading);
+  const info=document.createElement("p");info.textContent="Há alterações locais não confirmadas. Exporte uma cópia antes de qualquer atualização. A conferência do servidor abaixo não modifica os registros locais.";panel.appendChild(info);
+  const actions=document.createElement("div");actions.style.cssText="display:flex;gap:8px;flex-wrap:wrap";
+  const backup=document.createElement("button");backup.type="button";backup.textContent="Exportar cópia local";
+  backup.addEventListener("click",()=>{
+   try{
+    const payload=JSON.stringify({schema:"siash-reconciliacao-local-v1",exportedAt:new Date().toISOString(),baseRevision:SIASH_CLOUD.revision,state:S},null,2);
+    const blob=new Blob([payload],{type:"application/json"}),url=URL.createObjectURL(blob);
+    const a=document.createElement("a");a.href=url;a.download="SIASH_copia_local_"+new Date().toISOString().replace(/[:.]/g,"-")+".json";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);
+   }catch(e){alert("Não foi possível exportar a cópia local: "+e.message)}
+  });actions.appendChild(backup);
+  const inspect=document.createElement("button");inspect.type="button";inspect.textContent="Consultar revisão remota";
+  const output=document.createElement("p");output.id="siash-reconciliation-detail";output.setAttribute("aria-live","polite");
+  inspect.addEventListener("click",async()=>{
+   inspect.disabled=true;output.textContent="Consultando apenas os metadados da revisão...";
+   try{
+    const remote=await cloudJson("/api/state");
+    const rev=remote.exists?remote.revision:null;
+    const decision=globalThis.SIASH_SYNC_DECISION?.decideSync?.({localBaseRevision:SIASH_CLOUD.revision,remoteRevision:rev,localDirty:true,remoteAvailable:true});
+    output.textContent="Revisão local: "+String(SIASH_CLOUD.revision)+" | remota: "+String(rev)+". "+(decision?.reason||"Conferência manual necessária.")+" Nenhum dado foi substituído.";
+   }catch(e){output.textContent="Não foi possível consultar o servidor. Cópia local mantida: "+e.message}
+   finally{inspect.disabled=false}
+  });actions.appendChild(inspect);panel.appendChild(actions);panel.appendChild(output);
+ }
+ const anchor=document.getElementById("cloud-status");if(anchor?.parentNode&&!panel.isConnected)anchor.parentNode.insertBefore(panel,anchor.nextSibling);
+ panel.hidden=false;
+}
 function updateCloudBadge(text,bad=false){
- const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad)
+ const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);
+ if(/CONFLITO|pendentes|reconciliação/i.test(text))showCloudReconciliationPanel();
 }
 async function uploadDocCloud(key,file){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token||!file)return;
