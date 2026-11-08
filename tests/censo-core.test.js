@@ -34,3 +34,13 @@ test("exige fuso explícito e não aceita data inválida", () => {
   assert.throws(()=>censusAtMidnight([baby("a","2026-11-01T12:00:00")],"2026-11-02"),/fuso/);
   assert.throws(()=>censusAtMidnight([],"2026-02-30"),/inexistente/);
 });
+
+test("alta às 00h e 02h59 locais permanece na competência correta", () => {
+  const rows=[
+    baby("m1","2026-10-01T08:00:00-03:00",{id:"e1",at:"2026-11-01T00:00:00-03:00",type:"Alta",pipaReferred:true}),
+    baby("m2","2026-10-01T08:00:00-03:00",{id:"e2",at:"2026-11-01T02:59:59-03:00",type:"Alta",pipaReferred:true}),
+    baby("m3","2026-10-01T08:00:00-03:00",{id:"e3",at:"2026-10-31T23:59:59-03:00",type:"Alta",pipaReferred:true})
+  ];
+  assert.equal(pipaReferrals(rows,"2026-11").length,2);
+  assert.equal(pipaReferrals(rows,"2026-10").length,1);
+});
