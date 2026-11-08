@@ -16,7 +16,7 @@
     if (typeof value !== "string" || !OFFSET_TIME.test(value) || !Number.isFinite(Date.parse(value)))
       throw new Error("Data/hora inválida ou sem fuso explícito");
     const parsed = Date.parse(value);
-    const parts = value.match(/^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})/);
+    const parts = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
     const year = Number(parts[1]), month = Number(parts[2]), day = Number(parts[3]);
     const hour = Number(parts[4]), minute = Number(parts[5]), second = Number(parts[6]);
     const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
