@@ -22,3 +22,11 @@ test("impede internação com duração zero",()=>{
   baby("a",1,"2026-11-01T08:00:00-03:00",{id:"x",type:"Alta",at:"2026-11-01T08:00:00-03:00"})
  ]),/Intervalo/);
 });
+
+test("detecta intervalo aninhado mesmo quando a comparação adjacente falharia",()=>{
+ assert.throws(()=>validateBedIntervals([
+  baby("a",1,"2026-11-01T08:00:00-03:00",{id:"x",type:"Alta",at:"2026-11-10T08:00:00-03:00"}),
+  baby("b",1,"2026-11-02T08:00:00-03:00",{id:"y",type:"Alta",at:"2026-11-03T08:00:00-03:00"}),
+  baby("c",1,"2026-11-04T08:00:00-03:00")
+ ]),/Sobreposição/);
+});
