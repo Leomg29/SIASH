@@ -44,3 +44,10 @@ test("alta às 00h e 02h59 locais permanece na competência correta", () => {
   assert.equal(pipaReferrals(rows,"2026-11").length,2);
   assert.equal(pipaReferrals(rows,"2026-10").length,1);
 });
+
+test("rejeita competência inexistente, município vazio e internação sem duração",()=>{
+ assert.throws(()=>pipaReferrals([],"2026-13"),/Competência inválida/);
+ assert.throws(()=>pipaReferrals([],"2026-00"),/Competência inválida/);
+ assert.throws(()=>censusAtMidnight([baby("a","2026-11-01T08:00:00-03:00",null,"  ")],"2026-11-02"),/município inválido/);
+ assert.throws(()=>censusAtMidnight([baby("a","2026-11-01T08:00:00-03:00",{id:"x",at:"2026-11-01T08:00:00-03:00",type:"Alta",pipaReferred:false})],"2026-11-02"),/anterior à admissão/);
+});
