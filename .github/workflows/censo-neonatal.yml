@@ -1,0 +1,24 @@
+name: Censo Neonatal - testes isolados
+on:
+  push:
+    branches: [feature/censo-neonatal-pipa]
+  pull_request:
+    paths:
+      - 'censo-core.js'
+      - 'tests/censo-core.test.js'
+      - 'prototypes/censo-neonatal.html'
+      - '.github/workflows/censo-neonatal.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validar sintaxe
+        run: node --check censo-core.js && node --check tests/censo-core.test.js
+      - name: Testar regras de censo e PIPA
+        run: node --test tests/censo-core.test.js
