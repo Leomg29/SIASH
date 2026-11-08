@@ -4,7 +4,7 @@
  */
 (function(root,factory){const api=factory();if(typeof module==="object"&&module.exports)module.exports=api;else root.SIASH_BED_RULES=api;})(typeof globalThis!=="undefined"?globalThis:this,function(){
 "use strict";
-const assertAdmission=(typeof module==="object"&&module.exports)?require("./censo-core.js").assertAdmission:root.SIASH_CENSO.assertAdmission;
+const assertAdmission=(typeof module==="object"&&module.exports)?require("./censo-core.js").assertAdmission:globalThis.SIASH_CENSO.assertAdmission;
 function validateBedIntervals(admissions,capacity=10){
  if(!Number.isInteger(capacity)||capacity<1)throw Error("Capacidade inválida");
  const seen=new Set(),byBed=new Map();
