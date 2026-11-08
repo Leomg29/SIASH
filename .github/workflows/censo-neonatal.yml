@@ -1,0 +1,34 @@
+name: Censo Neonatal - testes isolados
+on:
+  push:
+    branches: [feature/censo-neonatal-pipa]
+  pull_request:
+    paths:
+      - 'censo-core.js'
+      - 'censo-bed-rules.js'
+      - 'censo-bed-history.js'
+      - 'censo-revision.js'
+      - 'censo-sync-decision.js'
+      - 'app.js'
+      - 'index.html'
+      - 'tests/censo-sync-decision.test.js'
+      - 'tests/censo-revision.test.js'
+      - 'tests/censo-bed-history.test.js'
+      - 'tests/censo-bed-rules.test.js'
+      - 'tests/censo-core.test.js'
+      - 'prototypes/censo-neonatal.html'
+      - '.github/workflows/censo-neonatal.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validar sintaxe
+        run: node --check app.js && node --check censo-core.js && node --check censo-bed-rules.js && node --check censo-bed-history.js && node --check censo-revision.js && node --check censo-sync-decision.js && node --check tests/censo-core.test.js && node --check tests/censo-bed-rules.test.js && node --check tests/censo-bed-history.test.js && node --check tests/censo-revision.test.js && node --check tests/censo-sync-decision.test.js
+      - name: Testar regras de censo e PIPA
+        run: node --test tests/censo-core.test.js tests/censo-bed-rules.test.js tests/censo-bed-history.test.js tests/censo-revision.test.js tests/censo-sync-decision.test.js

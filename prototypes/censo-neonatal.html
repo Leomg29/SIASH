@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SIASH — Protótipo do Censo Neonatal</title>
+<style>
+:root{font-family:system-ui,Arial,sans-serif;color:#30271f;background:#f6f4f1}*{box-sizing:border-box}body{max-width:1050px;margin:30px auto;padding:0 18px}header,.panel{background:white;border:1px solid #e7ded5;border-radius:12px;padding:20px;margin-bottom:16px}h1{margin:0;font-size:24px}h2{font-size:19px;margin-top:0}.muted{color:#655e56}.warn{background:#fff2d5;border:1px solid #e9c982;border-radius:8px;padding:12px;margin:14px 0}.tabs{display:flex;gap:8px;margin:16px 0;flex-wrap:wrap}button{cursor:pointer;border:1px solid #b58c65;background:#fff;border-radius:8px;padding:10px 14px;font-weight:600}button.primary{background:#875124;color:white}.tabs button[aria-selected=true]{background:#875124;color:#fff}.hidden{display:none!important}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}label{display:grid;gap:5px;font-size:14px;font-weight:600}input,select{padding:9px;border:1px solid #bfb7ae;border-radius:7px;width:100%;font:inherit}input[type=checkbox]{width:auto}.full{grid-column:1/-1}.actions{display:flex;gap:10px;align-items:center;margin-top:16px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px;border-bottom:1px solid #eee}th{background:#f5f0eb}#feedback{font-weight:600}small{font-size:12px}
+</style></head><body>
+<header><h1>SIASH · Censo Neonatal Integrado</h1><p class="muted">Protótipo funcional isolado para homologação — admissão, atualização do nome, alta e PIPA</p><div class="warn"><strong>Somente dados fictícios.</strong> Este protótipo não se conecta ao SIASH, não grava dados no navegador nem envia informações à nuvem. Não insira dados reais de pacientes.</div></header>
+<div class="tabs" role="tablist"><button type="button" data-tab="admissao" aria-selected="true">Admissão</button><button type="button" data-tab="nome">Atualizar nome</button><button type="button" data-tab="saida">Saída</button><button type="button" data-tab="censo">Censo 00h</button><button type="button" data-tab="pipa">Relatório PIPA</button></div>
+<section class="panel" data-panel="admissao"><h2>Admissão do RN</h2><form id="admission"><div class="grid">
+<label>Identificação inicial (RN de...)<input name="initialName" required maxlength="120" placeholder="RN de mãe fictícia"></label>
+<label>Nome registrado (opcional)<input name="registeredName" maxlength="120"></label>
+<label>Sexo<select name="sex" required><option value="">Selecione</option><option>Feminino</option><option>Masculino</option><option>Não informado</option></select></label>
+<label>IG — semanas<input name="weeks" type="number" min="20" max="45" required></label>
+<label>IG — dias<input name="days" type="number" min="0" max="6" required></label>
+<label>Peso na admissão (g)<input name="weight" type="number" min="200" max="10000" required></label>
+<label>Data/hora da admissão<input name="admittedAt" type="datetime-local" required></label>
+<label>Leito<select name="bed" required id="admission-bed"></select></label>
+<label>Município de origem<input name="originMunicipality" required maxlength="100" placeholder="Ex.: Pirapora"></label>
+</div><div class="actions"><button class="primary">Registrar admissão fictícia</button></div></form></section>
+<section class="panel hidden" data-panel="nome"><h2>Atualizar nome civil</h2><form id="rename"><div class="grid"><label>Internação<select name="id" id="rename-id" required></select></label><label>Nome registrado<input name="name" required maxlength="120"></label></div><div class="actions"><button class="primary">Atualizar nome</button></div></form></section>
+<section class="panel hidden" data-panel="saida"><h2>Registrar saída</h2><form id="discharge"><div class="grid">
+<label>RN internado<select name="id" id="discharge-id" required></select></label>
+<label>Data/hora da saída<input name="at" type="datetime-local" required></label>
+<label>Tipo de saída<select name="type" id="discharge-type"><option>Alta</option><option>Transferência</option><option>Óbito</option></select></label>
+<label>Destino<select name="destination"><option>Domicílio</option><option>Leito Canguru</option><option>Outro setor</option><option>Outro hospital</option></select></label>
+<label>Peso de saída (g)<input name="weight" type="number" min="200" max="10000" required></label>
+<label>Nome registrado (opcional)<input name="registeredName" maxlength="120"></label>
+<label class="full"><span><input type="checkbox" name="pipa" id="pipa-check"> Encaminhamento confirmado ao Programa PIPA</span></label>
+</div><div class="actions"><button class="primary">Registrar saída fictícia</button></div></form></section>
+<section class="panel hidden" data-panel="censo"><h2>Fotografia do censo às 00h</h2><label>Data do censo<input id="census-date" type="date" value="2026-11-08"></label><p id="census-total"></p><div class="table-wrap"><table><thead><tr><th>Leito</th><th>RN</th><th>IG</th><th>Município</th></tr></thead><tbody id="census-rows"></tbody></table></div><small>Regra do protótipo: internação ativa exatamente às 00h de Pirapora (UTC-03). O fechamento e a auditoria por usuário serão implementados no SIASH integrado.</small></section>
+<section class="panel hidden" data-panel="pipa"><h2>Encaminhamentos ao PIPA por município de origem</h2><label>Competência<input id="pipa-month" type="month" value="2026-11"></label><p id="pipa-total"></p><div class="table-wrap"><table><thead><tr><th>Município de origem</th><th>RNs encaminhados</th></tr></thead><tbody id="pipa-rows"></tbody></table></div></section>
+<section class="panel"><h2>Internações fictícias nesta sessão</h2><p id="feedback" aria-live="polite"></p><div class="table-wrap"><table><thead><tr><th>Identificador</th><th>Nome atual</th><th>Leito</th><th>Situação</th></tr></thead><tbody id="all-rows"></tbody></table></div></section>
+<script src="../censo-core.js"></script><script>
+"use strict";
+const records=[];let next=1;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const offset=s=>{if(!s)throw Error("Informe a data e a hora");return s+":00-03:00"};
+const msg=(s,error=false)=>{$("feedback").textContent=s;$("feedback").style.color=error?"#a12c24":"#286b40"};
+for(let n=1;n<=10;n++)$("admission-bed").add(new Option("Leito "+String(n).padStart(2,"0"),String(n)));
+document.querySelectorAll("[data-tab]").forEach(b=>b.addEventListener("click",()=>{
+ document.querySelectorAll("[data-tab]").forEach(x=>x.setAttribute("aria-selected",String(x===b)));
+ document.querySelectorAll("[data-panel]").forEach(x=>x.classList.toggle("hidden",x.dataset.panel!==b.dataset.tab));
+ render();
+}));
+function render(){
+ const active=records.filter(r=>!r.discharge);
+ for(const id of ["rename-id","discharge-id"]){const sel=$(id),value=sel.value;sel.replaceChildren();for(const r of (id==="rename-id"?records:active))sel.add(new Option((r.registeredName||r.initialName)+" · Leito "+r.bed,r.id));if([...sel.options].some(x=>x.value===value))sel.value=value;}
+ $("all-rows").innerHTML=records.map(r=>"<tr><td>"+esc(r.id)+"</td><td>"+esc(r.registeredName||r.initialName)+"</td><td>"+esc(r.bed)+"</td><td>"+(r.discharge?"Saída: "+esc(r.discharge.type):"Internado")+"</td></tr>").join("")||"<tr><td colspan=4>Nenhuma internação nesta sessão.</td></tr>";
+ try{const c=SIASH_CENSO.censusAtMidnight(records,$("census-date").value);$("census-total").textContent="RNs internados à meia-noite: "+c.length;$("census-rows").innerHTML=c.map(r=>"<tr><td>"+esc(r.bed)+"</td><td>"+esc(r.registeredName||r.initialName)+"</td><td>"+r.weeks+"s + "+r.days+"d</td><td>"+esc(r.originMunicipality)+"</td></tr>").join("")||"<tr><td colspan=4>Nenhum RN.</td></tr>";}catch(e){$("census-total").textContent=e.message}
+ try{const p=SIASH_CENSO.pipaByMunicipality(records,$("pipa-month").value);$("pipa-total").textContent="Encaminhamentos confirmados: "+p.reduce((s,r)=>s+r.count,0);$("pipa-rows").innerHTML=p.map(r=>"<tr><td>"+esc(r.municipality)+"</td><td>"+r.count+"</td></tr>").join("")||"<tr><td colspan=2>Nenhum encaminhamento.</td></tr>";}catch(e){$("pipa-total").textContent=e.message}
+}
+$("admission").addEventListener("submit",e=>{e.preventDefault();try{const f=new FormData(e.target),bed=f.get("bed"),at=offset(f.get("admittedAt"));if(records.some(r=>r.bed===bed&&(!r.discharge||Date.parse(r.admittedAt)<=Date.parse(at)&&Date.parse(r.discharge.at)>Date.parse(at))))throw Error("Leito ocupado na data/hora informada");const r={id:"SIM-"+String(next++).padStart(4,"0"),initialName:f.get("initialName").trim(),registeredName:f.get("registeredName").trim(),sex:f.get("sex"),weeks:+f.get("weeks"),days:+f.get("days"),weight:+f.get("weight"),admittedAt:at,bed,originMunicipality:f.get("originMunicipality").trim(),discharge:null};SIASH_CENSO.assertAdmission(r);records.push(r);e.target.reset();msg("Admissão fictícia registrada: "+r.id);render()}catch(err){msg(err.message,true)}});
+$("rename").addEventListener("submit",e=>{e.preventDefault();const f=new FormData(e.target),r=records.find(x=>x.id===f.get("id"));if(!r)return msg("Selecione uma internação",true);r.registeredName=f.get("name").trim();msg("Nome atualizado sem alterar o ID "+r.id);render()});
+$("discharge-type").addEventListener("change",()=>{$("pipa-check").disabled=$("discharge-type").value!=="Alta";if($("pipa-check").disabled)$("pipa-check").checked=false});
+$("discharge").addEventListener("submit",e=>{e.preventDefault();try{const f=new FormData(e.target),r=records.find(x=>x.id===f.get("id")&&!x.discharge);if(!r)throw Error("Selecione RN internado");const d={id:"EXIT-"+r.id,at:offset(f.get("at")),type:f.get("type"),destination:f.get("destination"),weight:+f.get("weight"),pipaReferred:f.get("pipa")==="on"};SIASH_CENSO.assertAdmission({...r,discharge:d});r.discharge=d;if(f.get("registeredName").trim())r.registeredName=f.get("registeredName").trim();msg("Saída fictícia registrada; PIPA "+(d.pipaReferred?"incluído":"não incluído"));e.target.reset();render()}catch(err){msg(err.message,true)}});
+$("census-date").addEventListener("change",render);$("pipa-month").addEventListener("change",render);render();
+</script></body></html>
