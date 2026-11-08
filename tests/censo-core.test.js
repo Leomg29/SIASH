@@ -51,3 +51,15 @@ test("rejeita competência inexistente, município vazio e internação sem dura
  assert.throws(()=>censusAtMidnight([baby("a","2026-11-01T08:00:00-03:00",null,"  ")],"2026-11-02"),/município inválido/);
  assert.throws(()=>censusAtMidnight([baby("a","2026-11-01T08:00:00-03:00",{id:"x",at:"2026-11-01T08:00:00-03:00",type:"Alta",pipaReferred:false})],"2026-11-02"),/anterior à admissão/);
 });
+
+test("rejeita data impossível mesmo quando o motor JS normaliza o calendário",()=>{
+ assert.throws(()=>censusAtMidnight([baby("a","2026-02-30T12:00:00-03:00")],"2026-03-01"),/inexistente/);
+ assert.throws(()=>censusAtMidnight([baby("b","2026-11-01T25:00:00-03:00")],"2026-11-02"),/inválida|inexistente/);
+});
+test("identificadores de saída duplicados são inválidos mesmo sem PIPA",()=>{
+ const rows=[
+  baby("a","2026-11-01T08:00:00-03:00",{id:"saida-1",at:"2026-11-02T10:00:00-03:00",type:"Alta",pipaReferred:false}),
+  baby("b","2026-11-01T08:00:00-03:00",{id:"saida-1",at:"2026-11-02T11:00:00-03:00",type:"Transferência",pipaReferred:false})
+ ];
+ assert.throws(()=>pipaReferrals(rows,"2026-11"),/duplicado/);
+});
