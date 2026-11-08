@@ -6,6 +6,8 @@ on:
     paths:
       - 'censo-core.js'
       - 'censo-bed-rules.js'
+      - 'censo-bed-history.js'
+      - 'tests/censo-bed-history.test.js'
       - 'tests/censo-bed-rules.test.js'
       - 'tests/censo-core.test.js'
       - 'prototypes/censo-neonatal.html'
@@ -21,6 +23,6 @@ jobs:
         with:
           node-version: '22'
       - name: Validar sintaxe
-        run: node --check censo-core.js && node --check censo-bed-rules.js && node --check tests/censo-core.test.js && node --check tests/censo-bed-rules.test.js
+        run: node --check censo-core.js && node --check censo-bed-rules.js && node --check censo-bed-history.js && node --check tests/censo-core.test.js && node --check tests/censo-bed-rules.test.js && node --check tests/censo-bed-history.test.js
       - name: Testar regras de censo e PIPA
-        run: node --test tests/censo-core.test.js tests/censo-bed-rules.test.js
+        run: node --test tests/censo-core.test.js tests/censo-bed-rules.test.js tests/censo-bed-history.test.js
