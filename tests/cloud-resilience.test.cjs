@@ -109,3 +109,20 @@ test('rascunho pertencente a outro usuário não é carregado',async()=>{
  assert.equal(h.eval('S.census.test'),1);
  assert.ok(h.data.has('siash_cloud_pending_v1'));
 });
+
+test('novo login offline recupera rascunho sem sobrescrever estado',async()=>{
+ const pending={user:'enfermeiro-teste',revision:1,state:{census:{test:77}}};
+ const h=harness({initialPending:pending,responses:[new Error('offline')]});
+ await h.eval('cloudLoadAfterLogin()');
+ assert.equal(h.eval('S.census.test'),77);
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.match(h.status.textContent,/OFFLINE/);
+ assert.ok(h.data.has('siash_cloud_pending_v1'));
+});
+test('erro HTTP 503 com revisão estável mantém rascunho e programa retry',async()=>{
+ const h=harness({responses:[{status:503,body:{error:'temporariamente indisponível'}},{status:200,body:{exists:true,revision:1}}]});
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),false);
+ assert.ok(h.data.has('siash_cloud_pending_v1'));
+ assert.match(h.status.textContent,/aguardando reconexão/);
+});
