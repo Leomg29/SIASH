@@ -21,6 +21,7 @@ const SIASH_PENDING_KEY="siash_cloud_pending_v1";
 function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
 function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:SIASH_CLOUD.revision,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
 function clearCloudDraft(){try{localStorage.removeItem(SIASH_PENDING_KEY)}catch(e){console.error(e)}}
+function cloudDraftIsCurrent(pending,remote){return !!(pending&&remote?.exists&&Number.isSafeInteger(pending.revision)&&pending.revision===remote.revision)}
 
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
 async function cloudJson(url,opts={}){
@@ -41,9 +42,11 @@ async function cloudLoadAfterLogin(){
  const pending=cloudPending();
  if(pending){
    if(pending.user&&pending.user!==SESSION.user)throw new Error("Existe um rascunho pendente de outro usuário neste navegador. Acesse com o usuário original para conciliar os dados.");
+   const remote=await cloudJson("/api/state");
+   SIASH_CLOUD.revision=remote.exists?remote.revision:null;
    SIASH_CLOUD.conflict=true;
    S=pending.state;normalize();localStorage.setItem(STORE,JSON.stringify(S));
-   updateCloudBadge("PENDENTE · rascunho local protegido",true);
+   updateCloudBadge(cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
    alert("Existe um rascunho não sincronizado neste navegador. Ele foi preservado e o salvamento automático foi bloqueado. Solicite conciliação antes de continuar.");
    return true;
  }
@@ -78,7 +81,7 @@ function scheduleCloudSave(){
  cloudSaveTimer=setTimeout(async()=>{
    if(SIASH_CLOUD.syncing){scheduleCloudSaveRetry();return;}
    if(SIASH_CLOUD.conflict)return;
-   if(!Number.isSafeInteger(SIASH_CLOUD.revision)){updateCloudBadge("Sessão sem revisão · recarregue com segurança",true);return;}
+   if(!Number.isSafeInteger(SIASH_CLOUD.revision)){preserveCloudDraft("revision-unavailable");updateCloudBadge("Sessão sem revisão · rascunho protegido",true);return;}
    SIASH_CLOUD.syncing=true;updateCloudBadge("Salvando…");
    const generation=SIASH_CLOUD.editGeneration;
    try{
@@ -98,13 +101,13 @@ function scheduleCloudSave(){
      }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
    }finally{
      SIASH_CLOUD.syncing=false;
-     if(!SIASH_CLOUD.conflict&&generation!==SIASH_CLOUD.editGeneration)scheduleCloudSaveRetry();
+     if(!SIASH_CLOUD.conflict&&generation!==SIASH_CLOUD.editGeneration){clearTimeout(cloudRetryTimer);scheduleCloudSaveRetry();}
    }
  },350);
 }
 function scheduleCloudSaveRetry(){
  clearTimeout(cloudSaveTimer);
- cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict){SIASH_CLOUD.editGeneration++;scheduleCloudSave()}},450);
+ cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict)scheduleCloudSave()},450);
 }
 function updateCloudBadge(text,bad=false){
  const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad)
