@@ -42,7 +42,7 @@ async function cloudLoadAfterLogin(){
  if(pending){
    if(pending.user&&pending.user!==SESSION.user)throw new Error("Existe um rascunho pendente de outro usuário neste navegador. Acesse com o usuário original para conciliar os dados.");
    SIASH_CLOUD.conflict=true;
-   S=pending.state;normalize();
+   S=pending.state;normalize();localStorage.setItem(STORE,JSON.stringify(S));
    updateCloudBadge("PENDENTE · rascunho local protegido",true);
    alert("Existe um rascunho não sincronizado neste navegador. Ele foi preservado e o salvamento automático foi bloqueado. Solicite conciliação antes de continuar.");
    return true;
@@ -72,6 +72,7 @@ if(typeof window!=="undefined")window.addEventListener("online",()=>{if(cloudPen
 function scheduleCloudSave(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
  SIASH_CLOUD.editGeneration++;
+ preserveCloudDraft("pending");
  if(SIASH_CLOUD.conflict){updateCloudBadge("CONFLITO · cópia local preservada",true);return;}
  clearTimeout(cloudSaveTimer);
  cloudSaveTimer=setTimeout(async()=>{
@@ -84,7 +85,7 @@ function scheduleCloudSave(){
      const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
      SIASH_CLOUD.revision=r.revision;
      SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
-     if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else updateCloudBadge("Alterações pendentes…",true);
+     if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
    }catch(e){
      console.error(e);
      preserveCloudDraft(e.status===401?"session-expired":e.conflict||e.status===409||e.status===428?"conflict":"network");
