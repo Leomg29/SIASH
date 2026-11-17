@@ -142,3 +142,11 @@ test('retry sem rascunho pendente nao envia dados',()=>{
  assert.equal(h.requests.length,0);
  assert.equal(h.eval('SIASH_CLOUD.editGeneration'),0);
 });
+
+test('401 na consulta apos falha de PUT interrompe retry e preserva rascunho',async()=>{
+ const h=harness({responses:[new Error('Network lost'),{status:401,body:{error:'Sessão expirada'}}]});
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'session-expired');
+ assert.match(h.status.textContent,/Sessão expirada/);
+});
