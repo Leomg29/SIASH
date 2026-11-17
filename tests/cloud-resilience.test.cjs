@@ -126,3 +126,19 @@ test('erro HTTP 503 com revisão estável mantém rascunho e programa retry',asy
  assert.ok(h.data.has('siash_cloud_pending_v1'));
  assert.match(h.status.textContent,/aguardando reconexão/);
 });
+
+test('retry nao cria uma nova geracao de edicao',async()=>{
+ const h=harness({responses:[{status:200,body:{revision:2}}]});
+ h.eval('scheduleCloudSave()');
+ const generation=h.eval('SIASH_CLOUD.editGeneration');
+ h.eval('scheduleCloudSave({retry:true})');
+ assert.equal(h.eval('SIASH_CLOUD.editGeneration'),generation);
+ await h.tick();
+ assert.equal(h.eval('SIASH_CLOUD.revision'),2);
+});
+test('retry sem rascunho pendente nao envia dados',()=>{
+ const h=harness();
+ h.eval('scheduleCloudSave({retry:true})');
+ assert.equal(h.requests.length,0);
+ assert.equal(h.eval('SIASH_CLOUD.editGeneration'),0);
+});
