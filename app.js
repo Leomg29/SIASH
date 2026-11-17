@@ -42,11 +42,13 @@ async function cloudLoadAfterLogin(){
  const pending=cloudPending();
  if(pending){
    if(pending.user&&pending.user!==SESSION.user)throw new Error("Existe um rascunho pendente de outro usuário neste navegador. Acesse com o usuário original para conciliar os dados.");
-   const remote=await cloudJson("/api/state");
-   SIASH_CLOUD.revision=remote.exists?remote.revision:null;
+   // Recuperar o rascunho antes de consultar a rede: falha na consulta não pode impedir acesso à cópia local.
    SIASH_CLOUD.conflict=true;
    S=pending.state;normalize();localStorage.setItem(STORE,JSON.stringify(S));
-   updateCloudBadge(cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
+   let remote=null;
+   try{remote=await cloudJson("/api/state");SIASH_CLOUD.revision=remote.exists?remote.revision:null}
+   catch(e){console.error("Consulta da revisão indisponível",e);SIASH_CLOUD.revision=null}
+   updateCloudBadge(!remote?"OFFLINE · rascunho local protegido":cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
    alert("Existe um rascunho não sincronizado neste navegador. Ele foi preservado e o salvamento automático foi bloqueado. Solicite conciliação antes de continuar.");
    return true;
  }
