@@ -72,3 +72,40 @@ test('novo login com rascunho pendente não substitui estado local',async()=>{
  assert.equal(h.eval('S.census.test'),42);
  assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
 });
+
+test('dois usuários: o segundo salvamento com revisão antiga recebe 409 e preserva rascunho',async()=>{
+ let serverRevision=1;
+ const makeResponse=async(url,opts)=>{
+   if(url==='/api/state'&&opts?.method==='PUT'){
+     const body=JSON.parse(opts.body);
+     if(body.base_revision!==serverRevision)return {status:409,body:{conflict:true,current_revision:serverRevision,error:'Conflito de revisão'}};
+     serverRevision++;
+     return {status:200,body:{revision:serverRevision}};
+   }
+   throw Error('Requisição inesperada: '+url);
+ };
+ const first=harness();
+ const second=harness();
+ // A resposta de ambos é calculada no momento do PUT contra o mesmo servidor fictício.
+ for(const h of [first,second]){
+   h.context.fetch=async(url,opts)=>{
+     h.requests.push({url,opts});
+     const r=await makeResponse(url,opts);
+     return {ok:r.status>=200&&r.status<300,status:r.status,json:async()=>r.body};
+   };
+ }
+ first.eval('scheduleCloudSave()');
+ second.eval('scheduleCloudSave()');
+ await first.tick();
+ await second.tick();
+ assert.equal(serverRevision,2);
+ assert.equal(first.eval('SIASH_CLOUD.revision'),2);
+ assert.equal(second.eval('SIASH_CLOUD.conflict'),true);
+ assert.ok(second.data.has('siash_cloud_pending_v1'));
+});
+test('rascunho pertencente a outro usuário não é carregado',async()=>{
+ const h=harness({initialPending:{user:'outro-usuario',revision:1,state:{census:{test:99}}}});
+ await assert.rejects(async()=>h.eval('cloudLoadAfterLogin()'),/outro usuário/);
+ assert.equal(h.eval('S.census.test'),1);
+ assert.ok(h.data.has('siash_cloud_pending_v1'));
+});
