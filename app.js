@@ -98,7 +98,17 @@ function scheduleCloudSave(){
        localStorage.setItem(STORE,JSON.stringify(S));
        updateCloudBadge("CONFLITO · dados locais preservados",true);
        alert("ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
-     }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+     }else{
+       // A resposta pode ter sido perdida depois do commit: conferir a revisão antes de reenviar.
+       try{
+         const remote=await cloudJson("/api/state");
+         if(remote.exists&&Number.isSafeInteger(remote.revision)&&remote.revision!==SIASH_CLOUD.revision){
+           SIASH_CLOUD.conflict=true;
+           updateCloudBadge("CONFIRMAÇÃO INCERTA · conciliação necessária",true);
+           alert("A conexão caiu e o servidor apresenta outra revisão. O rascunho local está protegido. Não reenvie antes de conciliar os dados.");
+         }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+       }catch(checkError){updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+     }
    }finally{
      SIASH_CLOUD.syncing=false;
      if(!SIASH_CLOUD.conflict&&generation!==SIASH_CLOUD.editGeneration){clearTimeout(cloudRetryTimer);scheduleCloudSaveRetry();}
