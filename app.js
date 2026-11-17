@@ -109,7 +109,14 @@ function scheduleCloudSave({retry=false}={}){
            updateCloudBadge("CONFIRMAÇÃO INCERTA · conciliação necessária",true);
            alert("A conexão caiu e o servidor apresenta outra revisão. O rascunho local está protegido. Não reenvie antes de conciliar os dados.");
          }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
-       }catch(checkError){updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+       }catch(checkError){
+         if(checkError.status===401){
+           SIASH_CLOUD.conflict=true;
+           preserveCloudDraft("session-expired");
+           updateCloudBadge("Sessão expirada · rascunho protegido",true);
+           alert("A sessão expirou durante a conferência do salvamento. Entre novamente para conciliar o rascunho protegido.");
+         }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+       }
      }
    }finally{
      SIASH_CLOUD.syncing=false;
