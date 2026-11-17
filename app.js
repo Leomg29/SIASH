@@ -71,13 +71,13 @@ function retryCloudWhenOnline(){
  if(SIASH_CLOUD.conflict||!SIASH_CLOUD.token)return;
  clearTimeout(cloudRetryTimer);
  const delay=Math.min(30000,1000*Math.pow(2,Math.min(SIASH_CLOUD.retryCount++,5)));
- cloudRetryTimer=setTimeout(()=>{if(navigator.onLine!==false&&!SIASH_CLOUD.syncing)scheduleCloudSave();else retryCloudWhenOnline()},delay);
+ cloudRetryTimer=setTimeout(()=>{if(navigator.onLine!==false&&!SIASH_CLOUD.syncing)scheduleCloudSave({retry:true});else retryCloudWhenOnline()},delay);
 }
 if(typeof window!=="undefined")window.addEventListener("online",()=>{if(cloudPending()&&!SIASH_CLOUD.conflict&&SIASH_CLOUD.token)retryCloudWhenOnline()});
-function scheduleCloudSave(){
+function scheduleCloudSave({retry=false}={}){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
- SIASH_CLOUD.editGeneration++;
- preserveCloudDraft("pending");
+ if(!retry){SIASH_CLOUD.editGeneration++;preserveCloudDraft("pending")}
+ else if(!cloudPending())return;
  if(SIASH_CLOUD.conflict){updateCloudBadge("CONFLITO · cópia local preservada",true);return;}
  clearTimeout(cloudSaveTimer);
  cloudSaveTimer=setTimeout(async()=>{
@@ -119,7 +119,7 @@ function scheduleCloudSave(){
 }
 function scheduleCloudSaveRetry(){
  clearTimeout(cloudSaveTimer);
- cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict)scheduleCloudSave()},450);
+ cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict)scheduleCloudSave({retry:true})},450);
 }
 function updateCloudBadge(text,bad=false){
  const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad)
