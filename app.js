@@ -14,8 +14,14 @@ const SIASH_CLOUD={
  syncing:false,
  revision:null,
  conflict:false,
- editGeneration:0
+ editGeneration:0,
+ retryCount:0
 };
+const SIASH_PENDING_KEY="siash_cloud_pending_v1";
+function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
+function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:SIASH_CLOUD.revision,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
+function clearCloudDraft(){try{localStorage.removeItem(SIASH_PENDING_KEY)}catch(e){console.error(e)}}
+
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
 async function cloudJson(url,opts={}){
  const res=await fetch(url,{...opts,headers:cloudHeaders({"Content-Type":"application/json",...(opts.headers||{})})});
@@ -32,6 +38,15 @@ async function cloudAuthenticate(username,password,bootstrap=false){
 function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
+ const pending=cloudPending();
+ if(pending){
+   if(pending.user&&pending.user!==SESSION.user)throw new Error("Existe um rascunho pendente de outro usuário neste navegador. Acesse com o usuário original para conciliar os dados.");
+   SIASH_CLOUD.conflict=true;
+   S=pending.state;normalize();
+   updateCloudBadge("PENDENTE · rascunho local protegido",true);
+   alert("Existe um rascunho não sincronizado neste navegador. Ele foi preservado e o salvamento automático foi bloqueado. Solicite conciliação antes de continuar.");
+   return true;
+ }
  const remote=await cloudJson("/api/state");
  if(remote.exists&&remote.payload?.state){
    SIASH_CLOUD.revision=remote.revision;SIASH_CLOUD.conflict=false;
@@ -46,6 +61,14 @@ async function cloudLoadAfterLogin(){
  return false;
 }
 let cloudSaveTimer=null;
+let cloudRetryTimer=null;
+function retryCloudWhenOnline(){
+ if(SIASH_CLOUD.conflict||!SIASH_CLOUD.token)return;
+ clearTimeout(cloudRetryTimer);
+ const delay=Math.min(30000,1000*Math.pow(2,Math.min(SIASH_CLOUD.retryCount++,5)));
+ cloudRetryTimer=setTimeout(()=>{if(navigator.onLine!==false&&!SIASH_CLOUD.syncing)scheduleCloudSave();else retryCloudWhenOnline()},delay);
+}
+if(typeof window!=="undefined")window.addEventListener("online",()=>{if(cloudPending()&&!SIASH_CLOUD.conflict&&SIASH_CLOUD.token)retryCloudWhenOnline()});
 function scheduleCloudSave(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
  SIASH_CLOUD.editGeneration++;
@@ -61,15 +84,17 @@ function scheduleCloudSave(){
      const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
      SIASH_CLOUD.revision=r.revision;
      SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
-     updateCloudBadge("Sincronizado");
+     if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else updateCloudBadge("Alterações pendentes…",true);
    }catch(e){
      console.error(e);
-     if(e.conflict||e.status===409||e.status===428){
+     preserveCloudDraft(e.status===401?"session-expired":e.conflict||e.status===409||e.status===428?"conflict":"network");
+     if(e.status===401){SIASH_CLOUD.conflict=true;updateCloudBadge("Sessão expirada · rascunho protegido",true);alert("Sessão expirada. Seu rascunho foi preservado neste navegador. Entre novamente para conciliar os dados.");}
+     else if(e.conflict||e.status===409||e.status===428){
        SIASH_CLOUD.conflict=true;
        localStorage.setItem(STORE,JSON.stringify(S));
        updateCloudBadge("CONFLITO · dados locais preservados",true);
        alert("ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
-     }else updateCloudBadge("Falha de rede · dados locais preservados",true);
+     }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
    }finally{
      SIASH_CLOUD.syncing=false;
      if(!SIASH_CLOUD.conflict&&generation!==SIASH_CLOUD.editGeneration)scheduleCloudSaveRetry();
