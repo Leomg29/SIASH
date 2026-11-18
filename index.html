@@ -134,7 +134,7 @@
       <label>Altas<input id="d-altas" type="number" min="0" value="0"></label>
       <label>Transferências<input id="d-transferencias" type="number" min="0" value="0"></label>
       <label>Óbitos<input id="d-obitos" type="number" min="0" value="0"></label>
-      <label>Encaminhamentos PIPA — automático<input id="d-pipa" type="number" min="0" value="0" readonly><small>Total da data obtido dos encaminhamentos PIPA com data registrada; registros históricos mensais sem data não são redistribuídos automaticamente.</small></label>
+      <label>Encaminhamentos PIPA — automático<input id="d-pipa" type="number" min="0" value="0" readonly><small>Total da data obtido dos encaminhamentos PIPA datados; registros antigos sem data permanecem preservados.</small></label>
       <label>Alta → Leito Canguru<input id="d-alta-canguru" type="number" min="0" value="0"><small>Quantidade de RNs com alta da UTIN para leito Canguru.</small></label>
       <label>PICCs inseridos nesta data — automático<input id="d-picc" type="number" min="0" value="0" readonly><small>Calculado pela data de inserção registrada na Gestão de PICC. Total na competência: <strong id="d-picc-month">0</strong>.</small></label>
       <label>Teste do pezinho<input id="d-pezinho" type="number" min="0" value="0"></label>
@@ -325,7 +325,8 @@
   <div class="grid-2">
     <article class="panel">
       <form id="pipa-form" class="form-grid one">
-        <label>Competência<input id="pipa-month" type="month"></label>
+        <label>Data do encaminhamento após alta<input id="pipa-date" type="date" required></label>
+        <label>Competência<input id="pipa-month" type="month" readonly></label>
         <label>Município<select id="pipa-city"><option value="">Selecione</option><option>Pirapora</option><option>Buritizeiro</option><option>Ibiaí</option><option>Lassance</option><option>Ponto Chique</option><option>Santa Fé de Minas</option><option>Várzea da Palma</option><option>Lagoa dos Patos</option><option>Coração de Jesus</option><option>Brasília de Minas</option><option>Barra do Guaicuí</option><option>Outro</option></select></label>
         <label>Quantidade de RNs encaminhados após alta da UTIN<input id="pipa-qty" type="number" min="1" step="1" value="1" required></label>
         <label class="full"><input id="pipa-post-discharge" type="checkbox" required> Confirmo que os encaminhamentos ocorreram após alta da UTIN e que o município informado é o de origem.</label>
