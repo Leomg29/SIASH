@@ -26,3 +26,11 @@ test('conferencia de censo nao altera o estado nem salva',()=>{
  assert.doesNotMatch(body,/S\.daily\s*=/);
  assert.doesNotMatch(body,/S\.beds\s*=/);
 });
+
+test('PIPA exige confirmacao de alta e quantidade positiva',()=>{
+ assert.match(html,/id="pipa-post-discharge" type="checkbox" required/);
+ assert.match(html,/id="pipa-qty" type="number" min="1"/);
+ assert.match(js,/Number\.isSafeInteger\(qty\)\|\|qty<1/);
+ assert.match(js,/!\$\("pipa-post-discharge"\)\.checked/);
+ assert.match(js,/postDischargeConfirmed:true/);
+});
