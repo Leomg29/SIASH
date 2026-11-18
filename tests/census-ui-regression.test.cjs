@@ -34,3 +34,12 @@ test('PIPA exige confirmacao de alta e quantidade positiva',()=>{
  assert.match(js,/!\$\("pipa-post-discharge"\)\.checked/);
  assert.match(js,/postDischargeConfirmed:true/);
 });
+
+test('PIPA datado alimenta o censo sem redistribuir registros mensais antigos',()=>{
+ assert.match(html,/id="pipa-date" type="date" required/);
+ assert.match(html,/id="d-pipa" type="number"[^>]*readonly/);
+ assert.match(js,/function pipaCountOn\(date\)/);
+ assert.match(js,/S\.pipa\.filter\(x=>x\.date===date\)/);
+ assert.match(js,/pipa:pipaCountOn\(date\)/);
+ assert.match(js,/date:\$\("pipa-date"\)\.value,month:/);
+});
