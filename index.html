@@ -116,6 +116,16 @@
 <!-- LANCAMENTO -->
 <section id="view-lancamento" class="view hidden">
   <div class="hero"><div><h3>Lançamento Diário de Indicadores</h3><p>Registre os dados do dia. A SIASH calcula os indicadores mensais automaticamente.</p></div><span class="badge" id="competence-label">Competência</span></div>
+  <article class="panel" id="daily-census-panel">
+    <div class="panel-head"><h3>Censo neonatal — conferência do plantão noturno</h3><span>Referência: fechamento à meia-noite</span></div>
+    <div class="cards three">
+      <article class="metric-card"><span>Pacientes no lançamento da data</span><strong id="census-daily-count">—</strong></article>
+      <article class="metric-card"><span>Leitos ocupados agora</span><strong id="census-beds-occupied">—</strong></article>
+      <article class="metric-card"><span>Diferença para conferência</span><strong id="census-difference">—</strong></article>
+    </div>
+    <p id="census-status" class="muted">Selecione uma data para conferir o censo.</p>
+    <p class="muted">O censo oficial é fechado pelo plantão noturno à meia-noite. O mapa de leitos mostra a ocupação atual, que pode ser de outro horário; divergências exigem conferência, não ajuste automático. Os lançamentos permanecem integrados à aba Lançamento Diário.</p>
+  </article>
   <article class="panel">
     <form id="daily-form" class="form-grid five">
       <label>Data<input id="d-date" type="date" required></label>
