@@ -327,7 +327,8 @@
       <form id="pipa-form" class="form-grid one">
         <label>Competência<input id="pipa-month" type="month"></label>
         <label>Município<select id="pipa-city"><option value="">Selecione</option><option>Pirapora</option><option>Buritizeiro</option><option>Ibiaí</option><option>Lassance</option><option>Ponto Chique</option><option>Santa Fé de Minas</option><option>Várzea da Palma</option><option>Lagoa dos Patos</option><option>Coração de Jesus</option><option>Brasília de Minas</option><option>Barra do Guaicuí</option><option>Outro</option></select></label>
-        <label>Quantidade<input id="pipa-qty" type="number" min="0" value="0"></label>
+        <label>Quantidade de RNs encaminhados após alta da UTIN<input id="pipa-qty" type="number" min="1" step="1" value="1" required></label>
+        <label class="full"><input id="pipa-post-discharge" type="checkbox" required> Confirmo que os encaminhamentos ocorreram após alta da UTIN e que o município informado é o de origem.</label>
         <label>Observação<textarea id="pipa-note"></textarea></label>
         <button class="primary" type="submit">Salvar encaminhamento</button>
       </form>
