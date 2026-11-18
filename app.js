@@ -303,7 +303,26 @@ function renderShift(){const score=checkScore();$("shift-steps").innerHTML=STEPS
 function checkScore(){const app=S.checklist.filter(c=>c.status!=="N/A");return app.length?Math.round(app.filter(c=>c.status==="Realizado").length/app.length*100):0}
 const DAILY_FIELD_MAP={internados:"d-internados",admissoes:"d-admissoes",altas:"d-altas",transferencias:"d-transferencias",obitos:"d-obitos",pipa:"d-pipa",altaPediatria:"d-alta-pediatria",altaCanguru:"d-alta-canguru",picc:"d-picc",pezinho:"d-pezinho",intub:"d-intub",vm:"d-vm",extubProg:"d-extub-prog",extub:"d-extub",lpp:"d-lpp",hypothermia:"d-hypothermia",hyperthermia:"d-hyperthermia"};
 function loadDailyForm(date){const r=S.daily.find(x=>x.date===date);Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>{$(id).value=k==="picc"?piccInsertedOn(date):k==="hypothermia"?thermalCount(date,"Hipotermia"):k==="hyperthermia"?thermalCount(date,"Hipertermia"):(r?(+r[k]||0):0)});$("d-obs").value=r?(r.obs||""):""}
-function renderDaily(){const date=$("d-date").value||todayISO();if(!$("d-date").value)$("d-date").value=date;const m=monthOf(date),c=monthStats(m);$("competence-label").textContent="Competência "+m.split("-").reverse().join("/");if($("d-picc-month"))$("d-picc-month").textContent=c.picc;$("d-hypothermia").value=thermalCount(date,"Hipotermia");$("d-hyperthermia").value=thermalCount(date,"Hipertermia");renderThermalEvents(date);$("d-kpi-pd").textContent=c.pd;$("d-kpi-ld").textContent=c.ld;$("d-kpi-occ").textContent=fmt(c.occ,1)+"%";$("d-kpi-outs").textContent=c.outs;$("d-kpi-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("d-kpi-days").textContent=c.days;if($("d-kpi-vm-current"))$("d-kpi-vm-current").textContent=c.vmCurrent;if($("d-kpi-vm-days"))$("d-kpi-vm-days").textContent=c.vmDays;$("daily-table").innerHTML=[...c.rows].sort((a,b)=>b.date.localeCompare(a.date)).map(r=>`<tr><td>${dateBR(r.date)}</td><td>${r.internados}</td><td>${r.admissoes}</td><td>${r.altas}</td><td>${r.transferencias}</td><td>${r.obitos}</td><td>${r.pipa}</td><td>${+r.altaPediatria||0}</td><td>${(+r.altaCanguru||0)+(+r.canguru||0)}</td><td>${piccInsertedOn(r.date)}</td><td>${r.pezinho}</td><td>${+r.intub||0}</td><td>${+r.vm||0}</td><td>${+r.extubProg||0}</td><td>${+r.extub||0}</td><td><button class="ghost" onclick="deleteDaily('${r.date}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="16">Nenhum lançamento.</td></tr>'}
+function renderCensusConference(date){
+ const daily=S.daily.find(r=>r.date===date);
+ const occupied=S.beds.filter(b=>b.status==="Ocupado").length;
+ const count=$("census-daily-count"),beds=$("census-beds-occupied"),difference=$("census-difference"),status=$("census-status");
+ if(!count||!beds||!difference||!status)return;
+ beds.textContent=occupied;
+ if(!daily){
+   count.textContent="—";difference.textContent="—";
+   status.textContent="Sem lançamento para "+dateBR(date)+". O mapa de leitos atual não substitui o censo fechado à meia-noite.";
+   return;
+ }
+ const census=Number(daily.internados)||0;
+ count.textContent=census;
+ const delta=occupied-census;
+ difference.textContent=(delta>0?"+":"")+delta;
+ status.textContent=delta===0
+   ?"Totais coincidem numericamente. Confirme o horário de referência antes de validar o fechamento."
+   :"Divergência de "+Math.abs(delta)+" RN(s) entre o lançamento de "+dateBR(date)+" e o mapa atual. Confira admissões, altas e horário; nenhum dado foi alterado automaticamente.";
+}
+function renderDaily(){const date=$("d-date").value||todayISO();if(!$("d-date").value)$("d-date").value=date;const m=monthOf(date),c=monthStats(m);$("competence-label").textContent="Competência "+m.split("-").reverse().join("/");if($("d-picc-month"))$("d-picc-month").textContent=c.picc;$("d-hypothermia").value=thermalCount(date,"Hipotermia");$("d-hyperthermia").value=thermalCount(date,"Hipertermia");renderThermalEvents(date);renderCensusConference(date);$("d-kpi-pd").textContent=c.pd;$("d-kpi-ld").textContent=c.ld;$("d-kpi-occ").textContent=fmt(c.occ,1)+"%";$("d-kpi-outs").textContent=c.outs;$("d-kpi-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("d-kpi-days").textContent=c.days;if($("d-kpi-vm-current"))$("d-kpi-vm-current").textContent=c.vmCurrent;if($("d-kpi-vm-days"))$("d-kpi-vm-days").textContent=c.vmDays;$("daily-table").innerHTML=[...c.rows].sort((a,b)=>b.date.localeCompare(a.date)).map(r=>`<tr><td>${dateBR(r.date)}</td><td>${r.internados}</td><td>${r.admissoes}</td><td>${r.altas}</td><td>${r.transferencias}</td><td>${r.obitos}</td><td>${r.pipa}</td><td>${+r.altaPediatria||0}</td><td>${(+r.altaCanguru||0)+(+r.canguru||0)}</td><td>${piccInsertedOn(r.date)}</td><td>${r.pezinho}</td><td>${+r.intub||0}</td><td>${+r.vm||0}</td><td>${+r.extubProg||0}</td><td>${+r.extub||0}</td><td><button class="ghost" onclick="deleteDaily('${r.date}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="16">Nenhum lançamento.</td></tr>'}
 function renderThermalEvents(date){
  const rows=S.thermalEvents.filter(x=>x.date===date).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
  $("thermal-table").innerHTML=rows.map(x=>`<tr><td>${dateBR(x.date)}</td><td>Leito ${pad(x.bed)}</td><td>${safe(x.rn||"Sem identificador")}</td><td>${safe(x.type)}</td><td>${safe(x.note||"—")}</td><td><button class="ghost" onclick="deleteThermalEvent('${x.id}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="6">Nenhum evento térmico registrado nesta data.</td></tr>';
