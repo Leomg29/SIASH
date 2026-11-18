@@ -1,0 +1,28 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+const html=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
+const js=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
+test('aba diaria tem painel de conferencia do censo',()=>{
+ assert.match(html,/id="daily-census-panel"/);
+ assert.match(js,/function renderCensusConference\(date\)/);
+ assert.match(js,/renderThermalEvents\(date\);renderCensusConference\(date\)/);
+});
+test('campo de alta pediatria nao pode ser preenchido em novo lancamento',()=>{
+ assert.doesNotMatch(html,/id="d-alta-pediatria"/);
+ assert.doesNotMatch(js,/\$\("d-alta-pediatria"\)/);
+ assert.match(html,/id="d-alta-canguru"/);
+});
+test('editar lancamento nao descarta dados historicos de pediatria',()=>{
+ assert.match(js,/altaPediatria:\(S\.daily\.find\(x=>x\.date===date\)\?\.altaPediatria\|\|0\)/);
+});
+test('conferencia de censo nao altera o estado nem salva',()=>{
+ const start=js.indexOf('function renderCensusConference(date){');
+ const end=js.indexOf('function renderDaily(){',start);
+ assert.ok(start>=0&&end>start);
+ const body=js.slice(start,end);
+ assert.doesNotMatch(body,/\bsave\s*\(/);
+ assert.doesNotMatch(body,/S\.daily\s*=/);
+ assert.doesNotMatch(body,/S\.beds\s*=/);
+});
