@@ -108,3 +108,8 @@ test('alterar total diario arquiva conferencia anterior sem apaga-la',()=>{
  assert.match(js,/if\(previous\?\.censusConferenceHistory\)r\.censusConferenceHistory=previous\.censusConferenceHistory/);
  assert.match(js,/else r\.censusConferenceHistory=\[\.\.\.\(r\.censusConferenceHistory\|\|\[\]\),previous\.censusConference\]/);
 });
+
+test('interface informa quantidade de conferencias anteriores',()=>{
+ assert.match(js,/Array\.isArray\(daily\.censusConferenceHistory\)\?daily\.censusConferenceHistory\.length:0/);
+ assert.match(js,/Histórico preservado:/);
+});
