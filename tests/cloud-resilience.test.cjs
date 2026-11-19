@@ -168,3 +168,22 @@ test('migracao sem revisao valida nao marca sincronizacao como concluida',async(
  assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
  assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'revision-unavailable');
 });
+
+test('conflito HTTP 409 na migracao inicial preserva copia local',async()=>{
+ const h=harness({responses:[{status:200,body:{exists:false}},{status:409,body:{conflict:true,error:'Estado central ja existe'}}]});
+ h.data.set('siash_utin_consolidada_v08',JSON.stringify({census:{test:1}}));
+ await assert.rejects(h.eval('cloudLoadAfterLogin()'),/Migração inicial não confirmada/);
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ const draft=JSON.parse(h.data.get('siash_cloud_pending_v1'));
+ assert.equal(draft.reason,'initialization-conflict');
+ assert.equal(draft.state.census.test,1);
+});
+test('queda de rede na migracao inicial exige conciliacao sem reenviar',async()=>{
+ const h=harness({responses:[{status:200,body:{exists:false}},new Error('network interrupted')]});
+ h.data.set('siash_utin_consolidada_v08',JSON.stringify({census:{test:1}}));
+ await assert.rejects(h.eval('cloudLoadAfterLogin()'),/Migração inicial não confirmada/);
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'initialization-unconfirmed');
+ h.eval('scheduleCloudSave()');
+ assert.equal(h.requests.length,2);
+});
