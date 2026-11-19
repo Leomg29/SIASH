@@ -51,3 +51,11 @@ test('PIPA legado e datado nao sao somados automaticamente',()=>{
  assert.match(js,/Valores não somados automaticamente/);
  assert.match(js,/pipa:\(S\.daily\.find\(x=>x\.date===date\)\?\.pipa\|\|0\)/);
 });
+
+test('resumo mensal distingue fontes PIPA sem agregacao cruzada',()=>{
+ assert.match(html,/id="pipa-reconciliation"/);
+ assert.match(js,/function pipaReconciliationSummary\(month\)/);
+ assert.match(js,/monthlyOnly=S\.pipa\.filter\(x=>!x\.date&&x\.month===month\)/);
+ assert.match(js,/overlapDays=S\.daily\.filter/);
+ assert.match(js,/Não somar as fontes sem conciliação/);
+});
