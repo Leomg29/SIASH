@@ -316,6 +316,15 @@ function renderShift(){const score=checkScore();$("shift-steps").innerHTML=STEPS
 function checkScore(){const app=S.checklist.filter(c=>c.status!=="N/A");return app.length?Math.round(app.filter(c=>c.status==="Realizado").length/app.length*100):0}
 const DAILY_FIELD_MAP={internados:"d-internados",admissoes:"d-admissoes",altas:"d-altas",transferencias:"d-transferencias",obitos:"d-obitos",pipa:"d-pipa",altaCanguru:"d-alta-canguru",picc:"d-picc",pezinho:"d-pezinho",intub:"d-intub",vm:"d-vm",extubProg:"d-extub-prog",extub:"d-extub",lpp:"d-lpp",hypothermia:"d-hypothermia",hyperthermia:"d-hyperthermia"};
 function loadDailyForm(date){const r=S.daily.find(x=>x.date===date);Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>{$(id).value=k==="pipa"?pipaCountOn(date):k==="picc"?piccInsertedOn(date):k==="hypothermia"?thermalCount(date,"Hipotermia"):k==="hyperthermia"?thermalCount(date,"Hipertermia"):(r?(+r[k]||0):0)});$("d-obs").value=r?(r.obs||""):""}
+function registerCensusConference(date,responsible){
+ const daily=S.daily.find(r=>r.date===date);
+ if(!daily)return {ok:false,reason:"Salve o lançamento diário antes da conferência."};
+ if(!String(responsible||"").trim())return {ok:false,reason:"Informe o responsável pelo plantão noturno."};
+ const count=Number(daily.internados);
+ if(!Number.isSafeInteger(count)||count<0||count>(S.settings.beds||10))return {ok:false,reason:"Confira o total de pacientes e a capacidade de leitos antes de registrar."};
+ daily.censusConference={referenceDate:date,registeredAt:new Date().toISOString(),responsible:String(responsible).trim(),count,bedOccupancyAtRegistration:S.beds.filter(b=>b.status==="Ocupado").length};
+ return {ok:true};
+}
 function renderCensusConference(date){
  const daily=S.daily.find(r=>r.date===date);
  const occupied=S.beds.filter(b=>b.status==="Ocupado").length;
@@ -323,11 +332,19 @@ function renderCensusConference(date){
  if(!count||!beds||!difference||!status)return;
  beds.textContent=occupied;
  if(!daily){
+   const closure=$("census-closure-status");if(closure)closure.textContent="Sem conferência registrada para esta data.";
    count.textContent="—";difference.textContent="—";
    status.textContent="Sem lançamento para "+dateBR(date)+". O mapa de leitos atual não substitui o censo fechado à meia-noite.";
    return;
  }
  const census=Number(daily.internados)||0;
+ const closure=$("census-closure-status");
+ if(closure){
+   const record=daily.censusConference;
+   closure.textContent=record&&record.count===census
+     ?`Conferência registrada por ${record.responsible} em ${new Date(record.registeredAt).toLocaleString("pt-BR")} (referência ${dateBR(record.referenceDate)}; ${record.count} RN). Ocupação do mapa naquele registro: ${record.bedOccupancyAtRegistration}. Registro manual, não valida automaticamente o horário da meia-noite.`
+     :record?"Conferência anterior desatualizada: o censo foi alterado. Registre nova conferência.":"Sem conferência registrada para esta data.";
+ }
  count.textContent=census;
  const delta=occupied-census;
  difference.textContent=(delta>0?"+":"")+delta;
@@ -928,7 +945,14 @@ $("logout-btn").addEventListener("click",()=>{SIASH_CLOUD.token="";sessionStorag
 $("refresh-dashboard").addEventListener("click",renderAll)
 $("reset-shift").addEventListener("click",()=>{if(confirm("Iniciar novo plantão? O histórico mensal será preservado.")){S.checklist=CHECKS.map(x=>({text:x,status:"Pendente"}));S.events=[];S.pending=[];S.shiftStarted=new Date().toISOString();save()}})
 $("event-form").addEventListener("submit",e=>{e.preventDefault();if(!$("ev-text").value.trim())return;S.events.unshift({when:nowBR(),type:$("ev-type").value,bed:$("ev-bed").value,text:$("ev-text").value.trim()});$("ev-text").value="";save()})
-$("daily-form").addEventListener("submit",e=>{e.preventDefault();const date=$("d-date").value;const r={date,internados:+$("d-internados").value||0,admissoes:+$("d-admissoes").value||0,altas:+$("d-altas").value||0,transferencias:+$("d-transferencias").value||0,obitos:+$("d-obitos").value||0,pipa:(S.daily.find(x=>x.date===date)?.pipa||0),altaPediatria:(S.daily.find(x=>x.date===date)?.altaPediatria||0),altaCanguru:+$("d-alta-canguru").value||0,picc:piccInsertedOn(date),pezinho:+$("d-pezinho").value||0,intub:+$("d-intub").value||0,vm:+$("d-vm").value||0,extubProg:+$("d-extub-prog").value||0,extub:+$("d-extub").value||0,lpp:+$("d-lpp").value||0,hypothermia:thermalCount(date,"Hipotermia"),hyperthermia:thermalCount(date,"Hipertermia"),obs:$("d-obs").value.trim()};S.daily=S.daily.filter(x=>x.date!==r.date);S.daily.push(r);S.daily.sort((a,b)=>a.date.localeCompare(b.date));save();showToast("Dados salvos",1000)})
+$("daily-form").addEventListener("submit",e=>{e.preventDefault();const date=$("d-date").value;const r={date,internados:+$("d-internados").value||0,admissoes:+$("d-admissoes").value||0,altas:+$("d-altas").value||0,transferencias:+$("d-transferencias").value||0,obitos:+$("d-obitos").value||0,pipa:(S.daily.find(x=>x.date===date)?.pipa||0),altaPediatria:(S.daily.find(x=>x.date===date)?.altaPediatria||0),altaCanguru:+$("d-alta-canguru").value||0,picc:piccInsertedOn(date),pezinho:+$("d-pezinho").value||0,intub:+$("d-intub").value||0,vm:+$("d-vm").value||0,extubProg:+$("d-extub-prog").value||0,extub:+$("d-extub").value||0,lpp:+$("d-lpp").value||0,hypothermia:thermalCount(date,"Hipotermia"),hyperthermia:thermalCount(date,"Hipertermia"),obs:$("d-obs").value.trim()};const previous=S.daily.find(x=>x.date===date);if(previous?.censusConference&&Number(previous.internados)===r.internados)r.censusConference=previous.censusConference;S.daily=S.daily.filter(x=>x.date!==r.date);S.daily.push(r);S.daily.sort((a,b)=>a.date.localeCompare(b.date));save();showToast("Dados salvos",1000)})
+$("census-close").addEventListener("click",()=>{
+ const date=$("d-date").value||todayISO();
+ const responsible=$("census-closer").value;
+ const result=registerCensusConference(date,responsible);
+ if(!result.ok)return alert(result.reason);
+ save();showToast("Conferência registrada; verifique a referência de meia-noite",2200);
+});
 $("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):0);$("d-obs").value=""})
 $("d-date").addEventListener("change",()=>{const date=$("d-date").value;loadDailyForm(date);renderDaily()})
 $("thermal-add").addEventListener("click",()=>{const date=$("d-date").value||todayISO(),bedNo=+$("thermal-bed").value,b=S.beds.find(x=>x.n===bedNo);if(!b)return alert("Selecione um leito válido.");if(b.status!=="Ocupado")return alert("O leito selecionado não está marcado como ocupado. Atualize a Gestão de Leitos antes de registrar o evento.");if(!String(b.rn||"").trim())return alert("O leito ocupado está sem identificador do RN. Informe o identificador não nominal na Gestão de Leitos.");S.thermalEvents.push({id:"THERM-"+Date.now()+"-"+Math.random().toString(36).slice(2,7),date,bed:bedNo,rn:String(b.rn).trim(),type:$("thermal-type").value,note:$("thermal-note").value.trim(),createdAt:new Date().toISOString()});$("thermal-note").value="";save();showToast("Evento térmico registrado",1200)})
