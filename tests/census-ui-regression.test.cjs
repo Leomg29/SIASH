@@ -93,3 +93,9 @@ test('altas para pediatria nao sao classificadas como leito canguru',()=>{
  assert.doesNotMatch(js,/canguru:sum\("canguru"\)\+sum\("altaPediatria"\)/);
  assert.match(js,/\["Altas para Leito Canguru \(total\)",c\.canguru\]/);
 });
+
+test('competencia PIPA prioriza data do encaminhamento em todas as visoes',()=>{
+ assert.match(js,/function pipaMonthTotal\(m\)\{return S\.pipa\.filter\(x=>\(x\.date\?monthOf\(x\.date\):x\.month\)===m\)/);
+ assert.match(js,/S\.pipa\.filter\(x=>\(x\.date\?monthOf\(x\.date\):x\.month\)===m\)\.forEach/);
+ assert.match(js,/\.\.\.S\.pipa\.map\(r=>r\.date\?monthOf\(r\.date\):r\.month\)/);
+});
