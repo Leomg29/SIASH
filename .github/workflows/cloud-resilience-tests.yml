@@ -6,9 +6,9 @@ on:
   pull_request:
     paths:
       - app.js
+      - server.js
       - index.html
-      - tests/census-ui-regression.test.cjs
-      - tests/cloud-resilience.test.cjs
+      - "tests/**"
       - .github/workflows/cloud-resilience-tests.yml
 jobs:
   cloud-resilience:
