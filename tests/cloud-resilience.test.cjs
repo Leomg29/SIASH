@@ -150,3 +150,19 @@ test('401 na consulta apos falha de PUT interrompe retry e preserva rascunho',as
  assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'session-expired');
  assert.match(h.status.textContent,/Sessão expirada/);
 });
+
+test('migracao inicial utiliza revisao retornada pelo servidor',async()=>{
+ const h=harness({responses:[{status:200,body:{exists:false}},{status:200,body:{ok:true,revision:7}}]});
+ h.data.set('siash_utin_consolidada_v08',JSON.stringify({census:{test:1}}));
+ const ok=await h.eval('cloudLoadAfterLogin()');
+ assert.equal(ok,true);
+ assert.equal(h.eval('SIASH_CLOUD.revision'),7);
+ assert.equal(h.requests[1].url,'/api/state/init');
+});
+test('migracao sem revisao valida nao marca sincronizacao como concluida',async()=>{
+ const h=harness({responses:[{status:200,body:{exists:false}},{status:200,body:{ok:true}}]});
+ h.data.set('siash_utin_consolidada_v08',JSON.stringify({census:{test:1}}));
+ await assert.rejects(h.eval('cloudLoadAfterLogin()'),/revisão válida/);
+ assert.equal(h.eval('SIASH_CLOUD.revision'),1);
+ assert.doesNotMatch(h.status.textContent,/Dados locais migrados/);
+});
