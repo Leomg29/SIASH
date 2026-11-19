@@ -274,7 +274,18 @@ normalize();localStorage.setItem(STORE,JSON.stringify(S));
 function save(){localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
 function currentMonth(){return monthOf(todayISO())}
 function pipaCountOn(date){return S.pipa.filter(x=>x.date===date).reduce((n,x)=>n+(Number(x.qty)||0),0)}
-function pipaDailyAudit(date){const daily=S.daily.find(x=>x.date===date);return {dated:pipaCountOn(date),legacy:daily?Number(daily.pipa)||0:0,hasDated:S.pipa.some(x=>x.date===date)}}
+function pipaDailyAudit(date){
+ const daily=S.daily.find(x=>x.date===date);
+ const dated=pipaCountOn(date),legacy=daily?Number(daily.pipa)||0:0;
+ return {dated,legacy,hasDated:S.pipa.some(x=>x.date===date),requiresReview:dated>0&&legacy>0};
+}
+function pipaReconciliationSummary(month){
+ const dated=S.pipa.filter(x=>x.date&&monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
+ const monthlyOnly=S.pipa.filter(x=>!x.date&&x.month===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
+ const legacyDaily=S.daily.filter(x=>monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.pipa)||0),0);
+ const overlapDays=S.daily.filter(x=>monthOf(x.date)===month&&pipaDailyAudit(x.date).requiresReview).length;
+ return {dated,monthlyOnly,legacyDaily,overlapDays,needsReview:monthlyOnly>0||overlapDays>0};
+}
 function pipaMonthTotal(m){return S.pipa.filter(x=>x.month===m).reduce((total,row)=>total+(+row.qty||0),0)}
 function thermalCount(date,type){return S.thermalEvents.filter(x=>x.date===date&&x.type===type).length}
 function thermalMonthCount(m,type){return S.thermalEvents.filter(x=>monthOf(x.date)===m&&x.type===type).length}
@@ -370,7 +381,7 @@ window.deletePicc=i=>{
  const x=S.picc[i];if(!x)return;if(confirm(`Excluir definitivamente o registro de PICC do Leito ${pad(x.bed)}?\n\nUse esta opção apenas para corrigir um lançamento indevido. Para retirada clínica, use Registrar retirada.`)){S.picc.splice(i,1);clearPiccForm();cancelPiccRemoval();save();showToast("Registro de PICC excluído",1200)}
 }
 
-function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();const m=$("pipa-month").value||monthOf($("pipa-date").value);if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>x.month===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>`<tr><td>${r.month.split("-").reverse().join("/")}</td><td>${safe(r.city)}</td><td>${r.qty}</td><td>${safe(r.note)}</td><td><button class="ghost" onclick="deletePipa(${S.pipa.length-1-idx})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="5">Nenhum encaminhamento registrado.</td></tr>'}
+function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();const m=$("pipa-month").value||monthOf($("pipa-date").value);if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};const audit=pipaReconciliationSummary(m),auditEl=$("pipa-reconciliation");if(auditEl)auditEl.textContent=`Conferência: ${audit.dated} encaminhamento(s) datado(s); ${audit.monthlyOnly} registro(s) histórico(s) sem data; ${audit.legacyDaily} no censo diário legado; ${audit.overlapDays} dia(s) com possível sobreposição. Não somar as fontes sem conciliação.`;rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>`<tr><td>${r.month.split("-").reverse().join("/")}</td><td>${safe(r.city)}</td><td>${r.qty}</td><td>${safe(r.note)}</td><td><button class="ghost" onclick="deletePipa(${S.pipa.length-1-idx})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="5">Nenhum encaminhamento registrado.</td></tr>'}
 window.deletePipa=i=>{S.pipa.splice(i,1);save()}
 let sharedPending=[],pendingLoaded=false,pendingLoading=false;
 async function loadSharedPending(){
