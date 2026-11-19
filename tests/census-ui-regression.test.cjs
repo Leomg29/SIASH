@@ -87,3 +87,9 @@ test('confirmacao precede qualquer mutacao de conferencia',()=>{
  assert.ok(body.indexOf('window.confirm(')<body.indexOf('registerCensusConference(date,responsible)'));
  assert.ok(body.indexOf('registerCensusConference(date,responsible)')<body.indexOf('save();'));
 });
+
+test('altas para pediatria nao sao classificadas como leito canguru',()=>{
+ assert.match(js,/canguru:sum\("canguru"\)\+sum\("altaCanguru"\)/);
+ assert.doesNotMatch(js,/canguru:sum\("canguru"\)\+sum\("altaPediatria"\)/);
+ assert.match(js,/\["Altas para Leito Canguru \(total\)",c\.canguru\]/);
+});
