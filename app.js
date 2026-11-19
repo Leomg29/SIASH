@@ -58,6 +58,11 @@ async function cloudLoadAfterLogin(){
    S=remote.payload.state; if(remote.payload.security)setSecurityState(remote.payload.security);
    normalize();localStorage.setItem(STORE,JSON.stringify(S));SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
  }
+ if(remote.exists){
+   preserveCloudDraft("remote-state-invalid");SIASH_CLOUD.conflict=true;
+   updateCloudBadge("ESTADO REMOTO INVÁLIDO · rascunho protegido",true);
+   throw new Error("O servidor informou estado existente sem dados válidos. Rascunho preservado; conciliação necessária.");
+ }
  const localRaw=localStorage.getItem(STORE);
  if(localRaw){
    let initialized;
