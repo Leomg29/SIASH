@@ -951,9 +951,9 @@ $("daily-form").addEventListener("submit",e=>{e.preventDefault();const date=$("d
 $("census-close").addEventListener("click",()=>{
  const date=$("d-date").value||todayISO();
  const responsible=$("census-closer").value;
+ if(!window.confirm("Confirmar conferência manual do plantão noturno? A data e hora reais serão registradas; isso não certifica automaticamente o fechamento à meia-noite."))return;
  const result=registerCensusConference(date,responsible);
  if(!result.ok)return alert(result.reason);
- if(!window.confirm("Confirmar conferência manual do plantão noturno? A data e hora reais serão registradas; isso não certifica automaticamente o fechamento à meia-noite."))return;
  save();showToast("Conferência registrada; verifique a referência de meia-noite",2200);
 });
 $("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):0);$("d-obs").value=""})
