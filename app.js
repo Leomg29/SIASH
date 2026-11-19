@@ -60,8 +60,9 @@ async function cloudLoadAfterLogin(){
  }
  const localRaw=localStorage.getItem(STORE);
  if(localRaw){
-   await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
-   SIASH_CLOUD.revision=1;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
+   const initialized=await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
+   if(!Number.isSafeInteger(initialized.revision)||initialized.revision<1)throw new Error("Inicialização sem revisão válida. A sincronização foi bloqueada para proteger os dados.");
+   SIASH_CLOUD.revision=initialized.revision;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
  }
  return false;
 }
