@@ -187,3 +187,12 @@ test('queda de rede na migracao inicial exige conciliacao sem reenviar',async()=
  h.eval('scheduleCloudSave()');
  assert.equal(h.requests.length,2);
 });
+
+test('estado remoto existente sem payload valido nao aciona migracao inicial',async()=>{
+ const h=harness({responses:[{status:200,body:{exists:true,revision:4}}]});
+ h.data.set('siash_utin_consolidada_v08',JSON.stringify({census:{test:1}}));
+ await assert.rejects(h.eval('cloudLoadAfterLogin()'),/estado existente sem dados válidos/);
+ assert.equal(h.requests.length,1);
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'remote-state-invalid');
+});
