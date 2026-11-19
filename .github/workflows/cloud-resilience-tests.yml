@@ -2,6 +2,7 @@ name: SIASH cloud resilience tests
 on:
   push:
     branches:
+      - main
       - test/resiliencia-sessao-conflitos-20261117
   pull_request:
     paths:
