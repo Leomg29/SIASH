@@ -101,7 +101,7 @@ test('competencia PIPA prioriza data do encaminhamento em todas as visoes',()=>{
 });
 
 test('conferencias anteriores permanecem no historico apos nova conferencia',()=>{
- assert.match(js,/daily\.censusConferenceHistory=\[\.\.\.\(daily\.censusConferenceHistory\|\|\[\]\),daily\.censusConference\]/);
+ assert.match(js,/daily\.censusConferenceHistory=\[\.\.\.\(Array\.isArray\(daily\.censusConferenceHistory\)\?daily\.censusConferenceHistory:\[\]\),daily\.censusConference\]/);
  assert.match(js,/registeredBy:SESSION\.user\|\|null/);
 });
 test('alterar total diario arquiva conferencia anterior sem apaga-la',()=>{

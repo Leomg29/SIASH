@@ -341,7 +341,7 @@ function registerCensusConference(date,responsible){
  if(Number($("d-internados").value)!==Number(daily.internados))return {ok:false,reason:"O valor exibido no formulário difere do lançamento salvo. Salve ou recarregue os dados antes de conferir."};
  const count=Number(daily.internados);
  if(!Number.isSafeInteger(count)||count<0||count>(S.settings.beds||10))return {ok:false,reason:"Confira o total de pacientes e a capacidade de leitos antes de registrar."};
- if(daily.censusConference){daily.censusConferenceHistory=[...(daily.censusConferenceHistory||[]),daily.censusConference];}
+ if(daily.censusConference){daily.censusConferenceHistory=[...(Array.isArray(daily.censusConferenceHistory)?daily.censusConferenceHistory:[]),daily.censusConference];}
  daily.censusConference={referenceDate:date,registeredAt:new Date().toISOString(),responsible:String(responsible).trim(),registeredBy:SESSION.user||null,count,bedOccupancyAtRegistration:S.beds.filter(b=>b.status==="Ocupado").length};
  return {ok:true};
 }
