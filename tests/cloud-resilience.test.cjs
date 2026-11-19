@@ -165,4 +165,6 @@ test('migracao sem revisao valida nao marca sincronizacao como concluida',async(
  await assert.rejects(h.eval('cloudLoadAfterLogin()'),/revisão válida/);
  assert.equal(h.eval('SIASH_CLOUD.revision'),1);
  assert.doesNotMatch(h.status.textContent,/Dados locais migrados/);
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'revision-unavailable');
 });
