@@ -59,3 +59,18 @@ test('resumo mensal distingue fontes PIPA sem agregacao cruzada',()=>{
  assert.match(js,/overlapDays=S\.daily\.filter/);
  assert.match(js,/Não somar as fontes sem conciliação/);
 });
+
+test('conferencia noturna exige lancamento e responsavel',()=>{
+ assert.match(html,/id="census-closer"/);
+ assert.match(html,/id="census-close"/);
+ assert.match(js,/function registerCensusConference\(date,responsible\)/);
+ assert.match(js,/if\(!daily\)return \{ok:false/);
+ assert.match(js,/if\(!String\(responsible\|\|""\)\.trim\(\)\)return/);
+});
+test('conferencia registra horario real e preserva somente se total nao mudar',()=>{
+ assert.match(js,/registeredAt:new Date\(\)\.toISOString\(\)/);
+ assert.match(js,/bedOccupancyAtRegistration:/);
+ assert.match(js,/Number\(previous\.internados\)===r\.internados/);
+ assert.match(js,/r\.censusConference=previous\.censusConference/);
+ assert.match(js,/Conferência anterior desatualizada/);
+});
