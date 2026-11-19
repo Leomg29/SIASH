@@ -99,3 +99,12 @@ test('competencia PIPA prioriza data do encaminhamento em todas as visoes',()=>{
  assert.match(js,/S\.pipa\.filter\(x=>\(x\.date\?monthOf\(x\.date\):x\.month\)===m\)\.forEach/);
  assert.match(js,/\.\.\.S\.pipa\.map\(r=>r\.date\?monthOf\(r\.date\):r\.month\)/);
 });
+
+test('conferencias anteriores permanecem no historico apos nova conferencia',()=>{
+ assert.match(js,/daily\.censusConferenceHistory=\[\.\.\.\(daily\.censusConferenceHistory\|\|\[\]\),daily\.censusConference\]/);
+ assert.match(js,/registeredBy:SESSION\.user\|\|null/);
+});
+test('alterar total diario arquiva conferencia anterior sem apaga-la',()=>{
+ assert.match(js,/if\(previous\?\.censusConferenceHistory\)r\.censusConferenceHistory=previous\.censusConferenceHistory/);
+ assert.match(js,/else r\.censusConferenceHistory=\[\.\.\.\(r\.censusConferenceHistory\|\|\[\]\),previous\.censusConference\]/);
+});
