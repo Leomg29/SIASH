@@ -14,8 +14,15 @@ const SIASH_CLOUD={
  syncing:false,
  revision:null,
  conflict:false,
- editGeneration:0
+ editGeneration:0,
+ retryCount:0
 };
+const SIASH_PENDING_KEY="siash_cloud_pending_v1";
+function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
+function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:SIASH_CLOUD.revision,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
+function clearCloudDraft(){try{localStorage.removeItem(SIASH_PENDING_KEY)}catch(e){console.error(e)}}
+function cloudDraftIsCurrent(pending,remote){return !!(pending&&remote?.exists&&Number.isSafeInteger(pending.revision)&&pending.revision===remote.revision)}
+
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
 async function cloudJson(url,opts={}){
  const res=await fetch(url,{...opts,headers:cloudHeaders({"Content-Type":"application/json",...(opts.headers||{})})});
@@ -32,53 +39,111 @@ async function cloudAuthenticate(username,password,bootstrap=false){
 function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()}}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
+ const pending=cloudPending();
+ if(pending){
+   if(pending.user&&pending.user!==SESSION.user)throw new Error("Existe um rascunho pendente de outro usuário neste navegador. Acesse com o usuário original para conciliar os dados.");
+   // Recuperar o rascunho antes de consultar a rede: falha na consulta não pode impedir acesso à cópia local.
+   SIASH_CLOUD.conflict=true;
+   S=pending.state;normalize();localStorage.setItem(STORE,JSON.stringify(S));
+   let remote=null;
+   try{remote=await cloudJson("/api/state");SIASH_CLOUD.revision=remote.exists?remote.revision:null}
+   catch(e){console.error("Consulta da revisão indisponível",e);SIASH_CLOUD.revision=null}
+   updateCloudBadge(!remote?"OFFLINE · rascunho local protegido":cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
+   alert("Existe um rascunho não sincronizado neste navegador. Ele foi preservado e o salvamento automático foi bloqueado. Solicite conciliação antes de continuar.");
+   return true;
+ }
  const remote=await cloudJson("/api/state");
  if(remote.exists&&remote.payload?.state){
    SIASH_CLOUD.revision=remote.revision;SIASH_CLOUD.conflict=false;
    S=remote.payload.state; if(remote.payload.security)setSecurityState(remote.payload.security);
    normalize();localStorage.setItem(STORE,JSON.stringify(S));SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
  }
+ if(remote.exists){
+   preserveCloudDraft("remote-state-invalid");SIASH_CLOUD.conflict=true;
+   updateCloudBadge("ESTADO REMOTO INVÁLIDO · rascunho protegido",true);
+   throw new Error("O servidor informou estado existente sem dados válidos. Rascunho preservado; conciliação necessária.");
+ }
  const localRaw=localStorage.getItem(STORE);
  if(localRaw){
-   await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
-   SIASH_CLOUD.revision=1;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
+   let initialized;
+   try{
+     initialized=await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
+   }catch(e){
+     // Um 409 indica que outra sessão inicializou o banco. Uma falha de rede
+     // pode ocorrer depois do commit. Em ambos os casos, nunca substituir
+     // silenciosamente a cópia local pelo estado remoto no próximo login.
+     preserveCloudDraft(e.status===409||e.conflict?"initialization-conflict":"initialization-unconfirmed");
+     SIASH_CLOUD.conflict=true;
+     updateCloudBadge("MIGRAÇÃO NÃO CONFIRMADA · rascunho protegido",true);
+     throw new Error("Migração inicial não confirmada. O rascunho local foi preservado para conciliação: "+e.message);
+   }
+   if(!Number.isSafeInteger(initialized.revision)||initialized.revision<1){preserveCloudDraft("revision-unavailable");SIASH_CLOUD.conflict=true;throw new Error("Inicialização sem revisão válida. O rascunho foi preservado e a sincronização foi bloqueada.");}
+   SIASH_CLOUD.revision=initialized.revision;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
  }
  return false;
 }
 let cloudSaveTimer=null;
-function scheduleCloudSave(){
+let cloudRetryTimer=null;
+function retryCloudWhenOnline(){
+ if(SIASH_CLOUD.conflict||!SIASH_CLOUD.token)return;
+ clearTimeout(cloudRetryTimer);
+ const delay=Math.min(30000,1000*Math.pow(2,Math.min(SIASH_CLOUD.retryCount++,5)));
+ cloudRetryTimer=setTimeout(()=>{if(navigator.onLine!==false&&!SIASH_CLOUD.syncing)scheduleCloudSave({retry:true});else retryCloudWhenOnline()},delay);
+}
+if(typeof window!=="undefined")window.addEventListener("online",()=>{if(cloudPending()&&!SIASH_CLOUD.conflict&&SIASH_CLOUD.token)retryCloudWhenOnline()});
+function scheduleCloudSave({retry=false}={}){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
- SIASH_CLOUD.editGeneration++;
+ if(!retry){SIASH_CLOUD.editGeneration++;preserveCloudDraft("pending")}
+ else if(!cloudPending())return;
  if(SIASH_CLOUD.conflict){updateCloudBadge("CONFLITO · cópia local preservada",true);return;}
  clearTimeout(cloudSaveTimer);
  cloudSaveTimer=setTimeout(async()=>{
    if(SIASH_CLOUD.syncing){scheduleCloudSaveRetry();return;}
    if(SIASH_CLOUD.conflict)return;
-   if(!Number.isSafeInteger(SIASH_CLOUD.revision)){updateCloudBadge("Sessão sem revisão · recarregue com segurança",true);return;}
+   if(!Number.isSafeInteger(SIASH_CLOUD.revision)){preserveCloudDraft("revision-unavailable");updateCloudBadge("Sessão sem revisão · rascunho protegido",true);return;}
    SIASH_CLOUD.syncing=true;updateCloudBadge("Salvando…");
    const generation=SIASH_CLOUD.editGeneration;
    try{
      const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
      SIASH_CLOUD.revision=r.revision;
      SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
-     updateCloudBadge("Sincronizado");
+     if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
    }catch(e){
      console.error(e);
-     if(e.conflict||e.status===409||e.status===428){
+     preserveCloudDraft(e.status===401?"session-expired":e.conflict||e.status===409||e.status===428?"conflict":"network");
+     if(e.status===401){SIASH_CLOUD.conflict=true;updateCloudBadge("Sessão expirada · rascunho protegido",true);alert("Sessão expirada. Seu rascunho foi preservado neste navegador. Entre novamente para conciliar os dados.");}
+     else if(e.conflict||e.status===409||e.status===428){
        SIASH_CLOUD.conflict=true;
        localStorage.setItem(STORE,JSON.stringify(S));
        updateCloudBadge("CONFLITO · dados locais preservados",true);
        alert("ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
-     }else updateCloudBadge("Falha de rede · dados locais preservados",true);
+     }else{
+       // A resposta pode ter sido perdida depois do commit: conferir a revisão antes de reenviar.
+       try{
+         const remote=await cloudJson("/api/state");
+         if(remote.exists&&Number.isSafeInteger(remote.revision)&&remote.revision!==SIASH_CLOUD.revision){
+           SIASH_CLOUD.conflict=true;
+           updateCloudBadge("CONFIRMAÇÃO INCERTA · conciliação necessária",true);
+           alert("A conexão caiu e o servidor apresenta outra revisão. O rascunho local está protegido. Não reenvie antes de conciliar os dados.");
+         }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+       }catch(checkError){
+         if(checkError.status===401){
+           SIASH_CLOUD.conflict=true;
+           preserveCloudDraft("session-expired");
+           updateCloudBadge("Sessão expirada · rascunho protegido",true);
+           alert("A sessão expirou durante a conferência do salvamento. Entre novamente para conciliar o rascunho protegido.");
+         }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+       }
+     }
    }finally{
      SIASH_CLOUD.syncing=false;
-     if(!SIASH_CLOUD.conflict&&generation!==SIASH_CLOUD.editGeneration)scheduleCloudSaveRetry();
+     if(!SIASH_CLOUD.conflict&&generation!==SIASH_CLOUD.editGeneration){clearTimeout(cloudRetryTimer);scheduleCloudSaveRetry();}
    }
  },350);
 }
 function scheduleCloudSaveRetry(){
  clearTimeout(cloudSaveTimer);
- cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict){SIASH_CLOUD.editGeneration++;scheduleCloudSave()}},450);
+ cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict)scheduleCloudSave({retry:true})},450);
 }
 function updateCloudBadge(text,bad=false){
  const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad)
@@ -225,7 +290,20 @@ if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.move
 normalize();localStorage.setItem(STORE,JSON.stringify(S));
 function save(){localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
 function currentMonth(){return monthOf(todayISO())}
-function pipaMonthTotal(m){return S.pipa.filter(x=>x.month===m).reduce((total,row)=>total+(+row.qty||0),0)}
+function pipaCountOn(date){return S.pipa.filter(x=>x.date===date).reduce((n,x)=>n+(Number(x.qty)||0),0)}
+function pipaDailyAudit(date){
+ const daily=S.daily.find(x=>x.date===date);
+ const dated=pipaCountOn(date),legacy=daily?Number(daily.pipa)||0:0;
+ return {dated,legacy,hasDated:S.pipa.some(x=>x.date===date),requiresReview:dated>0&&legacy>0};
+}
+function pipaReconciliationSummary(month){
+ const dated=S.pipa.filter(x=>x.date&&monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
+ const monthlyOnly=S.pipa.filter(x=>!x.date&&x.month===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
+ const legacyDaily=S.daily.filter(x=>monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.pipa)||0),0);
+ const overlapDays=S.daily.filter(x=>monthOf(x.date)===month&&pipaDailyAudit(x.date).requiresReview).length;
+ return {dated,monthlyOnly,legacyDaily,overlapDays,needsReview:monthlyOnly>0||overlapDays>0};
+}
+function pipaMonthTotal(m){return S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m).reduce((total,row)=>total+(Number(row.qty)||0),0)}
 function thermalCount(date,type){return S.thermalEvents.filter(x=>x.date===date&&x.type===type).length}
 function thermalMonthCount(m,type){return S.thermalEvents.filter(x=>monthOf(x.date)===m&&x.type===type).length}
 function monthStats(m){
@@ -233,9 +311,9 @@ function monthStats(m){
  const sum=k=>rows.reduce((a,b)=>a+(+b[k]||0),0);
  const pd=sum("internados"),days=rows.length,ld=(S.settings.beds||10)*days,outs=sum("altas")+sum("transferencias")+sum("obitos");
  const latest=rows.length?rows[rows.length-1]:null;
- return{rows,pd,days,ld,outs,occ:ld?pd/ld*100:0,los:outs?pd/outs:0,adm:sum("admissoes"),altas:sum("altas"),transf:sum("transferencias"),deaths:sum("obitos"),pipa:pipaMonthTotal(m),canguru:sum("canguru")+sum("altaPediatria")+sum("altaCanguru"),altaPediatria:sum("altaPediatria"),altaCanguru:sum("altaCanguru"),picc:S.picc.filter(x=>monthOf(piccInsertDate(x))===m).length,piccDays:piccDaysInMonth(m),piccActive:S.picc.filter(x=>x.status==="Ativo").length,piccRemoved:S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length,pezinho:sum("pezinho"),vmDays:sum("vm"),vmCurrent:latest?(+latest.vm||0):0,intub:sum("intub"),extubProg:sum("extubProg"),extub:sum("extub"),lpp:sum("lpp"),hypothermia:thermalMonthCount(m,"Hipotermia"),hyperthermia:thermalMonthCount(m,"Hipertermia")}
+ return{rows,pd,days,ld,outs,occ:ld?pd/ld*100:0,los:outs?pd/outs:0,adm:sum("admissoes"),altas:sum("altas"),transf:sum("transferencias"),deaths:sum("obitos"),pipa:pipaMonthTotal(m),canguru:sum("canguru")+sum("altaCanguru"),altaPediatria:sum("altaPediatria"),altaCanguru:sum("altaCanguru"),picc:S.picc.filter(x=>monthOf(piccInsertDate(x))===m).length,piccDays:piccDaysInMonth(m),piccActive:S.picc.filter(x=>x.status==="Ativo").length,piccRemoved:S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length,pezinho:sum("pezinho"),vmDays:sum("vm"),vmCurrent:latest?(+latest.vm||0):0,intub:sum("intub"),extubProg:sum("extubProg"),extub:sum("extub"),lpp:sum("lpp"),hypothermia:thermalMonthCount(m,"Hipotermia"),hyperthermia:thermalMonthCount(m,"Hipertermia")}
 }
-function allMonths(){const months=[...S.daily.map(r=>monthOf(r.date)),...S.pipa.map(r=>r.month),...S.picc.map(x=>monthOf(piccInsertDate(x))),...S.picc.filter(x=>x.removalDate).map(x=>monthOf(x.removalDate)),currentMonth()];return [...new Set(months.filter(Boolean))].sort()}
+function allMonths(){const months=[...S.daily.map(r=>monthOf(r.date)),...S.pipa.map(r=>r.date?monthOf(r.date):r.month),...S.picc.map(x=>monthOf(piccInsertDate(x))),...S.picc.filter(x=>x.removalDate).map(x=>monthOf(x.removalDate)),currentMonth()];return [...new Set(months.filter(Boolean))].sort()}
 function dateBR(s){return s?s.split("-").reverse().join("/"):"—"}
 function nowBR(){return new Date().toLocaleString("pt-BR")}
 function parseISODate(s){if(!s)return null;const p=s.split("-").map(Number);if(p.length!==3||p.some(Number.isNaN))return null;return new Date(Date.UTC(p[0],p[1]-1,p[2]))}
@@ -253,9 +331,50 @@ function renderDashboard(){const m=currentMonth(),c=monthStats(m);$("m-paciented
  $("executive-summary").textContent=c.days?`Na competência ${m.split("-").reverse().join("/")}, foram registrados ${c.pd} pacientes-dia em ${c.days} dia(s), com taxa de ocupação de ${fmt(c.occ,1)}%. Houve ${c.adm} admissões, ${c.altas} altas, ${c.transf} transferências e ${c.deaths} óbitos. ${c.outs?`A média de permanência calculada é ${fmt(c.los,1)} dias.`:"Ainda não há saídas suficientes para média de permanência."}`:"O painel será atualizado automaticamente à medida que os lançamentos diários forem salvos."}
 function renderShift(){const score=checkScore();$("shift-steps").innerHTML=STEPS.map((x,i)=>`<div class="check-row"><strong>${i+1}</strong><span>${x}</span></div>`).join("");$("timeline").innerHTML=S.events.length?S.events.map(e=>`<div class="event"><strong>${safe(e.when)} • ${safe(e.type)}</strong><br>${e.bed?`Leito ${safe(e.bed)} — `:""}${safe(e.text)}</div>`).join(""):'<span class="muted">Nenhum evento registrado neste plantão.</span>';$("shift-summary").innerHTML=`<div class="cards"><article class="metric-card"><span>Checklist</span><strong>${score}%</strong></article><article class="metric-card"><span>Pendências abertas</span><strong>${S.pending.filter(x=>!x.done).length}</strong></article><article class="metric-card"><span>Eventos registrados</span><strong>${S.events.length}</strong></article><article class="metric-card"><span>Leitos ocupados</span><strong>${S.beds.filter(b=>b.status==="Ocupado").length}/10</strong></article></div>`}
 function checkScore(){const app=S.checklist.filter(c=>c.status!=="N/A");return app.length?Math.round(app.filter(c=>c.status==="Realizado").length/app.length*100):0}
-const DAILY_FIELD_MAP={internados:"d-internados",admissoes:"d-admissoes",altas:"d-altas",transferencias:"d-transferencias",obitos:"d-obitos",pipa:"d-pipa",altaPediatria:"d-alta-pediatria",altaCanguru:"d-alta-canguru",picc:"d-picc",pezinho:"d-pezinho",intub:"d-intub",vm:"d-vm",extubProg:"d-extub-prog",extub:"d-extub",lpp:"d-lpp",hypothermia:"d-hypothermia",hyperthermia:"d-hyperthermia"};
-function loadDailyForm(date){const r=S.daily.find(x=>x.date===date);Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>{$(id).value=k==="picc"?piccInsertedOn(date):k==="hypothermia"?thermalCount(date,"Hipotermia"):k==="hyperthermia"?thermalCount(date,"Hipertermia"):(r?(+r[k]||0):0)});$("d-obs").value=r?(r.obs||""):""}
-function renderDaily(){const date=$("d-date").value||todayISO();if(!$("d-date").value)$("d-date").value=date;const m=monthOf(date),c=monthStats(m);$("competence-label").textContent="Competência "+m.split("-").reverse().join("/");if($("d-picc-month"))$("d-picc-month").textContent=c.picc;$("d-hypothermia").value=thermalCount(date,"Hipotermia");$("d-hyperthermia").value=thermalCount(date,"Hipertermia");renderThermalEvents(date);$("d-kpi-pd").textContent=c.pd;$("d-kpi-ld").textContent=c.ld;$("d-kpi-occ").textContent=fmt(c.occ,1)+"%";$("d-kpi-outs").textContent=c.outs;$("d-kpi-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("d-kpi-days").textContent=c.days;if($("d-kpi-vm-current"))$("d-kpi-vm-current").textContent=c.vmCurrent;if($("d-kpi-vm-days"))$("d-kpi-vm-days").textContent=c.vmDays;$("daily-table").innerHTML=[...c.rows].sort((a,b)=>b.date.localeCompare(a.date)).map(r=>`<tr><td>${dateBR(r.date)}</td><td>${r.internados}</td><td>${r.admissoes}</td><td>${r.altas}</td><td>${r.transferencias}</td><td>${r.obitos}</td><td>${r.pipa}</td><td>${+r.altaPediatria||0}</td><td>${(+r.altaCanguru||0)+(+r.canguru||0)}</td><td>${piccInsertedOn(r.date)}</td><td>${r.pezinho}</td><td>${+r.intub||0}</td><td>${+r.vm||0}</td><td>${+r.extubProg||0}</td><td>${+r.extub||0}</td><td><button class="ghost" onclick="deleteDaily('${r.date}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="16">Nenhum lançamento.</td></tr>'}
+const DAILY_FIELD_MAP={internados:"d-internados",admissoes:"d-admissoes",altas:"d-altas",transferencias:"d-transferencias",obitos:"d-obitos",pipa:"d-pipa",altaCanguru:"d-alta-canguru",picc:"d-picc",pezinho:"d-pezinho",intub:"d-intub",vm:"d-vm",extubProg:"d-extub-prog",extub:"d-extub",lpp:"d-lpp",hypothermia:"d-hypothermia",hyperthermia:"d-hyperthermia"};
+function loadDailyForm(date){const r=S.daily.find(x=>x.date===date);Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>{$(id).value=k==="pipa"?pipaCountOn(date):k==="picc"?piccInsertedOn(date):k==="hypothermia"?thermalCount(date,"Hipotermia"):k==="hyperthermia"?thermalCount(date,"Hipertermia"):(r?(+r[k]||0):0)});$("d-obs").value=r?(r.obs||""):""}
+function registerCensusConference(date,responsible){
+ const daily=S.daily.find(r=>r.date===date);
+ if(!daily)return {ok:false,reason:"Salve o lançamento diário antes da conferência."};
+ if(!String(responsible||"").trim())return {ok:false,reason:"Informe o responsável pelo plantão noturno."};
+ if(date>todayISO())return {ok:false,reason:"Não é permitido conferir censo de uma data futura."};
+ if(Number($("d-internados").value)!==Number(daily.internados))return {ok:false,reason:"O valor exibido no formulário difere do lançamento salvo. Salve ou recarregue os dados antes de conferir."};
+ const count=Number(daily.internados);
+ if(!Number.isSafeInteger(count)||count<0||count>(S.settings.beds||10))return {ok:false,reason:"Confira o total de pacientes e a capacidade de leitos antes de registrar."};
+ if(daily.censusConference){daily.censusConferenceHistory=[...(daily.censusConferenceHistory||[]),daily.censusConference];}
+ daily.censusConference={referenceDate:date,registeredAt:new Date().toISOString(),responsible:String(responsible).trim(),registeredBy:SESSION.user||null,count,bedOccupancyAtRegistration:S.beds.filter(b=>b.status==="Ocupado").length};
+ return {ok:true};
+}
+function renderCensusConference(date){
+ const daily=S.daily.find(r=>r.date===date);
+ const occupied=S.beds.filter(b=>b.status==="Ocupado").length;
+ const count=$("census-daily-count"),beds=$("census-beds-occupied"),difference=$("census-difference"),status=$("census-status");
+ if(!count||!beds||!difference||!status)return;
+ beds.textContent=occupied;
+ if(!daily){
+   const closure=$("census-closure-status");if(closure)closure.textContent="Sem conferência registrada para esta data.";
+   count.textContent="—";difference.textContent="—";
+   status.textContent="Sem lançamento para "+dateBR(date)+". O mapa de leitos atual não substitui o censo fechado à meia-noite.";
+   return;
+ }
+ const census=Number(daily.internados)||0;
+ const closure=$("census-closure-status");
+ if(closure){
+   const record=daily.censusConference;
+   const historyCount=Array.isArray(daily.censusConferenceHistory)?daily.censusConferenceHistory.length:0;
+   const historyNote=historyCount?` Histórico preservado: ${historyCount} conferência(s) anterior(es).`:"";
+   closure.textContent=(record&&record.count===census
+     ?`Conferência registrada por ${record.responsible} em ${new Date(record.registeredAt).toLocaleString("pt-BR")} (referência ${dateBR(record.referenceDate)}; ${record.count} RN). Ocupação do mapa naquele registro: ${record.bedOccupancyAtRegistration}. Registro manual, não valida automaticamente o horário da meia-noite.`
+     :record?"Conferência anterior desatualizada: o censo foi alterado. Registre nova conferência.":"Sem conferência registrada para esta data.")+historyNote;
+ }
+ count.textContent=census;
+ const delta=occupied-census;
+ difference.textContent=(delta>0?"+":"")+delta;
+ status.textContent=delta===0
+   ?"Totais coincidem numericamente. Confirme o horário de referência antes de validar o fechamento."
+   :"Divergência de "+Math.abs(delta)+" RN(s) entre o lançamento de "+dateBR(date)+" e o mapa atual. Confira admissões, altas e horário; nenhum dado foi alterado automaticamente.";
+}
+function renderDaily(){const date=$("d-date").value||todayISO();if(!$("d-date").value)$("d-date").value=date;const m=monthOf(date),c=monthStats(m);$("competence-label").textContent="Competência "+m.split("-").reverse().join("/");if($("d-picc-month"))$("d-picc-month").textContent=c.picc;$("d-pipa").value=pipaCountOn(date);const pipaAudit=pipaDailyAudit(date),pipaNote=$("d-pipa-audit");if(pipaNote)pipaNote.textContent=pipaAudit.legacy?`Registro diário legado: ${pipaAudit.legacy}. PIPA datado: ${pipaAudit.dated}. Valores não somados automaticamente; conferir possível duplicidade.`:"Encaminhamentos datados do PIPA. Registros antigos sem data permanecem preservados.";$("d-hypothermia").value=thermalCount(date,"Hipotermia");$("d-hyperthermia").value=thermalCount(date,"Hipertermia");renderThermalEvents(date);renderCensusConference(date);$("d-kpi-pd").textContent=c.pd;$("d-kpi-ld").textContent=c.ld;$("d-kpi-occ").textContent=fmt(c.occ,1)+"%";$("d-kpi-outs").textContent=c.outs;$("d-kpi-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("d-kpi-days").textContent=c.days;if($("d-kpi-vm-current"))$("d-kpi-vm-current").textContent=c.vmCurrent;if($("d-kpi-vm-days"))$("d-kpi-vm-days").textContent=c.vmDays;$("daily-table").innerHTML=[...c.rows].sort((a,b)=>b.date.localeCompare(a.date)).map(r=>`<tr><td>${dateBR(r.date)}</td><td>${r.internados}</td><td>${r.admissoes}</td><td>${r.altas}</td><td>${r.transferencias}</td><td>${r.obitos}</td><td>${pipaDailyAudit(r.date).hasDated?`${pipaDailyAudit(r.date).dated} (datado)${pipaDailyAudit(r.date).legacy?` / ${pipaDailyAudit(r.date).legacy} (legado, conferir)`:""}`:`${pipaDailyAudit(r.date).legacy} (legado)`}</td><td>${(+r.altaCanguru||0)+(+r.canguru||0)}</td><td>${piccInsertedOn(r.date)}</td><td>${r.pezinho}</td><td>${+r.intub||0}</td><td>${+r.vm||0}</td><td>${+r.extubProg||0}</td><td>${+r.extub||0}</td><td><button class="ghost" onclick="deleteDaily('${r.date}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="15">Nenhum lançamento.</td></tr>'}
 function renderThermalEvents(date){
  const rows=S.thermalEvents.filter(x=>x.date===date).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
  $("thermal-table").innerHTML=rows.map(x=>`<tr><td>${dateBR(x.date)}</td><td>Leito ${pad(x.bed)}</td><td>${safe(x.rn||"Sem identificador")}</td><td>${safe(x.type)}</td><td>${safe(x.note||"—")}</td><td><button class="ghost" onclick="deleteThermalEvent('${x.id}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="6">Nenhum evento térmico registrado nesta data.</td></tr>';
@@ -301,7 +420,7 @@ window.deletePicc=i=>{
  const x=S.picc[i];if(!x)return;if(confirm(`Excluir definitivamente o registro de PICC do Leito ${pad(x.bed)}?\n\nUse esta opção apenas para corrigir um lançamento indevido. Para retirada clínica, use Registrar retirada.`)){S.picc.splice(i,1);clearPiccForm();cancelPiccRemoval();save();showToast("Registro de PICC excluído",1200)}
 }
 
-function renderPipa(){const m=$("pipa-month").value||currentMonth();if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>x.month===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>`<tr><td>${r.month.split("-").reverse().join("/")}</td><td>${safe(r.city)}</td><td>${r.qty}</td><td>${safe(r.note)}</td><td><button class="ghost" onclick="deletePipa(${S.pipa.length-1-idx})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="5">Nenhum encaminhamento registrado.</td></tr>'}
+function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();const m=$("pipa-month").value||monthOf($("pipa-date").value);if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};const audit=pipaReconciliationSummary(m),auditEl=$("pipa-reconciliation");if(auditEl)auditEl.textContent=`Conferência: ${audit.dated} encaminhamento(s) datado(s); ${audit.monthlyOnly} registro(s) histórico(s) sem data; ${audit.legacyDaily} no censo diário legado; ${audit.overlapDays} dia(s) com possível sobreposição. Não somar as fontes sem conciliação.`;rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>`<tr><td>${r.month.split("-").reverse().join("/")}</td><td>${safe(r.city)}</td><td>${r.qty}</td><td>${safe(r.note)}</td><td><button class="ghost" onclick="deletePipa(${S.pipa.length-1-idx})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="5">Nenhum encaminhamento registrado.</td></tr>'}
 window.deletePipa=i=>{S.pipa.splice(i,1);save()}
 let sharedPending=[],pendingLoaded=false,pendingLoading=false;
 async function loadSharedPending(){
@@ -328,7 +447,7 @@ async function changeSharedPending(id,status){
 }
 
 function fillMonthSelect(id){const sel=$(id),cur=sel.value;sel.innerHTML=allMonths().map(m=>`<option value="${m}">${m.split("-").reverse().join("/")}</option>`).join("");sel.value=allMonths().includes(cur)?cur:currentMonth()}
-function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Pediatria",c.altaPediatria],["Altas → Leito Canguru",c.altaCanguru],["Altas p/ Pediatria/Canguru (total)",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("");const g={};S.pipa.filter(x=>x.month===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
+function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Pediatria",c.altaPediatria],["Altas → Leito Canguru",c.altaCanguru],["Altas para Leito Canguru (total)",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("");const g={};S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
 function renderComparison(){
  const current=currentMonth(),parts=current.split("-").map(Number),months=[];
  for(let offset=-2;offset<=0;offset++){const d=new Date(parts[0],parts[1]-1+offset,1);months.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}`)}
@@ -848,8 +967,16 @@ $("logout-btn").addEventListener("click",()=>{SIASH_CLOUD.token="";sessionStorag
 $("refresh-dashboard").addEventListener("click",renderAll)
 $("reset-shift").addEventListener("click",()=>{if(confirm("Iniciar novo plantão? O histórico mensal será preservado.")){S.checklist=CHECKS.map(x=>({text:x,status:"Pendente"}));S.events=[];S.pending=[];S.shiftStarted=new Date().toISOString();save()}})
 $("event-form").addEventListener("submit",e=>{e.preventDefault();if(!$("ev-text").value.trim())return;S.events.unshift({when:nowBR(),type:$("ev-type").value,bed:$("ev-bed").value,text:$("ev-text").value.trim()});$("ev-text").value="";save()})
-$("daily-form").addEventListener("submit",e=>{e.preventDefault();const date=$("d-date").value;const r={date,internados:+$("d-internados").value||0,admissoes:+$("d-admissoes").value||0,altas:+$("d-altas").value||0,transferencias:+$("d-transferencias").value||0,obitos:+$("d-obitos").value||0,pipa:+$("d-pipa").value||0,altaPediatria:+$("d-alta-pediatria").value||0,altaCanguru:+$("d-alta-canguru").value||0,picc:piccInsertedOn(date),pezinho:+$("d-pezinho").value||0,intub:+$("d-intub").value||0,vm:+$("d-vm").value||0,extubProg:+$("d-extub-prog").value||0,extub:+$("d-extub").value||0,lpp:+$("d-lpp").value||0,hypothermia:thermalCount(date,"Hipotermia"),hyperthermia:thermalCount(date,"Hipertermia"),obs:$("d-obs").value.trim()};S.daily=S.daily.filter(x=>x.date!==r.date);S.daily.push(r);S.daily.sort((a,b)=>a.date.localeCompare(b.date));save();showToast("Dados salvos",1000)})
-$("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):0);$("d-obs").value=""})
+$("daily-form").addEventListener("submit",e=>{e.preventDefault();const date=$("d-date").value;const r={date,internados:+$("d-internados").value||0,admissoes:+$("d-admissoes").value||0,altas:+$("d-altas").value||0,transferencias:+$("d-transferencias").value||0,obitos:+$("d-obitos").value||0,pipa:(S.daily.find(x=>x.date===date)?.pipa||0),altaPediatria:(S.daily.find(x=>x.date===date)?.altaPediatria||0),altaCanguru:+$("d-alta-canguru").value||0,picc:piccInsertedOn(date),pezinho:+$("d-pezinho").value||0,intub:+$("d-intub").value||0,vm:+$("d-vm").value||0,extubProg:+$("d-extub-prog").value||0,extub:+$("d-extub").value||0,lpp:+$("d-lpp").value||0,hypothermia:thermalCount(date,"Hipotermia"),hyperthermia:thermalCount(date,"Hipertermia"),obs:$("d-obs").value.trim()};const previous=S.daily.find(x=>x.date===date);if(previous?.censusConferenceHistory)r.censusConferenceHistory=previous.censusConferenceHistory;if(previous?.censusConference){if(Number(previous.internados)===r.internados)r.censusConference=previous.censusConference;else r.censusConferenceHistory=[...(r.censusConferenceHistory||[]),previous.censusConference];}S.daily=S.daily.filter(x=>x.date!==r.date);S.daily.push(r);S.daily.sort((a,b)=>a.date.localeCompare(b.date));save();showToast("Dados salvos",1000)})
+$("census-close").addEventListener("click",()=>{
+ const date=$("d-date").value||todayISO();
+ const responsible=$("census-closer").value;
+ if(!window.confirm("Confirmar conferência manual do plantão noturno? A data e hora reais serão registradas; isso não certifica automaticamente o fechamento à meia-noite."))return;
+ const result=registerCensusConference(date,responsible);
+ if(!result.ok)return alert(result.reason);
+ save();showToast("Conferência registrada; verifique a referência de meia-noite",2200);
+});
+$("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):0);$("d-obs").value=""})
 $("d-date").addEventListener("change",()=>{const date=$("d-date").value;loadDailyForm(date);renderDaily()})
 $("thermal-add").addEventListener("click",()=>{const date=$("d-date").value||todayISO(),bedNo=+$("thermal-bed").value,b=S.beds.find(x=>x.n===bedNo);if(!b)return alert("Selecione um leito válido.");if(b.status!=="Ocupado")return alert("O leito selecionado não está marcado como ocupado. Atualize a Gestão de Leitos antes de registrar o evento.");if(!String(b.rn||"").trim())return alert("O leito ocupado está sem identificador do RN. Informe o identificador não nominal na Gestão de Leitos.");S.thermalEvents.push({id:"THERM-"+Date.now()+"-"+Math.random().toString(36).slice(2,7),date,bed:bedNo,rn:String(b.rn).trim(),type:$("thermal-type").value,note:$("thermal-note").value.trim(),createdAt:new Date().toISOString()});$("thermal-note").value="";save();showToast("Evento térmico registrado",1200)})
 $("bed-form").addEventListener("submit",e=>{e.preventDefault();const b=S.beds.find(x=>x.n==+$("bed-number").value);if(!b)return;b.status=$("bed-status").value;b.profile=$("bed-profile").value;b.rn=$("bed-rn").value.trim();b.note=$("bed-note").value.trim();save()})
@@ -887,8 +1014,8 @@ $("picc-removal-form").addEventListener("submit",e=>{
  e.preventDefault();const i=+$("picc-removal-index").value,x=S.picc[i],date=$("picc-removal-date").value,reason=$("picc-removal-reason").value;if(!x||x.status!=="Ativo")return alert("PICC ativo não localizado.");if(!date||!reason)return alert("Informe a data e o motivo da retirada.");if(date<piccInsertDate(x))return alert("A retirada não pode ser anterior à inserção.");x.status="Retirado";x.removalDate=date;x.removalReason=reason;x.removalNote=$("picc-removal-note").value.trim();x.removedAt=nowBR();x.updated=nowBR();cancelPiccRemoval();save();showToast(`PICC do Leito ${pad(x.bed)} retirado`,1600)
 })
 
-$("pipa-form").addEventListener("submit",e=>{e.preventDefault();if(!$("pipa-month").value||!$("pipa-city").value)return alert("Informe competência e município.");S.pipa.push({month:$("pipa-month").value,city:$("pipa-city").value,qty:+$("pipa-qty").value||0,note:$("pipa-note").value.trim(),updated:nowBR()});$("pipa-qty").value=0;$("pipa-note").value="";save()})
-$("pipa-month").addEventListener("change",renderPipa)
+$("pipa-form").addEventListener("submit",e=>{e.preventDefault();const qty=Number($("pipa-qty").value);if(!$("pipa-date").value||!$("pipa-city").value)return alert("Informe data do encaminhamento e município de origem.");$("pipa-month").value=monthOf($("pipa-date").value);if(!Number.isSafeInteger(qty)||qty<1)return alert("Informe quantidade inteira e maior que zero.");if(!$("pipa-post-discharge").checked)return alert("Confirme que os RNs foram encaminhados após a alta da UTIN.");S.pipa.push({date:$("pipa-date").value,month:$("pipa-month").value,city:$("pipa-city").value,qty,note:$("pipa-note").value.trim(),postDischargeConfirmed:true,updated:nowBR()});$("pipa-qty").value=1;$("pipa-post-discharge").checked=false;$("pipa-note").value="";save()})
+$("pipa-date").addEventListener("change",()=>{$("pipa-month").value=monthOf($("pipa-date").value);renderPipa()})
 $("pending-form").addEventListener("submit",async e=>{
  e.preventDefault();
  const scope=$("pending-scope").value,description=$("pending-text").value.trim();

@@ -1,0 +1,26 @@
+name: SIASH cloud resilience tests
+on:
+  push:
+    branches:
+      - test/resiliencia-sessao-conflitos-20261117
+  pull_request:
+    paths:
+      - app.js
+      - server.js
+      - index.html
+      - "tests/**"
+      - .github/workflows/cloud-resilience-tests.yml
+jobs:
+  cloud-resilience:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate JavaScript syntax
+        run: node --check app.js && node --check server.js
+      - name: Run isolated cloud resilience tests
+        run: node --test tests/*.test.cjs

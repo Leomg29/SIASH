@@ -216,12 +216,17 @@ app.put("/api/state",auth,async(req,res)=>{
   }catch(e){try{await client.query("ROLLBACK")}catch(_){}throw e}finally{client.release()}
 });
 app.put("/api/state/init",auth,async(req,res)=>{
-  const exists=await pool.query("SELECT 1 FROM siash_state WHERE id=1");
-  if(exists.rows.length) return res.status(409).json({error:"Banco central já possui dados."});
-  const payload=req.body?.payload;if(!payload)return res.status(400).json({error:"Estado inválido."});
-  await pool.query("INSERT INTO siash_state(id,payload,updated_by) VALUES(1,$1,$2)",[payload,req.user.u]);
+  const payload=req.body?.payload;
+  if(!payload||typeof payload!=="object"||Array.isArray(payload))
+    return res.status(400).json({error:"Estado inválido."});
+  // Inicialização atômica: dois usuários não podem criar simultaneamente o estado central.
+  const created=await pool.query(
+    "INSERT INTO siash_state(id,payload,updated_by) VALUES(1,$1,$2) ON CONFLICT (id) DO NOTHING RETURNING revision",
+    [payload,req.user.u]
+  );
+  if(!created.rows.length)return res.status(409).json({error:"Banco central já possui dados.",conflict:true});
   await audit(req.user.u,"Migração inicial para banco central.");
-  res.json({ok:true});
+  res.json({ok:true,revision:Number(created.rows[0].revision)});
 });
 
 app.put("/api/doc/:key",auth,async(req,res)=>{

@@ -116,6 +116,20 @@
 <!-- LANCAMENTO -->
 <section id="view-lancamento" class="view hidden">
   <div class="hero"><div><h3>Lançamento Diário de Indicadores</h3><p>Registre os dados do dia. A SIASH calcula os indicadores mensais automaticamente.</p></div><span class="badge" id="competence-label">Competência</span></div>
+  <article class="panel" id="daily-census-panel">
+    <div class="panel-head"><h3>Censo neonatal — conferência do plantão noturno</h3><span>Referência: fechamento à meia-noite</span></div>
+    <div class="cards three">
+      <article class="metric-card"><span>Pacientes no lançamento da data</span><strong id="census-daily-count">—</strong></article>
+      <article class="metric-card"><span>Leitos ocupados agora</span><strong id="census-beds-occupied">—</strong></article>
+      <article class="metric-card"><span>Diferença para conferência</span><strong id="census-difference">—</strong></article>
+    </div>
+    <p id="census-status" class="muted">Selecione uma data para conferir o censo.</p>
+    <p id="census-closure-status" class="muted">Sem fechamento registrado.</p>
+    <label>Responsável pelo fechamento (plantão noturno)<input id="census-closer" placeholder="Identificação funcional" autocomplete="off"></label>
+    <button id="census-close" type="button" class="primary">Registrar conferência do censo</button>
+    <p class="muted">Registro manual de conferência, com data/hora real e responsável. Não comprova automaticamente que a contagem foi feita à meia-noite. É necessário salvar o lançamento diário antes.</p>
+    <p class="muted">O censo oficial é fechado pelo plantão noturno à meia-noite. O mapa de leitos mostra a ocupação atual, que pode ser de outro horário; divergências exigem conferência, não ajuste automático. Os lançamentos permanecem integrados à aba Lançamento Diário.</p>
+  </article>
   <article class="panel">
     <form id="daily-form" class="form-grid five">
       <label>Data<input id="d-date" type="date" required></label>
@@ -124,8 +138,7 @@
       <label>Altas<input id="d-altas" type="number" min="0" value="0"></label>
       <label>Transferências<input id="d-transferencias" type="number" min="0" value="0"></label>
       <label>Óbitos<input id="d-obitos" type="number" min="0" value="0"></label>
-      <label>Encaminhamentos PIPA<input id="d-pipa" type="number" min="0" value="0"></label>
-      <label>Alta → Pediatria<input id="d-alta-pediatria" type="number" min="0" value="0"><small>Quantidade de RNs com alta da UTIN para Pediatria.</small></label>
+      <label>Encaminhamentos PIPA — automático<input id="d-pipa" type="number" min="0" value="0" readonly><small id="d-pipa-audit">Encaminhamentos PIPA datados; registros históricos não são somados automaticamente.</small></label>
       <label>Alta → Leito Canguru<input id="d-alta-canguru" type="number" min="0" value="0"><small>Quantidade de RNs com alta da UTIN para leito Canguru.</small></label>
       <label>PICCs inseridos nesta data — automático<input id="d-picc" type="number" min="0" value="0" readonly><small>Calculado pela data de inserção registrada na Gestão de PICC. Total na competência: <strong id="d-picc-month">0</strong>.</small></label>
       <label>Teste do pezinho<input id="d-pezinho" type="number" min="0" value="0"></label>
@@ -163,7 +176,7 @@
     <article class="metric-card"><span>RN em VM atualmente</span><strong id="d-kpi-vm-current">0</strong></article>
     <article class="metric-card"><span>VM-dia na competência</span><strong id="d-kpi-vm-days">0</strong></article>
   </div>
-  <article class="panel"><div class="panel-head"><h3>Histórico da competência</h3><span>um registro por dia</span></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Internados</th><th>Adm.</th><th>Altas</th><th>Transf.</th><th>Óbitos</th><th>PIPA</th><th>→ Pediatria</th><th>→ Canguru</th><th>PICC</th><th>Pezinho</th><th>Intub.</th><th>RN em VM</th><th>Extub. prog.</th><th>Extub. acid.</th><th>Ação</th></tr></thead><tbody id="daily-table"></tbody></table></div></article>
+  <article class="panel"><div class="panel-head"><h3>Histórico da competência</h3><span>um registro por dia</span></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Internados</th><th>Adm.</th><th>Altas</th><th>Transf.</th><th>Óbitos</th><th>PIPA</th><th>→ Canguru</th><th>PICC</th><th>Pezinho</th><th>Intub.</th><th>RN em VM</th><th>Extub. prog.</th><th>Extub. acid.</th><th>Ação</th></tr></thead><tbody id="daily-table"></tbody></table></div></article>
 </section>
 
 <!-- LEITOS -->
@@ -313,12 +326,15 @@
     <article class="metric-card"><span>Competência</span><strong id="pipa-competence">—</strong></article>
     <article class="metric-card"><span>Última atualização</span><strong id="pipa-updated">—</strong></article>
   </div>
+  <p id="pipa-reconciliation" class="muted" role="status">Conferência das fontes PIPA aguardando atualização.</p>
   <div class="grid-2">
     <article class="panel">
       <form id="pipa-form" class="form-grid one">
-        <label>Competência<input id="pipa-month" type="month"></label>
+        <label>Data do encaminhamento após alta<input id="pipa-date" type="date" required></label>
+        <label>Competência<input id="pipa-month" type="month" readonly></label>
         <label>Município<select id="pipa-city"><option value="">Selecione</option><option>Pirapora</option><option>Buritizeiro</option><option>Ibiaí</option><option>Lassance</option><option>Ponto Chique</option><option>Santa Fé de Minas</option><option>Várzea da Palma</option><option>Lagoa dos Patos</option><option>Coração de Jesus</option><option>Brasília de Minas</option><option>Barra do Guaicuí</option><option>Outro</option></select></label>
-        <label>Quantidade<input id="pipa-qty" type="number" min="0" value="0"></label>
+        <label>Quantidade de RNs encaminhados após alta da UTIN<input id="pipa-qty" type="number" min="1" step="1" value="1" required></label>
+        <label class="full"><input id="pipa-post-discharge" type="checkbox" required> Confirmo que os encaminhamentos ocorreram após alta da UTIN e que o município informado é o de origem.</label>
         <label>Observação<textarea id="pipa-note"></textarea></label>
         <button class="primary" type="submit">Salvar encaminhamento</button>
       </form>
