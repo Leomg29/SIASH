@@ -74,3 +74,16 @@ test('conferencia registra horario real e preserva somente se total nao mudar',(
  assert.match(js,/r\.censusConference=previous\.censusConference/);
  assert.match(js,/Conferência anterior desatualizada/);
 });
+
+test('bloqueia conferencia com data futura ou formulario divergente',()=>{
+ assert.match(js,/if\(date>todayISO\(\)\)return \{ok:false/);
+ assert.match(js,/Number\(\$\("d-internados"\)\.value\)!==Number\(daily\.internados\)/);
+});
+test('confirmacao precede qualquer mutacao de conferencia',()=>{
+ const start=js.indexOf('$("census-close").addEventListener("click"');
+ const end=js.indexOf('$("daily-clear").addEventListener',start);
+ assert.ok(start>=0&&end>start);
+ const body=js.slice(start,end);
+ assert.ok(body.indexOf('window.confirm(')<body.indexOf('registerCensusConference(date,responsible)'));
+ assert.ok(body.indexOf('registerCensusConference(date,responsible)')<body.indexOf('save();'));
+});
