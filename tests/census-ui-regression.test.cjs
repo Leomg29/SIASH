@@ -40,6 +40,14 @@ test('PIPA datado alimenta o censo sem redistribuir registros mensais antigos',(
  assert.match(html,/id="d-pipa" type="number"[^>]*readonly/);
  assert.match(js,/function pipaCountOn\(date\)/);
  assert.match(js,/S\.pipa\.filter\(x=>x\.date===date\)/);
- assert.match(js,/pipa:pipaCountOn\(date\)/);
+ assert.match(js,/function pipaDailyAudit\(date\)/);
+ assert.match(js,/pipa:\(S\.daily\.find\(x=>x\.date===date\)\?\.pipa\|\|0\)/);
  assert.match(js,/date:\$\("pipa-date"\)\.value,month:/);
+});
+
+test('PIPA legado e datado nao sao somados automaticamente',()=>{
+ assert.match(html,/id="d-pipa-audit"/);
+ assert.match(js,/pipaDailyAudit\(r\.date\)\.legacy/);
+ assert.match(js,/Valores não somados automaticamente/);
+ assert.match(js,/pipa:\(S\.daily\.find\(x=>x\.date===date\)\?\.pipa\|\|0\)/);
 });
