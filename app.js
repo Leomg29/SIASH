@@ -60,7 +60,18 @@ async function cloudLoadAfterLogin(){
  }
  const localRaw=localStorage.getItem(STORE);
  if(localRaw){
-   const initialized=await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
+   let initialized;
+   try{
+     initialized=await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
+   }catch(e){
+     // Um 409 indica que outra sessão inicializou o banco. Uma falha de rede
+     // pode ocorrer depois do commit. Em ambos os casos, nunca substituir
+     // silenciosamente a cópia local pelo estado remoto no próximo login.
+     preserveCloudDraft(e.status===409||e.conflict?"initialization-conflict":"initialization-unconfirmed");
+     SIASH_CLOUD.conflict=true;
+     updateCloudBadge("MIGRAÇÃO NÃO CONFIRMADA · rascunho protegido",true);
+     throw new Error("Migração inicial não confirmada. O rascunho local foi preservado para conciliação: "+e.message);
+   }
    if(!Number.isSafeInteger(initialized.revision)||initialized.revision<1){preserveCloudDraft("revision-unavailable");SIASH_CLOUD.conflict=true;throw new Error("Inicialização sem revisão válida. O rascunho foi preservado e a sincronização foi bloqueada.");}
    SIASH_CLOUD.revision=initialized.revision;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
  }
