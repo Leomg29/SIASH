@@ -356,9 +356,11 @@ function renderCensusConference(date){
  const closure=$("census-closure-status");
  if(closure){
    const record=daily.censusConference;
-   closure.textContent=record&&record.count===census
+   const historyCount=Array.isArray(daily.censusConferenceHistory)?daily.censusConferenceHistory.length:0;
+   const historyNote=historyCount?` Histórico preservado: ${historyCount} conferência(s) anterior(es).`:"";
+   closure.textContent=(record&&record.count===census
      ?`Conferência registrada por ${record.responsible} em ${new Date(record.registeredAt).toLocaleString("pt-BR")} (referência ${dateBR(record.referenceDate)}; ${record.count} RN). Ocupação do mapa naquele registro: ${record.bedOccupancyAtRegistration}. Registro manual, não valida automaticamente o horário da meia-noite.`
-     :record?"Conferência anterior desatualizada: o censo foi alterado. Registre nova conferência.":"Sem conferência registrada para esta data.";
+     :record?"Conferência anterior desatualizada: o censo foi alterado. Registre nova conferência.":"Sem conferência registrada para esta data.")+historyNote;
  }
  count.textContent=census;
  const delta=occupied-census;
