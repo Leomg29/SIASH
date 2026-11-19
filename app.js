@@ -320,6 +320,8 @@ function registerCensusConference(date,responsible){
  const daily=S.daily.find(r=>r.date===date);
  if(!daily)return {ok:false,reason:"Salve o lançamento diário antes da conferência."};
  if(!String(responsible||"").trim())return {ok:false,reason:"Informe o responsável pelo plantão noturno."};
+ if(date>todayISO())return {ok:false,reason:"Não é permitido conferir censo de uma data futura."};
+ if(Number($("d-internados").value)!==Number(daily.internados))return {ok:false,reason:"O valor exibido no formulário difere do lançamento salvo. Salve ou recarregue os dados antes de conferir."};
  const count=Number(daily.internados);
  if(!Number.isSafeInteger(count)||count<0||count>(S.settings.beds||10))return {ok:false,reason:"Confira o total de pacientes e a capacidade de leitos antes de registrar."};
  daily.censusConference={referenceDate:date,registeredAt:new Date().toISOString(),responsible:String(responsible).trim(),count,bedOccupancyAtRegistration:S.beds.filter(b=>b.status==="Ocupado").length};
@@ -951,6 +953,7 @@ $("census-close").addEventListener("click",()=>{
  const responsible=$("census-closer").value;
  const result=registerCensusConference(date,responsible);
  if(!result.ok)return alert(result.reason);
+ if(!window.confirm("Confirmar conferência manual do plantão noturno? A data e hora reais serão registradas; isso não certifica automaticamente o fechamento à meia-noite."))return;
  save();showToast("Conferência registrada; verifique a referência de meia-noite",2200);
 });
 $("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):0);$("d-obs").value=""})
