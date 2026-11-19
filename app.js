@@ -61,7 +61,7 @@ async function cloudLoadAfterLogin(){
  const localRaw=localStorage.getItem(STORE);
  if(localRaw){
    const initialized=await cloudJson("/api/state/init",{method:"PUT",body:JSON.stringify({payload:cloudPayload()})});
-   if(!Number.isSafeInteger(initialized.revision)||initialized.revision<1)throw new Error("Inicialização sem revisão válida. A sincronização foi bloqueada para proteger os dados.");
+   if(!Number.isSafeInteger(initialized.revision)||initialized.revision<1){preserveCloudDraft("revision-unavailable");SIASH_CLOUD.conflict=true;throw new Error("Inicialização sem revisão válida. O rascunho foi preservado e a sincronização foi bloqueada.");}
    SIASH_CLOUD.revision=initialized.revision;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
  }
  return false;
