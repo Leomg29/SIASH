@@ -101,8 +101,7 @@ async function audit(username,action,details=null){
 
 app.get("/api/health", async (req,res)=>{
   const users = await pool.query("SELECT COUNT(*)::int n FROM siash_users");
-  const state = await pool.query("SELECT updated_at,updated_by FROM siash_state WHERE id=1");
-  res.json({ok:true,configured:users.rows[0].n>0,state:state.rows[0]||null});
+  res.json({ok:true,configured:users.rows[0].n>0});
 });
 
 app.post("/api/bootstrap", async(req,res)=>{
