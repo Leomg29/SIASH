@@ -26,13 +26,20 @@ jobs:
       - name: Regression suite
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           count=0
+          failures=0
           for test_file in tests/*.test.js; do
             [ -e "$test_file" ] || continue
             echo "::group::$test_file"
-            node "$test_file"
+            if node "$test_file"; then
+              echo "PASS: $test_file"
+            else
+              echo "::error file=$test_file::Regression failed"
+              failures=$((failures + 1))
+            fi
             echo "::endgroup::"
             count=$((count + 1))
           done
-          echo "Executed $count regression test files."
+          echo "Executed $count regression test files; failures: $failures."
+          if [ "$count" -eq 0 ] || [ "$failures" -ne 0 ]; then exit 1; fi
