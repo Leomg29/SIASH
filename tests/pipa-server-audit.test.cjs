@@ -144,3 +144,17 @@ test('rejeita justificativa PIPA que nao seja texto',()=>{
   assert.match(result.error,/texto válido/);
  }
 });
+
+test('inclusao PIPA rejeita campos invalidos sem alterar historico',()=>{
+ const invalid=[
+  {...row(),city:''},
+  {...row(),month:'2026-13'},
+  {...row(),qty:0},
+  {...row(),qty:1.5},
+  {...row(),date:'2026-11-31'},
+  {...row(),date:'2026-10-20'}
+ ];
+ for(const item of invalid)assert.ok(reconcile([row()],[row(),item]).error);
+ const legacy={...row(),note:'Registro histórico sem data'};
+ assert.equal(reconcile([legacy],[legacy,{...row(),date:'2026-11-20'}]).events.length,0);
+});
