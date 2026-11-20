@@ -290,20 +290,20 @@ if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.move
 normalize();localStorage.setItem(STORE,JSON.stringify(S));
 function save(){localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
 function currentMonth(){return monthOf(todayISO())}
-function pipaCountOn(date){return S.pipa.filter(x=>x.date===date).reduce((n,x)=>n+(Number(x.qty)||0),0)}
+function pipaCountOn(date){return S.pipa.filter(x=>!x.cancelledAt&&x.date===date).reduce((n,x)=>n+(Number(x.qty)||0),0)}
 function pipaDailyAudit(date){
  const daily=S.daily.find(x=>x.date===date);
  const dated=pipaCountOn(date),legacy=daily?Number(daily.pipa)||0:0;
- return {dated,legacy,hasDated:S.pipa.some(x=>x.date===date),requiresReview:dated>0&&legacy>0};
+ return {dated,legacy,hasDated:S.pipa.some(x=>!x.cancelledAt&&x.date===date),requiresReview:dated>0&&legacy>0};
 }
 function pipaReconciliationSummary(month){
- const dated=S.pipa.filter(x=>x.date&&monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
- const monthlyOnly=S.pipa.filter(x=>!x.date&&x.month===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
+ const dated=S.pipa.filter(x=>!x.cancelledAt&&x.date&&monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
+ const monthlyOnly=S.pipa.filter(x=>!x.cancelledAt&&!x.date&&x.month===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
  const legacyDaily=S.daily.filter(x=>monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.pipa)||0),0);
  const overlapDays=S.daily.filter(x=>monthOf(x.date)===month&&pipaDailyAudit(x.date).requiresReview).length;
  return {dated,monthlyOnly,legacyDaily,overlapDays,needsReview:monthlyOnly>0||overlapDays>0};
 }
-function pipaMonthTotal(m){return S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m).reduce((total,row)=>total+(Number(row.qty)||0),0)}
+function pipaMonthTotal(m){return S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m).reduce((total,row)=>total+(Number(row.qty)||0),0)}
 function thermalCount(date,type){return S.thermalEvents.filter(x=>x.date===date&&x.type===type).length}
 function thermalMonthCount(m,type){return S.thermalEvents.filter(x=>monthOf(x.date)===m&&x.type===type).length}
 function monthStats(m){
@@ -313,7 +313,7 @@ function monthStats(m){
  const latest=rows.length?rows[rows.length-1]:null;
  return{rows,pd,days,ld,outs,occ:ld?pd/ld*100:0,los:outs?pd/outs:0,adm:sum("admissoes"),altas:sum("altas"),transf:sum("transferencias"),deaths:sum("obitos"),pipa:pipaMonthTotal(m),canguru:sum("canguru")+sum("altaCanguru"),altaPediatria:sum("altaPediatria"),altaCanguru:sum("altaCanguru"),picc:S.picc.filter(x=>monthOf(piccInsertDate(x))===m).length,piccDays:piccDaysInMonth(m),piccActive:S.picc.filter(x=>x.status==="Ativo").length,piccRemoved:S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length,pezinho:sum("pezinho"),vmDays:sum("vm"),vmCurrent:latest?(+latest.vm||0):0,intub:sum("intub"),extubProg:sum("extubProg"),extub:sum("extub"),lpp:sum("lpp"),hypothermia:thermalMonthCount(m,"Hipotermia"),hyperthermia:thermalMonthCount(m,"Hipertermia")}
 }
-function allMonths(){const months=[...S.daily.map(r=>monthOf(r.date)),...S.pipa.map(r=>r.date?monthOf(r.date):r.month),...S.picc.map(x=>monthOf(piccInsertDate(x))),...S.picc.filter(x=>x.removalDate).map(x=>monthOf(x.removalDate)),currentMonth()];return [...new Set(months.filter(Boolean))].sort()}
+function allMonths(){const months=[...S.daily.map(r=>monthOf(r.date)),...S.pipa.filter(r=>!r.cancelledAt).map(r=>r.date?monthOf(r.date):r.month),...S.picc.map(x=>monthOf(piccInsertDate(x))),...S.picc.filter(x=>x.removalDate).map(x=>monthOf(x.removalDate)),currentMonth()];return [...new Set(months.filter(Boolean))].sort()}
 function dateBR(s){return s?s.split("-").reverse().join("/"):"—"}
 function nowBR(){return new Date().toLocaleString("pt-BR")}
 function parseISODate(s){if(!s)return null;const p=s.split("-").map(Number);if(p.length!==3||p.some(Number.isNaN))return null;return new Date(Date.UTC(p[0],p[1]-1,p[2]))}
@@ -420,8 +420,27 @@ window.deletePicc=i=>{
  const x=S.picc[i];if(!x)return;if(confirm(`Excluir definitivamente o registro de PICC do Leito ${pad(x.bed)}?\n\nUse esta opção apenas para corrigir um lançamento indevido. Para retirada clínica, use Registrar retirada.`)){S.picc.splice(i,1);clearPiccForm();cancelPiccRemoval();save();showToast("Registro de PICC excluído",1200)}
 }
 
-function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();const m=$("pipa-month").value||monthOf($("pipa-date").value);if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};const audit=pipaReconciliationSummary(m),auditEl=$("pipa-reconciliation");if(auditEl)auditEl.textContent=`Conferência: ${audit.dated} encaminhamento(s) datado(s); ${audit.monthlyOnly} registro(s) histórico(s) sem data; ${audit.legacyDaily} no censo diário legado; ${audit.overlapDays} dia(s) com possível sobreposição. Não somar as fontes sem conciliação.`;rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>`<tr><td>${r.month.split("-").reverse().join("/")}</td><td>${safe(r.city)}</td><td>${r.qty}</td><td>${safe(r.note)}</td><td><button class="ghost" onclick="deletePipa(${S.pipa.length-1-idx})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="5">Nenhum encaminhamento registrado.</td></tr>'}
-window.deletePipa=i=>{S.pipa.splice(i,1);save()}
+function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();const m=$("pipa-month").value||monthOf($("pipa-date").value);if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};const audit=pipaReconciliationSummary(m),auditEl=$("pipa-reconciliation");if(auditEl)auditEl.textContent=`Conferência: ${audit.dated} encaminhamento(s) datado(s); ${audit.monthlyOnly} registro(s) histórico(s) sem data; ${audit.legacyDaily} no censo diário legado; ${audit.overlapDays} dia(s) com possível sobreposição. Não somar as fontes sem conciliação.`;rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>{
+ const i=S.pipa.length-1-idx;
+ const origin=r.date?"Datado — "+dateBR(r.date):"Histórico sem data";
+ const status=r.cancelledAt?"Cancelado":"Ativo";
+ const audit=r.cancelledAt?`<div class="muted">Cancelado em ${safe(new Date(r.cancelledAt).toLocaleString("pt-BR"))} por ${safe(r.cancelledBy||"—")}. Motivo: ${safe(r.cancelReason||"—")}</div>`:"";
+ return `<tr><td>${safe((r.month||monthOf(r.date)||"").split("-").reverse().join("/"))}</td><td>${safe(r.city)}</td><td>${safe(r.qty)}</td><td>${safe(r.note||"")}</td><td>${safe(origin)}</td><td>${status}${audit}</td><td>${r.cancelledAt?"—":`<button class="ghost" onclick="deletePipa(${i})">Cancelar</button>`}</td></tr>`;
+ }).join("")||'<tr><td colspan="7">Nenhum encaminhamento registrado.</td></tr>'}
+window.deletePipa=i=>{
+ const r=S.pipa[i];if(!r||r.cancelledAt)return;
+ const ref=`${r.city} — ${r.qty} RN(s) — ${r.date?dateBR(r.date):"histórico sem data, competência "+r.month}`;
+ if(!confirm(`Cancelar o encaminhamento PIPA: ${ref}?\n\nO registro será preservado no histórico e excluído dos indicadores. Esta ação será sincronizada com os demais usuários.`))return;
+ const reason=prompt("Informe a justificativa obrigatória para cancelar este encaminhamento:");
+ if(reason===null)return;
+ const why=reason.trim();if(why.length<10){alert("Justificativa obrigatória: informe pelo menos 10 caracteres.");return;}
+ r.cancelledAt=new Date().toISOString();
+ r.cancelledBy=String(SESSION.user||"Usuário autenticado");
+ r.cancelReason=why;
+ r.updated=nowBR();
+ save();
+ showToast("Encaminhamento cancelado e preservado para auditoria.",2400);
+}
 let sharedPending=[],pendingLoaded=false,pendingLoading=false;
 async function loadSharedPending(){
  if(!SIASH_CLOUD.token||pendingLoading)return;
@@ -447,7 +466,7 @@ async function changeSharedPending(id,status){
 }
 
 function fillMonthSelect(id){const sel=$(id),cur=sel.value;sel.innerHTML=allMonths().map(m=>`<option value="${m}">${m.split("-").reverse().join("/")}</option>`).join("");sel.value=allMonths().includes(cur)?cur:currentMonth()}
-function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Pediatria",c.altaPediatria],["Altas → Leito Canguru",c.altaCanguru],["Altas para Leito Canguru (total)",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("");const g={};S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
+function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Pediatria",c.altaPediatria],["Altas → Leito Canguru",c.altaCanguru],["Altas para Leito Canguru (total)",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("");const g={};S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
 function renderComparison(){
  const current=currentMonth(),parts=current.split("-").map(Number),months=[];
  for(let offset=-2;offset<=0;offset++){const d=new Date(parts[0],parts[1]-1+offset,1);months.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}`)}
