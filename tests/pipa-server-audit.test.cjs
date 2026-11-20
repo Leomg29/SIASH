@@ -29,7 +29,7 @@ test('justificativa insuficiente e cancelamento adulterado sao rejeitados',()=>{
 });
 test('estado sem alteracoes e inclusao datada sao aceitos',()=>{
  assert.equal(reconcile([row()],[{...row()}]).events.length,0);
- assert.equal(reconcile([row()],[row(),{...row(),date:'2026-11-20'}]).events.length,0);
+ assert.equal(reconcile([row()],[row(),{...row(),date:'2026-11-20',postDischargeConfirmed:true}]).events.length,0);
 });
 test('transacao persiste auditoria no banco antes de atualizar estado',()=>{
  const route=source.slice(end,source.indexOf('app.put("/api/state/init"',end));
@@ -156,7 +156,7 @@ test('inclusao PIPA rejeita campos invalidos sem alterar historico',()=>{
  ];
  for(const item of invalid)assert.ok(reconcile([row()],[row(),item]).error);
  const legacy={...row(),note:'Registro histórico sem data'};
- assert.equal(reconcile([legacy],[legacy,{...row(),date:'2026-11-20'}]).events.length,0);
+ assert.equal(reconcile([legacy],[legacy,{...row(),date:'2026-11-20',postDischargeConfirmed:true}]).events.length,0);
 });
 
 test('indicadores PIPA excluem registros cancelados sem apagar historico',()=>{
@@ -170,4 +170,13 @@ test('cadastro PIPA exige confirmacao de encaminhamento apos alta',()=>{
  const app=fs.readFileSync('app.js','utf8');
  assert.match(app,/if\(!\$\("pipa-post-discharge"\)\.checked\)return alert/);
  assert.match(app,/postDischargeConfirmed:true/);
+});
+
+test('servidor exige alta confirmada para novos encaminhamentos datados',()=>{
+ const dated={...row(),date:'2026-11-20'};
+ assert.match(reconcile([],[dated]).error,/após a alta/);
+ assert.match(reconcile([],[{...dated,postDischargeConfirmed:'true'}]).error,/após a alta/);
+ assert.equal(reconcile([],[{...dated,postDischargeConfirmed:true}]).events.length,0);
+ // Histórico legado sem data permanece compatível.
+ assert.equal(reconcile([],[row()]).events.length,0);
 });
