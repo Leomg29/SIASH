@@ -15,7 +15,7 @@ test('campo de alta pediatria nao pode ser preenchido em novo lancamento',()=>{
  assert.match(html,/id="d-alta-canguru"/);
 });
 test('editar lancamento nao descarta dados historicos de pediatria',()=>{
- assert.match(js,/altaPediatria:\(S\.daily\.find\(x=>!x\.cancelledAt&&x\.date===date\)\?\.altaPediatria\|\|0\)/);
+ assert.match(js,/altaPediatria:\(S\.daily\.find\(x=>x\.date===date\)\?\.altaPediatria\|\|0\)/);
 });
 test('conferencia de censo nao altera o estado nem salva',()=>{
  const start=js.indexOf('function renderCensusConference(date){');
@@ -41,7 +41,7 @@ test('PIPA datado alimenta o censo sem redistribuir registros mensais antigos',(
  assert.match(js,/function pipaCountOn\(date\)/);
  assert.match(js,/S\.pipa\.filter\(x=>!x\.cancelledAt&&x\.date===date\)/);
  assert.match(js,/function pipaDailyAudit\(date\)/);
- assert.match(js,/pipa:\(S\.daily\.find\(x=>!x\.cancelledAt&&x\.date===date\)\?\.pipa\|\|0\)/);
+ assert.match(js,/pipa:\(S\.daily\.find\(x=>x\.date===date\)\?\.pipa\|\|0\)/);
  assert.match(js,/date:\$\("pipa-date"\)\.value,month:/);
 });
 
@@ -49,7 +49,7 @@ test('PIPA legado e datado nao sao somados automaticamente',()=>{
  assert.match(html,/id="d-pipa-audit"/);
  assert.match(js,/pipaDailyAudit\(r\.date\)\.legacy/);
  assert.match(js,/Valores não somados automaticamente/);
- assert.match(js,/pipa:\(S\.daily\.find\(x=>!x\.cancelledAt&&x\.date===date\)\?\.pipa\|\|0\)/);
+ assert.match(js,/pipa:\(S\.daily\.find\(x=>x\.date===date\)\?\.pipa\|\|0\)/);
 });
 
 test('resumo mensal distingue fontes PIPA sem agregacao cruzada',()=>{
