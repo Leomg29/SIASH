@@ -192,3 +192,13 @@ test('registro PIPA cancelado acusa adulteracao especifica em qualquer campo',()
  ])assert.match(reconcile([cancelled],[altered]).error,/Auditoria PIPA cancelada é imutável/);
  assert.equal(reconcile([cancelled],[{...cancelled}]).events.length,0);
 });
+
+test('interface e servidor aplicam o mesmo limite de justificativa PIPA',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ assert.match(app,/why\.length<10\|\|why\.length>1000/);
+ for(const size of [9,1001]){
+  const result=reconcile([row()],[{...row(),cancelledAt:'falso',cancelledBy:'falso',cancelReason:'x'.repeat(size)}]);
+  assert.match(result.error,/entre 10 e 1000/);
+ }
+ assert.equal(reconcile([row()],[{...row(),cancelledAt:'falso',cancelledBy:'falso',cancelReason:'x'.repeat(1000)}]).events.length,1);
+});
