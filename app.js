@@ -125,9 +125,9 @@ function scheduleCloudSave({retry=false}={}){
      if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
    }catch(e){
      console.error(e);
-     preserveCloudDraft(e.status===401?"session-expired":e.conflict||e.status===409||e.status===428?"conflict":"network");
+     preserveCloudDraft(e.status===401?"session-expired":e.conflict||e.status===409||e.status===428||e.status===422?"conflict":"network");
      if(e.status===401){SIASH_CLOUD.conflict=true;updateCloudBadge("Sessão expirada · rascunho protegido",true);alert("Sessão expirada. Seu rascunho foi preservado neste navegador. Entre novamente para conciliar os dados.");}
-     else if(e.conflict||e.status===409||e.status===428){
+     else if(e.conflict||e.status===409||e.status===428||e.status===422){
        SIASH_CLOUD.conflict=true;
        localStorage.setItem(STORE,JSON.stringify(S));
        updateCloudBadge("CONFLITO · dados locais preservados",true);
