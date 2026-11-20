@@ -223,6 +223,11 @@ function reconcilePipaAudit(previous,incoming,actor){
   if(!next||typeof next!=="object"||Array.isArray(next))return {error:"Registro PIPA inválido."};
   if(i>=before.length){
    if(next.cancelledAt||next.cancelledBy||next.cancelReason)return {error:"Novo encaminhamento não pode nascer cancelado."};
+   // Validar somente inclusões: registros históricos já existentes permanecem intactos.
+   if(typeof next.city!=="string"||!next.city.trim()||typeof next.month!=="string"||!/^[0-9]{4}-(0[1-9]|1[0-2])$/.test(next.month)||!Number.isSafeInteger(next.qty)||next.qty<1)return {error:"Novo encaminhamento PIPA exige município, competência e quantidade válidos."};
+   if(next.date!==undefined&&next.date!==null&&next.date!==""){
+    if(typeof next.date!=="string"||!/^\\d{4}-\\d{2}-\\d{2}$/.test(next.date)||Number.isNaN(Date.parse(next.date+"T00:00:00Z"))||next.date.slice(0,7)!==next.month||new Date(next.date+"T00:00:00Z").toISOString().slice(0,10)!==next.date)return {error:"Data do encaminhamento PIPA inválida ou diferente da competência."};
+   }
    continue;
   }
   if(!old||typeof old!=="object"||Array.isArray(old)||stable(old)!==stable(next))
