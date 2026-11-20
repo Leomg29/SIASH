@@ -107,3 +107,33 @@ test('justificativa PIPA e normalizada no estado e na auditoria',()=>{
  assert.equal(result.events[0].reason,'Duplicidade confirmada no fechamento');
  assert.equal(result.payload.state.pipa[0].cancelReason,result.events[0].reason);
 });
+
+test('dois cancelamentos simultaneos geram eventos distintos e preservam a ordem',()=>{
+ const a={...row(),city:'Pirapora',qty:1};
+ const b={...row(),city:'Buritizeiro',qty:2};
+ const after=[
+  {...a,cancelledAt:'falso',cancelledBy:'terceiro',cancelReason:'Duplicidade confirmada no censo'},
+  {...b,cancelledAt:'falso',cancelledBy:'terceiro',cancelReason:'Encaminhamento registrado em duplicidade'}
+ ];
+ const result=reconcile([a,b],after);
+ assert.equal(result.events.length,2);
+ assert.equal(result.events[0].index,0);
+ assert.equal(result.events[1].index,1);
+ assert.equal(result.events[0].before.city,'Pirapora');
+ assert.equal(result.events[1].before.city,'Buritizeiro');
+ assert.equal(result.payload.state.pipa[0].cancelledBy,'daniel');
+ assert.equal(result.payload.state.pipa[1].cancelledBy,'daniel');
+ assert.ok(result.payload.state.pipa.every(x=>!Number.isNaN(Date.parse(x.cancelledAt))));
+});
+test('lote com justificativa invalida nao pode ser persistido parcialmente',()=>{
+ const a={...row(),city:'Pirapora'};
+ const b={...row(),city:'Buritizeiro'};
+ const result=reconcile([a,b],[
+  {...a,cancelledAt:'falso',cancelledBy:'daniel',cancelReason:'Duplicidade confirmada no fechamento'},
+  {...b,cancelledAt:'falso',cancelledBy:'daniel',cancelReason:'curta'}
+ ]);
+ assert.match(result.error,/Justificativa/);
+ const route=source.slice(end,source.indexOf('app.put("/api/state/init"',end));
+ assert.ok(route.indexOf('if(pipaAudit.error)')<route.indexOf('INSERT INTO siash_pipa_cancellation_audit'));
+ assert.match(route,/if\(pipaAudit\.error\)\{await client\.query\("ROLLBACK"\)/);
+});
