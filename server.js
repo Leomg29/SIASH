@@ -236,7 +236,8 @@ function reconcilePipaAudit(previous,incoming,actor){
    if(next.cancelledBy||next.cancelReason)return {error:"Metadados de cancelamento PIPA inconsistentes."};
    continue;
   }
-  const reason=String(next.cancelReason||"").trim();
+  if(typeof next.cancelReason!=="string")return {error:"Justificativa PIPA deve ser um texto válido."};
+  const reason=next.cancelReason.trim();
   if(reason.length<10||reason.length>1000)return {error:"Justificativa PIPA deve ter entre 10 e 1000 caracteres."};
   if(!next.cancelledBy||!next.cancelledAt)return {error:"Cancelamento PIPA incompleto."};
   // Normalizar a justificativa persistida para coincidir com a trilha de auditoria.
