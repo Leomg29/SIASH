@@ -180,3 +180,15 @@ test('servidor exige alta confirmada para novos encaminhamentos datados',()=>{
  // Histórico legado sem data permanece compatível.
  assert.equal(reconcile([],[row()]).events.length,0);
 });
+
+test('registro PIPA cancelado acusa adulteracao especifica em qualquer campo',()=>{
+ const cancelled={...row(),cancelledAt:'2026-11-20T12:00:00.000Z',cancelledBy:'daniel',cancelReason:'Duplicidade confirmada'};
+ for(const altered of [
+  {...cancelled,qty:2},
+  {...cancelled,city:'Buritizeiro'},
+  {...cancelled,cancelledBy:'outro'},
+  {...cancelled,cancelReason:'Motivo adulterado'},
+  {...cancelled,cancelledAt:'2026-11-19T12:00:00.000Z'}
+ ])assert.match(reconcile([cancelled],[altered]).error,/Auditoria PIPA cancelada é imutável/);
+ assert.equal(reconcile([cancelled],[{...cancelled}]).events.length,0);
+});
