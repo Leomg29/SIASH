@@ -45,3 +45,13 @@ test('servidor devolve carimbo autoritativo e cliente concilia somente sem novas
  assert.match(app,/generation===SIASH_CLOUD\.editGeneration&&Array\.isArray\(r\.pipa_cancellations\)/);
  assert.match(app,/record\.cancelledAt=item\.cancelledAt;record\.cancelledBy=item\.cancelledBy/);
 });
+
+test('aceita base historica sem chave PIPA e preserva novos encaminhamentos',()=>{
+ const result=vm.runInContext('reconcilePipaAudit',ctx)({state:{}},{state:{pipa:[row()]}},'daniel');
+ assert.equal(result.events.length,0);
+ assert.equal(result.payload.state.pipa[0].city,'Pirapora');
+});
+test('impede adulteracao isolada do timestamp updated em registro ativo',()=>{
+ const old={...row(),updated:'anterior'};
+ assert.match(reconcile([old],[{...old,updated:'adulterado'}]).error,/não auditada/);
+});
