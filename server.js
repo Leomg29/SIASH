@@ -214,7 +214,8 @@ function reconcilePipaAudit(previous,incoming,actor){
  if(!Array.isArray(before)||!Array.isArray(after))return {error:"Estrutura PIPA inválida."};
  if(after.length<before.length)return {error:"Não é permitido remover registros PIPA existentes."};
  const events=[];
- const stable=x=>JSON.stringify(Object.fromEntries(Object.entries(x).filter(([k])=>!["cancelledAt","cancelledBy","cancelReason","updated"].includes(k)).sort(([a],[b])=>a.localeCompare(b))));
+ const canonical=x=>JSON.stringify(x,(_,v)=>v&&typeof v==="object"&&!Array.isArray(v)?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
+ const stable=x=>canonical(Object.fromEntries(Object.entries(x).filter(([k])=>!["cancelledAt","cancelledBy","cancelReason","updated"].includes(k))));
  for(let i=0;i<after.length;i++){
   const old=before[i],next=after[i];
   if(!next||typeof next!=="object"||Array.isArray(next))return {error:"Registro PIPA inválido."};
@@ -225,7 +226,7 @@ function reconcilePipaAudit(previous,incoming,actor){
   if(!old||typeof old!=="object"||Array.isArray(old)||stable(old)!==stable(next))
    return {error:"Registro PIPA anterior alterado ou reordenado; solicite conciliação."};
   if(old.cancelledAt){
-   if(JSON.stringify(old)!==JSON.stringify(next))return {error:"Auditoria PIPA cancelada é imutável."};
+   if(canonical(old)!==canonical(next))return {error:"Auditoria PIPA cancelada é imutável."};
    continue;
   }
   if(!next.cancelledAt){
