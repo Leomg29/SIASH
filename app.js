@@ -130,8 +130,8 @@ function scheduleCloudSave({retry=false}={}){
      else if(e.conflict||e.status===409||e.status===428||e.status===422){
        SIASH_CLOUD.conflict=true;
        localStorage.setItem(STORE,JSON.stringify(S));
-       updateCloudBadge("CONFLITO · dados locais preservados",true);
-       alert("ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
+       updateCloudBadge(e.status===422?"INTEGRIDADE PIPA · revisão necessária":"CONFLITO · dados locais preservados",true);
+       alert(e.status===422?"O servidor recusou uma alteração do PIPA por inconsistência de integridade: "+e.message+" Seu rascunho está preservado e o envio automático foi bloqueado. Solicite conciliação à coordenação.":"ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
      }else{
        // A resposta pode ter sido perdida depois do commit: conferir a revisão antes de reenviar.
        try{
