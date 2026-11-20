@@ -64,3 +64,18 @@ test('rejeicao 422 bloqueia repeticao automatica e preserva rascunho',()=>{
  assert.match(app,/else if\(e\.conflict\|\|e\.status===409\|\|e\.status===428\|\|e\.status===422\)/);
  assert.match(app,/SIASH_CLOUD\.conflict=true;\s*localStorage\.setItem\(STORE,JSON\.stringify\(S\)\)/);
 });
+
+test('falha de rede apos commit exige conciliacao antes de reenviar',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ const start=app.indexOf('function scheduleCloudSave(');
+ const end=app.indexOf('function scheduleCloudSaveRetry(',start);
+ const save=app.slice(start,end);
+ assert.match(save,/remote\.revision!==SIASH_CLOUD\.revision/);
+ assert.match(save,/SIASH_CLOUD\.conflict=true;\s*updateCloudBadge\("CONFIRMAÇÃO INCERTA/);
+ assert.match(save,/if\(!SIASH_CLOUD\.conflict&&generation!==SIASH_CLOUD\.editGeneration\)/);
+});
+test('interface diferencia erro de integridade PIPA de conflito entre usuarios',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ assert.match(app,/e\.status===422\?"INTEGRIDADE PIPA/);
+ assert.match(app,/O servidor recusou uma alteração do PIPA por inconsistência de integridade/);
+});
