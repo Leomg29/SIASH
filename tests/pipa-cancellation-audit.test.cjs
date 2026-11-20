@@ -25,7 +25,7 @@ test('PIPA: cancelamento exige confirmação e justificativa e preserva registro
  assert.ok(start>=0&&end>start);
  const state={pipa:[{city:'Pirapora',qty:1,month:'2026-11',updated:'anterior'}]};
  const ctx={S:state,SESSION:{user:'daniel'},confirm:()=>true,prompt:()=> 'Correção de lançamento duplicado',nowBR:()=> '20/11/2026',showToast:()=>{},save:()=>{ctx.saved=true},alert:()=>{throw Error('unexpected alert')},Date,String};
- vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);
+ ctx.window=ctx;vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);
  vm.runInContext('deletePipa(0)',ctx);
  assert.equal(state.pipa.length,1);
  assert.equal(state.pipa[0].cancelledBy,'daniel');
