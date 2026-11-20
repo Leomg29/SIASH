@@ -80,6 +80,15 @@ async function initDb(){
       new_status TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+    CREATE TABLE IF NOT EXISTS siash_pipa_cancellation_audit(
+      id BIGSERIAL PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      username TEXT NOT NULL,
+      record_index INTEGER NOT NULL,
+      record_before JSONB NOT NULL,
+      reason TEXT NOT NULL,
+      state_revision BIGINT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS siash_cloud_audit(
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -197,6 +206,42 @@ app.get("/api/state",auth,async(req,res)=>{
   if(!q.rows.length) return res.json({exists:false});
   res.json({exists:true,payload:q.rows[0].payload,updated_at:q.rows[0].updated_at,updated_by:q.rows[0].updated_by,revision:Number(q.rows[0].revision)});
 });
+// Impede remoção, adulteração e cancelamentos falsificados de encaminhamentos PIPA.
+// Retorna a carga normalizada e eventos a persistir atomicamente com o estado.
+function reconcilePipaAudit(previous,incoming,actor){
+ const before=previous?.state?.pipa,after=incoming?.state?.pipa;
+ if(before===undefined&&after===undefined)return {payload:incoming,events:[]};
+ if(!Array.isArray(before)||!Array.isArray(after))return {error:"Estrutura PIPA inválida."};
+ if(after.length<before.length)return {error:"Não é permitido remover registros PIPA existentes."};
+ const events=[];
+ const stable=x=>JSON.stringify(Object.fromEntries(Object.entries(x).filter(([k])=>!["cancelledAt","cancelledBy","cancelReason","updated"].includes(k)).sort(([a],[b])=>a.localeCompare(b))));
+ for(let i=0;i<after.length;i++){
+  const old=before[i],next=after[i];
+  if(!next||typeof next!=="object"||Array.isArray(next))return {error:"Registro PIPA inválido."};
+  if(i>=before.length){
+   if(next.cancelledAt||next.cancelledBy||next.cancelReason)return {error:"Novo encaminhamento não pode nascer cancelado."};
+   continue;
+  }
+  if(!old||typeof old!=="object"||Array.isArray(old)||stable(old)!==stable(next))
+   return {error:"Registro PIPA anterior alterado ou reordenado; solicite conciliação."};
+  if(old.cancelledAt){
+   if(JSON.stringify(old)!==JSON.stringify(next))return {error:"Auditoria PIPA cancelada é imutável."};
+   continue;
+  }
+  if(!next.cancelledAt){
+   if(next.cancelledBy||next.cancelReason)return {error:"Metadados de cancelamento PIPA inconsistentes."};
+   continue;
+  }
+  const reason=String(next.cancelReason||"").trim();
+  if(reason.length<10||reason.length>1000)return {error:"Justificativa PIPA deve ter entre 10 e 1000 caracteres."};
+  if(!next.cancelledBy||!next.cancelledAt)return {error:"Cancelamento PIPA incompleto."};
+  // A identidade e o horário são definidos pelo servidor, nunca pelo navegador.
+  next.cancelledBy=actor;
+  next.cancelledAt=new Date().toISOString();
+  events.push({index:i,before:old,reason});
+ }
+ return {payload:incoming,events};
+}
 app.put("/api/state",auth,async(req,res)=>{
   const payload=req.body?.payload,base=Number(req.body?.base_revision);
   if(!payload||typeof payload!=="object"||Array.isArray(payload))return res.status(400).json({error:"Estado inválido."});
@@ -208,6 +253,11 @@ app.put("/api/state",auth,async(req,res)=>{
     if(!cur.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"Estado central não encontrado. Recarregue os dados.",conflict:true});}
     const current=Number(cur.rows[0].revision);
     if(current!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Outro profissional salvou alterações antes de você. Seus dados locais foram preservados; não atualize a página antes de exportar ou conferir seus lançamentos.",conflict:true,current_revision:current});}
+    const pipaAudit=reconcilePipaAudit(cur.rows[0].payload,payload,req.user.u);
+    if(pipaAudit.error){await client.query("ROLLBACK");return res.status(422).json({error:pipaAudit.error});}
+    for(const event of pipaAudit.events){
+      await client.query("INSERT INTO siash_pipa_cancellation_audit(username,record_index,record_before,reason,state_revision) VALUES($1,$2,$3,$4,$5)",[req.user.u,event.index,event.before,event.reason,current+1]);
+    }
     await client.query("INSERT INTO siash_state_history(payload,saved_by,reason) VALUES($1,$2,$3)",[cur.rows[0].payload,req.user.u,req.body?.reason||"Antes de atualização do estado"]);
     const updated=await client.query("UPDATE siash_state SET payload=$1,updated_at=NOW(),updated_by=$2,revision=revision+1 WHERE id=1 RETURNING revision,updated_at",[payload,req.user.u]);
     await client.query("COMMIT");
