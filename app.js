@@ -106,6 +106,15 @@ function scheduleCloudSave({retry=false}={}){
    try{
      const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
      SIASH_CLOUD.revision=r.revision;
+     // O servidor é a fonte de verdade para autor e horário do cancelamento.
+     // Se houve novas edições durante o PUT, não sobrescrever o rascunho atual.
+     if(generation===SIASH_CLOUD.editGeneration&&Array.isArray(r.pipa_cancellations)){
+       for(const item of r.pipa_cancellations){
+         const record=S.pipa[item.index];
+         if(record&&record.cancelledAt){record.cancelledAt=item.cancelledAt;record.cancelledBy=item.cancelledBy;}
+       }
+       localStorage.setItem(STORE,JSON.stringify(S));
+     }
      SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
      if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
    }catch(e){
