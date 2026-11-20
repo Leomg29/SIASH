@@ -209,8 +209,10 @@ app.get("/api/state",auth,async(req,res)=>{
 // Impede remoção, adulteração e cancelamentos falsificados de encaminhamentos PIPA.
 // Retorna a carga normalizada e eventos a persistir atomicamente com o estado.
 function reconcilePipaAudit(previous,incoming,actor){
- const before=previous?.state?.pipa,after=incoming?.state?.pipa;
- if(before===undefined&&after===undefined)return {payload:incoming,events:[]};
+ const oldPipa=previous?.state?.pipa,after=incoming?.state?.pipa;
+ if(oldPipa===undefined&&after===undefined)return {payload:incoming,events:[]};
+ // Bases anteriores à implantação do módulo podem não conter a chave PIPA.
+ const before=oldPipa===undefined?[]:oldPipa;
  if(!Array.isArray(before)||!Array.isArray(after))return {error:"Estrutura PIPA inválida."};
  if(after.length<before.length)return {error:"Não é permitido remover registros PIPA existentes."};
  const events=[];
@@ -230,6 +232,7 @@ function reconcilePipaAudit(previous,incoming,actor){
    continue;
   }
   if(!next.cancelledAt){
+   if(next.updated!==old.updated)return {error:"Alteração não auditada no registro PIPA."};
    if(next.cancelledBy||next.cancelReason)return {error:"Metadados de cancelamento PIPA inconsistentes."};
    continue;
   }
