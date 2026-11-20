@@ -100,3 +100,10 @@ test('controle de revisao e verificacao PIPA ocorrem sob o mesmo bloqueio de esc
  assert.match(route,/if\(current!==base\).*?res\.status\(409\)/s);
  assert.match(route,/if\(pipaAudit\.error\).*?res\.status\(422\)/s);
 });
+
+test('justificativa PIPA e normalizada no estado e na auditoria',()=>{
+ const reason='   Duplicidade confirmada no fechamento   ';
+ const result=reconcile([row()],[{...row(),cancelledAt:'2020-01-01',cancelledBy:'falso',cancelReason:reason}]);
+ assert.equal(result.events[0].reason,'Duplicidade confirmada no fechamento');
+ assert.equal(result.payload.state.pipa[0].cancelReason,result.events[0].reason);
+});
