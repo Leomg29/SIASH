@@ -158,3 +158,16 @@ test('inclusao PIPA rejeita campos invalidos sem alterar historico',()=>{
  const legacy={...row(),note:'Registro histórico sem data'};
  assert.equal(reconcile([legacy],[legacy,{...row(),date:'2026-11-20'}]).events.length,0);
 });
+
+test('indicadores PIPA excluem registros cancelados sem apagar historico',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ assert.match(app,/function pipaCountOn\(date\)\{return S\.pipa\.filter\(x=>!x\.cancelledAt&&x\.date===date\)/);
+ assert.match(app,/window\.deletePipa=i=>\{/);
+ assert.match(app,/r\.cancelledAt=new Date\(\)\.toISOString\(\)/);
+ assert.doesNotMatch(app,/S\.pipa\.splice\(/);
+});
+test('cadastro PIPA exige confirmacao de encaminhamento apos alta',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ assert.match(app,/if\(!\$\("pipa-post-discharge"\)\.checked\)return alert/);
+ assert.match(app,/postDischargeConfirmed:true/);
+});
