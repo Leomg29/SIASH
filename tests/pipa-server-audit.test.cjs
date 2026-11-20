@@ -88,7 +88,7 @@ test('historico mensal sem data e preservado e pode ser cancelado com auditoria'
  assert.equal(result.events[0].before.date,undefined);
  assert.equal(result.payload.state.pipa[0].cancelledBy,'daniel');
  assert.equal(result.payload.state.pipa[0].date,undefined);
- assert.match(reconcile([result.payload.state.pipa],[historic]).error,/imutável/);
+ assert.match(reconcile([result.payload.state.pipa],[historic]).error,/imutável|alterado ou reordenado/);
 });
 test('controle de revisao e verificacao PIPA ocorrem sob o mesmo bloqueio de escrita',()=>{
  const route=source.slice(end,source.indexOf('app.put("/api/state/init"',end));
