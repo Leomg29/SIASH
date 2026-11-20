@@ -231,12 +231,14 @@ function reconcilePipaAudit(previous,incoming,actor){
    }
    continue;
   }
-  if(!old||typeof old!=="object"||Array.isArray(old)||stable(old)!==stable(next))
+  if(!old||typeof old!=="object"||Array.isArray(old))
    return {error:"Registro PIPA anterior alterado ou reordenado; solicite conciliação."};
   if(old.cancelledAt){
    if(canonical(old)!==canonical(next))return {error:"Auditoria PIPA cancelada é imutável."};
    continue;
   }
+  if(stable(old)!==stable(next))
+   return {error:"Registro PIPA anterior alterado ou reordenado; solicite conciliação."};
   if(!next.cancelledAt){
    if(next.updated!==old.updated)return {error:"Alteração não auditada no registro PIPA."};
    if(next.cancelledBy||next.cancelReason)return {error:"Metadados de cancelamento PIPA inconsistentes."};
