@@ -38,6 +38,6 @@ test('PIPA: cancelamento abortado nao modifica registro',()=>{
  const end=source.indexOf('let sharedPending=[]',start);
  const state={pipa:[{city:'Pirapora',qty:1,month:'2026-11'}]};
  const ctx={S:state,SESSION:{user:'daniel'},confirm:()=>false,prompt:()=>{throw Error('prompt should not run')},save:()=>{throw Error('should not save')},Date,String};
- vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);vm.runInContext('deletePipa(0)',ctx);
+ ctx.window=ctx;vm.createContext(ctx);vm.runInContext(source.slice(start,end),ctx);vm.runInContext('deletePipa(0)',ctx);
  assert.equal(state.pipa[0].cancelledAt,undefined);
 });
