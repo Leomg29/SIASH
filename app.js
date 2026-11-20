@@ -1026,10 +1026,29 @@ $("pending-form").addEventListener("submit",async e=>{
 $("pending-scope").addEventListener("change",()=>{$("pending-bed-wrap").style.display=$("pending-scope").value==="sector"?"none":""});
 $("pending-refresh").addEventListener("click",loadSharedPending);
 $("pending-list").addEventListener("change",e=>{const id=e.target.dataset.pendingId;if(id)changeSharedPending(id,e.target.value)});
+// Janela de auditoria somente leitura; nunca altera o estado de pendências.
+function showPendingHistoryDialog(items){
+ let dialog=$("pending-history-dialog");
+ if(!dialog){
+  dialog=document.createElement("dialog");
+  dialog.id="pending-history-dialog";
+  dialog.setAttribute("aria-labelledby","pending-history-title");
+  dialog.style.cssText="width:min(860px,94vw);max-height:85vh;overflow:auto;border:1px solid #d8dfe3;border-radius:14px;padding:24px;box-shadow:0 16px 45px #0004;color:#263238;background:#fff";
+  document.body.appendChild(dialog);
+ }
+ const rows=items.map(x=>{
+  const date=x.created_at?new Date(x.created_at):null;
+  const when=date&&!Number.isNaN(date.getTime())?date.toLocaleString("pt-BR"):"—";
+  return `<tr><td>${safe(when)}</td><td>${safe(x.actor||"—")}</td><td>${safe(x.action||"—")}</td><td>${safe(x.previous_status||"—")} → ${safe(x.new_status||"—")}</td></tr>`;
+ }).join("");
+ dialog.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px"><h2 id="pending-history-title" style="margin:0;font-size:1.25rem">Histórico da pendência</h2><button type="button" class="secondary" data-close-pending-history>Fechar</button></div><div style="overflow-x:auto">${rows?`<table style="width:100%;border-collapse:collapse;text-align:left"><thead><tr><th>Data e hora</th><th>Profissional</th><th>Alteração</th><th>Situação anterior → nova</th></tr></thead><tbody>${rows}</tbody></table>`:'<p class="muted">Sem histórico registrado.</p>'}</div>`;
+ dialog.querySelector("[data-close-pending-history]").addEventListener("click",()=>dialog.close());
+ dialog.showModal();
+}
 $("pending-list").addEventListener("click",async e=>{
  const complete=e.target.closest("[data-complete-id]");if(complete){await changeSharedPending(complete.dataset.completeId,"Concluída");return;}
  const id=e.target.dataset.historyId;if(!id)return;
- try{const data=await cloudJson("/api/pending/"+id+"/history");alert((data.items||[]).map(x=>new Date(x.created_at).toLocaleString("pt-BR")+" — "+x.actor+": "+x.action+" ("+(x.previous_status||"—")+" → "+(x.new_status||"—")+")").join("\n")||"Sem histórico.")}
+ try{const data=await cloudJson("/api/pending/"+id+"/history");showPendingHistoryDialog(data.items||[])}
  catch(err){alert(err.message)}
 });
 $("indicator-month").addEventListener("change",renderIndicators)
