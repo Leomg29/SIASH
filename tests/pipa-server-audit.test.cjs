@@ -79,3 +79,24 @@ test('interface diferencia erro de integridade PIPA de conflito entre usuarios',
  assert.match(app,/e\.status===422\?"INTEGRIDADE PIPA/);
  assert.match(app,/O servidor recusou uma alteração do PIPA por inconsistência de integridade/);
 });
+
+test('historico mensal sem data e preservado e pode ser cancelado com auditoria',()=>{
+ const historic={month:'2026-11',city:'Pirapora',qty:1,note:'Histórico sem data'};
+ const incoming={...historic,cancelledAt:'2026-11-20T00:00:00Z',cancelledBy:'outro',cancelReason:'Duplicidade verificada no fechamento'};
+ const result=reconcile([historic],[incoming]);
+ assert.equal(result.events.length,1);
+ assert.equal(result.events[0].before.date,undefined);
+ assert.equal(result.payload.state.pipa[0].cancelledBy,'daniel');
+ assert.equal(result.payload.state.pipa[0].date,undefined);
+ assert.match(reconcile([result.payload.state.pipa],[historic]).error,/imutável/);
+});
+test('controle de revisao e verificacao PIPA ocorrem sob o mesmo bloqueio de escrita',()=>{
+ const route=source.slice(end,source.indexOf('app.put("/api/state/init"',end));
+ const lock=route.indexOf('SELECT payload,revision FROM siash_state WHERE id=1 FOR UPDATE');
+ const revision=route.indexOf('if(current!==base)');
+ const validation=route.indexOf('reconcilePipaAudit(');
+ const update=route.indexOf('UPDATE siash_state SET payload=');
+ assert.ok(lock>=0&&revision>lock&&validation>revision&&update>validation);
+ assert.match(route,/if\(current!==base\).*?res\.status\(409\)/s);
+ assert.match(route,/if\(pipaAudit\.error\).*?res\.status\(422\)/s);
+});
