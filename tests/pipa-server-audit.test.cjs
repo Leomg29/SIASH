@@ -38,3 +38,10 @@ test('transacao persiste auditoria no banco antes de atualizar estado',()=>{
  assert.ok(route.indexOf('INSERT INTO siash_pipa_cancellation_audit')<route.indexOf('UPDATE siash_state'));
  assert.match(route,/ROLLBACK/);
 });
+
+test('servidor devolve carimbo autoritativo e cliente concilia somente sem novas edicoes',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ assert.match(source,/pipa_cancellations:pipaAudit\.events\.map/);
+ assert.match(app,/generation===SIASH_CLOUD\.editGeneration&&Array\.isArray\(r\.pipa_cancellations\)/);
+ assert.match(app,/record\.cancelledAt=item\.cancelledAt;record\.cancelledBy=item\.cancelledBy/);
+});
