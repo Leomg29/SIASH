@@ -448,7 +448,7 @@ window.deletePipa=i=>{
  if(!confirm(`Cancelar o encaminhamento PIPA: ${ref}?\n\nO registro será preservado no histórico e excluído dos indicadores. Esta ação será sincronizada com os demais usuários.`))return;
  const reason=prompt("Informe a justificativa obrigatória para cancelar este encaminhamento:");
  if(reason===null)return;
- const why=reason.trim();if(why.length<10){alert("Justificativa obrigatória: informe pelo menos 10 caracteres.");return;}
+ const why=reason.trim();if(why.length<10||why.length>1000){alert("Justificativa obrigatória: informe entre 10 e 1000 caracteres.");return;}
  r.cancelledAt=new Date().toISOString();
  r.cancelledBy=String(SESSION.user||"Usuário autenticado");
  r.cancelReason=why;
