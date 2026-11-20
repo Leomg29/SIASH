@@ -12,7 +12,7 @@ function harness(){
  const dialog={id:'',style:{cssText:''},setAttribute(){},innerHTML:'',showModal(){this.open=true},close(){this.open=false},querySelector(){return {addEventListener:(name,fn)=>{this.closeFn=fn}}}};
  const document={createElement:tag=>{assert.equal(tag,'dialog');return dialog},body:{appendChild:d=>{elements[d.id]=d}},getElementById:id=>elements[id]};
  const safe=x=>String(x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
- const ctx={document,safe,Date,Number};vm.createContext(ctx);vm.runInContext(fn,ctx);
+ const ctx={document,safe,Date,Number,$:id=>document.getElementById(id)};vm.createContext(ctx);vm.runInContext(fn,ctx);
  return {dialog,show:items=>vm.runInContext('showPendingHistoryDialog',ctx)(items)};
 }
 test('historico abre modal com tabela e fecha sem salvar',()=>{
