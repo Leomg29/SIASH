@@ -108,12 +108,18 @@ function scheduleCloudSave({retry=false}={}){
      SIASH_CLOUD.revision=r.revision;
      // O servidor é a fonte de verdade para autor e horário do cancelamento.
      // Se houve novas edições durante o PUT, não sobrescrever o rascunho atual.
-     if(generation===SIASH_CLOUD.editGeneration&&Array.isArray(r.pipa_cancellations)){
+     if(Array.isArray(r.pipa_cancellations)&&r.pipa_cancellations.length){
+       // Aplicar somente o carimbo do registro cancelado: outras edições locais
+       // feitas durante a requisição continuam intactas e pendentes de envio.
        for(const item of r.pipa_cancellations){
          const record=S.pipa[item.index];
-         if(record&&record.cancelledAt){record.cancelledAt=item.cancelledAt;record.cancelledBy=item.cancelledBy;}
+         if(record&&record.cancelledAt&&record.cancelReason){
+           record.cancelledAt=item.cancelledAt;
+           record.cancelledBy=item.cancelledBy;
+         }
        }
        localStorage.setItem(STORE,JSON.stringify(S));
+       if(generation!==SIASH_CLOUD.editGeneration)preserveCloudDraft("pending");
      }
      SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
      if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
