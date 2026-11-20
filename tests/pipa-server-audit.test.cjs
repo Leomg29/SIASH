@@ -137,3 +137,10 @@ test('lote com justificativa invalida nao pode ser persistido parcialmente',()=>
  assert.ok(route.indexOf('if(pipaAudit.error)')<route.indexOf('INSERT INTO siash_pipa_cancellation_audit'));
  assert.match(route,/if\(pipaAudit\.error\)\{await client\.query\("ROLLBACK"\)/);
 });
+
+test('rejeita justificativa PIPA que nao seja texto',()=>{
+ for(const value of [1234567890123,{motivo:'duplicado'},['duplicidade confirmada'],null]){
+  const result=reconcile([row()],[{...row(),cancelledAt:'2026-11-20',cancelledBy:'falso',cancelReason:value}]);
+  assert.match(result.error,/texto válido/);
+ }
+});
