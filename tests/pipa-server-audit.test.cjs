@@ -57,3 +57,10 @@ test('impede adulteracao isolada do timestamp updated em registro ativo',()=>{
  const old={...row(),updated:'anterior'};
  assert.match(reconcile([old],[{...old,updated:'adulterado'}]).error,/não auditada/);
 });
+
+test('rejeicao 422 bloqueia repeticao automatica e preserva rascunho',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ assert.match(app,/e\.status===409\|\|e\.status===428\|\|e\.status===422\?"conflict":"network"/);
+ assert.match(app,/else if\(e\.conflict\|\|e\.status===409\|\|e\.status===428\|\|e\.status===422\)/);
+ assert.match(app,/SIASH_CLOUD\.conflict=true;\s*localStorage\.setItem\(STORE,JSON\.stringify\(S\)\)/);
+});
