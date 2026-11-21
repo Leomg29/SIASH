@@ -31,7 +31,7 @@ test('Chromium PR81: login limpo, troca de senha e alerta de admissão no censo'
   await page.locator('#change-new-password').fill('NovaSenha!1234');
   await page.locator('#change-confirm-password').fill('NovaSenha!1234');
   await page.locator('#change-password-form button[type=submit]').click();
-  await page.locator('#change-password-feedback').getByText('Senha alterada com sucesso.').waitFor({timeout:10000});
+  await page.waitForFunction(()=>document.querySelector('#change-password-feedback')?.textContent?.includes('Senha alterada com sucesso.'),null,{timeout:10000});
   // Simulate a previous-day admission in isolated DB; the actual panel must show a warning.
   const {dateInBrazil,previousDate}=require('../census-midnight.cjs');
   const day=previousDate(dateInBrazil(new Date()));
@@ -39,7 +39,7 @@ test('Chromium PR81: login limpo, troca de senha e alerta de admissão no censo'
   await db.query('INSERT INTO siash_state(id,payload,revision) VALUES(1,$1,1) ON CONFLICT(id) DO UPDATE SET payload=EXCLUDED.payload,revision=1',[payload]);
   await db.query('INSERT INTO siash_daily_admission_records(reference_date,admission_count,ever_admitted,recorded_by) VALUES($1,1,TRUE,$2) ON CONFLICT(reference_date) DO UPDATE SET admission_count=1,ever_admitted=TRUE',[day,'pr81-test']);
   await page.evaluate(()=>refreshMidnightCensusStatus());
-  await page.locator('#census-midnight-alert').getByText(/pendente de conferência manual/).waitFor({timeout:10000});
+  await page.waitForFunction(()=>/pendente de conferência manual/.test(document.querySelector('#census-midnight-alert')?.textContent||''),null,{timeout:10000});
   assert.equal(await page.locator('#census-midnight-alert').isVisible(),true);
  }finally{if(browser)await browser.close();child.kill('SIGTERM');await db.end()}
 });
