@@ -608,6 +608,17 @@
 
 </main>
 </div>
+<section id="cloud-conflict-panel" role="dialog" aria-modal="true" aria-labelledby="cloud-conflict-title" hidden style="position:fixed;inset:4%;z-index:9999;background:var(--card,#fff);color:var(--text,#222);border:3px solid #9b3c21;border-radius:12px;padding:18px;overflow:auto;box-shadow:0 0 0 100vmax rgba(0,0,0,.6)">
+ <h2 id="cloud-conflict-title">Conflito de sincronização — revisão necessária</h2>
+ <p id="cloud-conflict-message" role="alert">Outro plantonista salvou uma versão diferente. Seus lançamentos permanecem neste navegador.</p>
+ <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
+  <div><h3>Rascunho local — não enviado</h3><pre id="cloud-conflict-local" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto"></pre></div>
+  <div><h3>Versão atual do servidor</h3><pre id="cloud-conflict-remote" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:45vh;overflow:auto"></pre></div>
+ </div>
+ <p>Por segurança, o sistema não substitui automaticamente dados de leitos, PICC ou censo. Concilie as divergências com a coordenação antes de liberar o envio.</p>
+ <button id="cloud-conflict-refresh" type="button">Consultar versão atual do servidor</button>
+ <button id="cloud-conflict-close" type="button">Manter rascunho e fechar</button>
+</section>
 <script src="jszip.min.js"></script>
 <script src="app.js"></script>
 <script src="indicator-charts.js"></script>
