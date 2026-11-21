@@ -31,7 +31,7 @@ test('Chromium PR81: login limpo, troca de senha e alerta de admissão no censo'
   await page.locator('#change-new-password').fill('NovaSenha!1234');
   await page.locator('#change-confirm-password').fill('NovaSenha!1234');
   await page.locator('#change-password-form button[type=submit]').click();
-  await delay(500);
+  await page.waitForFunction(()=>!document.querySelector('#change-password-feedback')?.textContent?.includes('Nova senha: mínimo 10 caracteres'),null,{timeout:15000});
   assert.match(await page.locator('#change-password-feedback').innerText(),/Senha alterada com sucesso\./);
   // Simulate a previous-day admission in isolated DB; the actual panel must show a warning.
   const {dateInBrazil,previousDate}=require('../census-midnight.cjs');
