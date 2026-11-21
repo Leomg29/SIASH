@@ -31,9 +31,9 @@ test("troca de senha: valida atual, persiste hash e audita em transacao",async()
  vm.runInNewContext(route,{...context});
  const respond=()=>{const res={status(n){this.code=n;return this},json(v){this.body=v;return this}};return res};
  let res=respond();
- await handler({user:{u:"enfermeiro"},body:{currentPassword:"incorreta",newPassword:"NovaSenha!123"}},res);
+ await handler({user:{u:"enfermeiro"},body:{currentPassword:"incorreta",newPassword:"NovaSenha!123",confirmPassword:"NovaSenha!123"}},res);
  assert.equal(res.code,403);assert.equal(stored,"hash-antigo");assert.equal(rollbacks,1);
  res=respond();
- await handler({user:{u:"enfermeiro"},body:{currentPassword:"SenhaAntiga!1",newPassword:"NovaSenha!123"}},res);
+ await handler({user:{u:"enfermeiro"},body:{currentPassword:"SenhaAntiga!1",newPassword:"NovaSenha!123",confirmPassword:"NovaSenha!123"}},res);
  assert.equal(res.body.ok,true);assert.equal(stored,"hash:NovaSenha!123");assert.equal(audited,1);assert.equal(commits,1);
 });
