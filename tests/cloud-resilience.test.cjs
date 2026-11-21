@@ -221,3 +221,14 @@ test('GET com revisão não numérica não autoriza reenvio',async()=>{
  assert.equal(h.requests.length,2);
  assert.ok(h.data.has('siash_cloud_pending_v1'));
 });
+
+test('confirmacao do servidor atualiza autor data e justificativa PIPA no estado local',async()=>{
+ const h=harness({responses:[{status:200,body:{revision:2,pipa_cancellations:[{index:0,cancelledAt:'2026-11-20T12:00:00.000Z',cancelledBy:'enfermeiro-teste',cancelReason:'Duplicidade confirmada'}]}}]});
+ h.eval('S.pipa=[{city:"Pirapora",month:"2026-11",qty:1,cancelledAt:"provisorio",cancelledBy:"local",cancelReason:"  Duplicidade confirmada  "}]');
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.eval('S.pipa[0].cancelledAt'),'2026-11-20T12:00:00.000Z');
+ assert.equal(h.eval('S.pipa[0].cancelledBy'),'enfermeiro-teste');
+ assert.equal(h.eval('S.pipa[0].cancelReason'),'Duplicidade confirmada');
+ assert.equal(h.eval('SIASH_CLOUD.revision'),2);
+ assert.equal(h.data.has('siash_cloud_pending_v1'),false);
+});
