@@ -346,3 +346,30 @@ test('three-way merge: insercoes concorrentes em listas sem ID sao bloqueadas',(
  assert.equal(result.conflicts.length,1);
  assert.equal(result.conflicts[0].path,'pipa');
 });
+
+test('DOM: conflito mesmo leito exige escolha antes do PUT conciliado',async()=>{
+ const h=harness({responses:[
+  {status:200,body:{exists:true,revision:2,payload:{state:{beds:[{n:1,patient:'RN-SERVIDOR'}]}}}},
+  {status:200,body:{revision:3}}
+ ]});
+ const els=new Map();
+ const make=()=>({hidden:false,disabled:false,textContent:'',value:'',children:[],onclick:null,onchange:null,appendChild(x){this.children.push(x)},replaceChildren(){this.children=[]}});
+ for(const id of ['cloud-conflict-panel','cloud-conflict-local','cloud-conflict-remote','cloud-conflict-message','cloud-conflict-refresh','cloud-conflict-close','cloud-conflict-confirm','cloud-conflict-resolutions'])els.set(id,make());
+ h.context.document.getElementById=id=>els.get(id)||null;
+ h.context.document.createElement=()=>make();
+ h.eval('renderAll=()=>{};S={beds:[{n:1,patient:"RN-LOCAL"}]};cloudSetBase({beds:[{n:1,patient:"RN-BASE"}]});preserveCloudDraft("conflict");SIASH_CLOUD.conflict=true');
+ await h.eval('showCloudConflictPanel()');
+ const button=els.get('cloud-conflict-confirm');
+ assert.equal(button.disabled,true,'mesmo campo exige decisão explícita');
+ const choice=els.get('cloud-conflict-resolutions').children[0].children[1];
+ choice.value='local';choice.onchange();
+ assert.equal(button.disabled,false);
+ await button.onclick();
+ const puts=h.requests.filter(r=>r.opts?.method==='PUT');
+ assert.equal(puts.length,1);
+ assert.equal(JSON.parse(puts[0].opts.body).base_revision,2);
+ assert.equal(JSON.parse(puts[0].opts.body).payload.state.beds[0].patient,'RN-LOCAL');
+ assert.equal(h.eval('SIASH_CLOUD.revision'),3);
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),false);
+ assert.equal(h.data.has('siash_cloud_pending_v1'),false);
+});
