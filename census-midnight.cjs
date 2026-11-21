@@ -17,7 +17,7 @@ function midnightBrazilUtc(today){
  }
  throw new Error("Não foi possível resolver meia-noite em America/Sao_Paulo");
 }
-function decideMidnightClosure({daily,referenceDate,updatedAt,now=new Date()}){
+function decideMidnightClosure({daily,referenceDate,admissionRecord,now=new Date()}){
  const today=dateInBrazil(now);
  if(referenceDate!==previousDate(today))return {status:"skip",reason:"Somente o último dia encerrado é elegível."};
  if(!daily)return {status:"pending",reason:"Lançamento diário ausente: conferência manual necessária."};
@@ -28,8 +28,10 @@ function decideMidnightClosure({daily,referenceDate,updatedAt,now=new Date()}){
  const count=Number(daily.internados);
  if(!Number.isSafeInteger(count)||count<0||count>10)return {status:"pending",reason:"Censo inválido: conferência manual obrigatória."};
  const cutoff=midnightBrazilUtc(today);
- if(!updatedAt||!Number.isFinite(new Date(updatedAt).getTime())||new Date(updatedAt)>=cutoff)
-  return {status:"pending",reason:"Estado alterado após a virada: não é possível provar ausência de admissão até 00:00."};
+ if(!admissionRecord||!Number.isFinite(new Date(admissionRecord.recordedAt).getTime())||new Date(admissionRecord.recordedAt)>=cutoff)
+  return {status:"pending",reason:"Registro de admissões anterior à meia-noite não comprovado; conferência manual necessária."};
+ if(admissionRecord.everAdmitted||Number(admissionRecord.count)!==0)
+  return {status:"pending",reason:"Admissão identificada no registro próprio: conferência manual obrigatória."};
  return {status:"automatic",referenceDate,registeredAt:cutoff.toISOString(),count,note:NOTE};
 }
 module.exports={TZ,NOTE,dateInBrazil,previousDate,midnightBrazilUtc,decideMidnightClosure};
