@@ -237,7 +237,7 @@ async function reconcileMidnightCensus(){
   await client.query("BEGIN");
   const row=await client.query("SELECT payload,revision,updated_at FROM siash_state WHERE id=1 FOR UPDATE");
   if(!row.rows.length){await client.query("ROLLBACK");return {status:"pending",reason:"Estado central não inicializado."};}
-  const state=row.rows[0],daily=state.payload?.daily?.find?.(r=>r.date===referenceDate);
+  const state=row.rows[0],daily=state.payload?.state?.daily?.find?.(r=>r.date===referenceDate);
   const decision=decideMidnightClosure({daily,referenceDate,updatedAt:state.updated_at});
   if(decision.status!=="automatic"){await client.query("ROLLBACK");return decision;}
   const existing=await client.query("SELECT reference_date FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
