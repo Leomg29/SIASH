@@ -202,3 +202,15 @@ test('interface e servidor aplicam o mesmo limite de justificativa PIPA',()=>{
  }
  assert.equal(reconcile([row()],[{...row(),cancelledAt:'falso',cancelledBy:'falso',cancelReason:'x'.repeat(1000)}]).events.length,1);
 });
+
+test('falha de PUT e da consulta de revisao bloqueia reenvio automatico',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ const start=app.indexOf('function scheduleCloudSave(');
+ const end=app.indexOf('function scheduleCloudSaveRetry(',start);
+ assert.ok(start>=0&&end>start);
+ const save=app.slice(start,end);
+ assert.match(save,/const remote=await cloudJson\("\/api\/state"\)/);
+ assert.match(save,/catch\(checkError\)[\s\S]*?SIASH_CLOUD\.conflict=true;[\s\S]*?preserveCloudDraft\("confirmation-unknown"\)/);
+ assert.match(save,/if\(!SIASH_CLOUD\.conflict&&generation!==SIASH_CLOUD\.editGeneration\)/);
+ assert.match(save,/reenvio automático foi bloqueado/);
+});
