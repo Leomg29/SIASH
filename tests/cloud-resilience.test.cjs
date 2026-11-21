@@ -17,7 +17,7 @@ function harness({responses=[],initialPending=null}={}){
   const status={textContent:'',classList:{toggle(){}}};
   const context={
     location:{protocol:'https:'},sessionStorage:{getItem:()=>null,setItem(){},removeItem(){}},
-    localStorage:storage,document:{getElementById:()=>status},
+    localStorage:storage,document:{getElementById:id=>id==='cloud-status'?status:null},
     navigator:{onLine:true},window:{addEventListener:(...args)=>events.push(args)},
     console:{error(){}},alert:()=>{},Date,JSON,Number,Math,
     setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},
