@@ -2,11 +2,12 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const {spawn}=require("node:child_process");
 const net=require("node:net");
-const {Pool}=require("pg");
-const jwt=require("jsonwebtoken");
+
 const {dateInBrazil,previousDate,midnightBrazilUtc}=require("../census-midnight.cjs");
 test("PostgreSQL isolado: auto-fechamento idempotente e admissao pendente",async()=>{
  if(process.env.SIASH_ISOLATED_CI!=="1")return;
+ const {Pool}=require("pg");
+ const jwt=require("jsonwebtoken");
  const schema="siash_pr81_midnight";
  const base=new Pool({connectionString:process.env.DATABASE_URL,ssl:false});
  await base.query('CREATE SCHEMA IF NOT EXISTS '+schema);
