@@ -980,7 +980,7 @@ async function runCloudflareFallbackDiagnostic(){
    out.innerHTML=`<strong>FALHOU:</strong> ${safe(e.message||"Não foi possível concluir o diagnóstico.")}`;
  }finally{btn.disabled=false}
 }
-function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderHuddle();renderRH();renderSettings();renderAdmin();applyPermissions()}
+function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderSettings();renderAdmin();applyPermissions()}
 document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));btn.classList.add("active");document.querySelectorAll(".view").forEach(v=>v.classList.add("hidden"));$("view-"+btn.dataset.view).classList.remove("hidden");$("page-title").textContent=btn.textContent;renderAll();if(btn.dataset.view==="administracao")loadAdminUsers();if(btn.dataset.view==="pendencias")loadSharedPending()}))
 $("admin-user-form").addEventListener("submit",async e=>{
  e.preventDefault();
