@@ -9,7 +9,7 @@ const chromium=isolated?require('playwright').chromium:null;
 const URL='http://127.0.0.1:18781';
 const DB='postgres://siash_ci:siash_ci@127.0.0.1:5432/siash_ci';
 const pool=isolated?new Pool({connectionString:DB,ssl:false}):null;
-const initial={beds:[{n:1,patient:'BASE'},{n:4,patient:'BASE4'}],picc:[],pipa:[]};
+const initial={beds:Array.from({length:10},(_,i)=>({n:i+1,patient:i===3?'BASE4':'BASE'})),picc:[],pipa:[]};
 test('Chromium real: dois plantoes, 409, resolucao e persistencia apos reload',{timeout:120000,skip:!isolated},async()=>{
  assert.equal(process.env.SIASH_ISOLATED_CI,'1');
  assert.equal(process.env.DATABASE_URL,DB);
