@@ -98,6 +98,8 @@ async function initDb(){
     );
   `);
 }
+const STRONG_PASSWORD=/[!@#$%^&*._-]/;
+function validNewPassword(password){return typeof password==="string"&&password.length>=10&&password.length<=128&&STRONG_PASSWORD.test(password)}
 function tokenFor(user){ return jwt.sign({u:user.username,r:user.role}, JWT_SECRET,{expiresIn:"12h"}); }
 function auth(req,res,next){
   const h=req.headers.authorization||"";
@@ -118,7 +120,7 @@ app.post("/api/bootstrap", async(req,res)=>{
   if(count.rows[0].n>0) return res.status(409).json({error:"Administrador já configurado."});
   const username=String(req.body.username||"").trim();
   const password=String(req.body.password||"");
-  if(!username || password.length<10) return res.status(400).json({error:"Usuário e senha de pelo menos 10 caracteres são obrigatórios."});
+  if(!username || !validNewPassword(password)) return res.status(400).json({error:"Usuário e senha de 10 a 128 caracteres com pelo menos um especial (!@#$%^&*._-) são obrigatórios."});
   const hash=await bcrypt.hash(password,12);
   await pool.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,'owner')",[username,hash]);
   await audit(username,"Administrador Proprietário Cloud criado.");
@@ -126,6 +128,22 @@ app.post("/api/bootstrap", async(req,res)=>{
   res.json({token:tokenFor(user),role:"owner",user:username});
 });
 
+app.post("/api/change-password",auth,async(req,res)=>{
+ const current=String(req.body?.currentPassword||""),next=String(req.body?.newPassword||"");
+ if(!validNewPassword(next))return res.status(400).json({error:"Nova senha: 10 a 128 caracteres e pelo menos um especial (!@#$%^&*._-)."});
+ if(current===next)return res.status(400).json({error:"A nova senha deve ser diferente da atual."});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const q=await client.query("SELECT password_hash FROM siash_users WHERE username=$1 FOR UPDATE",[req.user.u]);
+  if(!q.rows.length||!(await bcrypt.compare(current,q.rows[0].password_hash))){await client.query("ROLLBACK");return res.status(403).json({error:"Senha atual incorreta."});}
+  const hash=await bcrypt.hash(next,12);
+  await client.query("UPDATE siash_users SET password_hash=$1 WHERE username=$2",[hash,req.user.u]);
+  await client.query("INSERT INTO siash_cloud_audit(username,action) VALUES($1,$2)",[req.user.u,"Senha alterada pelo próprio usuário."]);
+  await client.query("COMMIT");
+  res.json({ok:true});
+ }catch(e){try{await client.query("ROLLBACK")}catch(_){}throw e}finally{client.release()}
+});
 app.post("/api/login", async(req,res)=>{
   const username=String(req.body.username||"").trim(), password=String(req.body.password||"");
   const q=await pool.query("SELECT username,password_hash,role FROM siash_users WHERE username=$1",[username]);
@@ -1646,8 +1664,8 @@ app.get("/api/users",auth,async(req,res)=>{
 app.post("/api/users",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente Administrador Proprietário."});
   const username=String(req.body?.username||"").trim(),password=String(req.body?.password||"");
-  if(!/^[a-zA-Z0-9._-]{3,64}$/.test(username)||password.length<10||password.length>128)
-    return res.status(400).json({error:"Login: 3 a 64 caracteres (letras, números, ponto, hífen ou sublinhado). Senha: 10 a 128 caracteres."});
+  if(!/^[a-zA-Z0-9._-]{3,64}$/.test(username)||!validNewPassword(password))
+    return res.status(400).json({error:"Login: 3 a 64 caracteres (letras, números, ponto, hífen ou sublinhado). Senha: 10 a 128 caracteres com pelo menos um especial (!@#$%^&*._-)."});
   const hash=await bcrypt.hash(password,12);
   try{
     await pool.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,'operational')",[username,hash]);
