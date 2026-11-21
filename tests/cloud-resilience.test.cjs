@@ -196,3 +196,28 @@ test('estado remoto existente sem payload valido nao aciona migracao inicial',as
  assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
  assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'remote-state-invalid');
 });
+
+test('falha de PUT seguida de falha no GET bloqueia retry e mantém rascunho',async()=>{
+ const h=harness({responses:[new Error('PUT sem confirmação'),new Error('GET indisponível')]});
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.requests.length,2);
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'confirmation-unknown');
+ assert.match(h.status.textContent,/SALVAMENTO INCERTO/);
+ h.eval('scheduleCloudSave({retry:true})');
+ assert.equal(h.requests.length,2);
+});
+test('GET sem revisão após falha de PUT exige conciliação',async()=>{
+ const h=harness({responses:[new Error('PUT sem confirmação'),{status:200,body:{exists:true}}]});
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'confirmation-unknown');
+ assert.match(h.status.textContent,/SALVAMENTO INCERTO/);
+});
+test('GET com revisão não numérica não autoriza reenvio',async()=>{
+ const h=harness({responses:[new Error('PUT sem confirmação'),{status:200,body:{exists:true,revision:'1'}}]});
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(h.requests.length,2);
+ assert.ok(h.data.has('siash_cloud_pending_v1'));
+});
