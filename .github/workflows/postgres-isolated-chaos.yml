@@ -43,6 +43,8 @@ jobs:
         run: node --test tests/auth-password.test.cjs tests/census-midnight.test.cjs
       - name: Isolated real PostgreSQL chaos suite
         run: node --test tests/postgres-isolated-chaos.test.cjs
+      - name: Real PostgreSQL midnight census integration and idempotency
+        run: node --test tests/census-midnight-postgres.test.cjs
       - name: Install Chromium for isolated browser E2E
         run: |
           npm install --no-save --ignore-scripts --no-audit --no-fund playwright
