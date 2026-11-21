@@ -235,3 +235,10 @@ test('confirmacao cloud reconcilia justificativa canonica do cancelamento PIPA',
  const result=reconcile([original],[pending]);
  assert.equal(result.payload.state.pipa[0].cancelReason,'Duplicidade confirmada');
 });
+
+test('menu da UTIN não exibe NIR/Huddle nem Pessoas/RH',()=>{
+ const html=fs.readFileSync('index.html','utf8');
+ assert.doesNotMatch(html,/<button[^>]*data-view="huddle"/);
+ assert.doesNotMatch(html,/<button[^>]*data-view="rh"/);
+ assert.match(html,/<button[^>]*data-view="docs"/);
+});
