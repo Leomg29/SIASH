@@ -41,6 +41,7 @@ test('Chromium PR81: login limpo, troca de senha e alerta de admissão no censo'
   await db.query('INSERT INTO siash_daily_admission_records(reference_date,admission_count,ever_admitted,recorded_by) VALUES($1,1,TRUE,$2) ON CONFLICT(reference_date) DO UPDATE SET admission_count=1,ever_admitted=TRUE',[day,'pr81-test']);
   await page.evaluate(()=>refreshMidnightCensusStatus());
   await page.waitForFunction(()=>/pendente de conferência manual/.test(document.querySelector('#census-midnight-alert')?.textContent||''),null,{timeout:10000});
+  await page.locator('[data-view="lancamento"]').click();
   assert.equal(await page.locator('#census-midnight-alert').isVisible(),true);
  }finally{if(browser)await browser.close();child.kill('SIGTERM');await db.end()}
 });
