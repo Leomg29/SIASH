@@ -34,9 +34,30 @@ function cloudThreeWayMerge(base,local,server){
     const keys=[...new Set([...bm.keys(),...lm.keys(),...rm.keys()])].sort((a,z)=>a-z);
     return keys.map(k=>merge(bm.get(k),lm.get(k),rm.get(k),path+"["+k+"]")).filter(x=>x!==undefined);
    }
-   // Arrays without immutable IDs cannot be merged by index if inserts/deletes occurred.
+   if(path==="picc"||path==="pipa"){
+    const valid=a=>a.every(x=>x&&typeof x.id==="string"&&x.id.length>0)&&new Set(a.map(x=>x.id)).size===a.length;
+    if(!valid(b)||!valid(l)||!valid(r)){
+     conflicts.push({path,base:b,local:l,server:r,reason:"legacy-or-duplicate-id"});
+     return structuredCloneSafe(r);
+    }
+    const bm=new Map(b.map(x=>[x.id,x])),lm=new Map(l.map(x=>[x.id,x])),rm=new Map(r.map(x=>[x.id,x]));
+    const ids=[...new Set([...bm.keys(),...lm.keys(),...rm.keys()])];
+    return ids.map(id=>{
+     const bv=bm.get(id),lv=lm.get(id),rv=rm.get(id);
+     if(bv===undefined){
+      if(lv!==undefined&&rv!==undefined&&!eq(lv,rv)){conflicts.push({path:path+"["+id+"]",base:bv,local:lv,server:rv});return structuredCloneSafe(rv)}
+      return structuredCloneSafe(lv===undefined?rv:lv);
+     }
+     if(lv===undefined||rv===undefined){
+      if(eq(lv,bv))return structuredCloneSafe(rv);
+      if(eq(rv,bv))return structuredCloneSafe(lv);
+      conflicts.push({path:path+"["+id+"]",base:bv,local:lv,server:rv});return structuredCloneSafe(rv);
+     }
+     return merge(bv,lv,rv,path+"["+id+"]");
+    }).filter(x=>x!==undefined);
+   }
+   // Without stable identity, changed array sizes or ordering are unsafe.
    if(b.length!==l.length||b.length!==r.length){conflicts.push({path,base:b,local:l,server:r});return structuredCloneSafe(r)}
-   if(path==="picc"&&b.some((x,i)=>!x||!l[i]||!r[i]||String(x.bed)!==String(l[i].bed)||String(x.bed)!==String(r[i].bed)||String(x.date||x.insertDate||"")!==String(l[i].date||l[i].insertDate||"")||String(x.date||x.insertDate||"")!==String(r[i].date||r[i].insertDate||""))){conflicts.push({path,base:b,local:l,server:r});return structuredCloneSafe(r)}
    return b.map((x,i)=>merge(x,l[i],r[i],path+"["+i+"]"));
   }
   if(b&&l&&r&&typeof b==="object"&&typeof l==="object"&&typeof r==="object"&&!Array.isArray(b)&&!Array.isArray(l)&&!Array.isArray(r)){
@@ -287,15 +308,15 @@ async function showCloudConflictPanel(){
      let target=merged;
      for(let i=0;i<tokens.length-1;i++){
       const key=tokens[i];
-      if(key==="beds"){target=target.beds;continue}
-      if(Array.isArray(target)&&i>0&&tokens[i-1]==="beds")target=target.find(x=>Number(x.n)===Number(key));
+      if(key==="beds"||key==="picc"||key==="pipa"){target=target[key];continue}
+      if(Array.isArray(target)&&i>0&&["beds","picc","pipa"].includes(tokens[i-1]))target=target.find(x=>tokens[i-1]==="beds"?Number(x.n)===Number(key):x.id===key);
       else target=target[key];
       if(target===undefined||target===null)throw Error("Caminho de conciliação inválido");
      }
      const key=tokens[tokens.length-1],value=selected==="local"?c.local:c.server;
      if(tokens.length===0){if(msg)msg.textContent="Conflito global requer revisão técnica.";return}
-     if(Array.isArray(target)&&tokens[tokens.length-2]==="beds"){
-      const idx=target.findIndex(x=>Number(x.n)===Number(key));
+     if(Array.isArray(target)&&["beds","picc","pipa"].includes(tokens[tokens.length-2])){
+      const idx=target.findIndex(x=>tokens[tokens.length-2]==="beds"?Number(x.n)===Number(key):x.id===key);
       if(idx<0){if(msg)msg.textContent="Registro removido; revisão técnica necessária.";return}
       target[idx]=value;
      }else if(value===undefined)delete target[key];
@@ -1197,7 +1218,7 @@ $("care-save").addEventListener("click",()=>{const bed=$("care-bed").value;if(!b
 $("picc-form").addEventListener("submit",e=>{
  e.preventDefault();if(!$("picc-date").value||!$("picc-bed").value||!$("picc-vein").value)return alert("Informe a data da inserção, o leito e a veia/sítio.");
  const b1=$("picc-b1").value,b2=$("picc-b2").value,b3=$("picc-b3").value,bundle=[b1,b2,b3].every(x=>x==="Sim"),editIndex=$("picc-edit-index").value===""?null:+$("picc-edit-index").value,old=editIndex===null?null:S.picc[editIndex];
- const record={when:old?old.when:nowBR(),updated:nowBR(),insertDate:$("picc-date").value,bed:$("picc-bed").value,vein:$("picc-vein").value,side:$("picc-side").value,punctures:+$("picc-punctures").value||1,length:$("picc-length").value,external:$("picc-external").value,position:$("picc-position").value,b1,b2,b3,bundle,status:old?old.status:"Ativo",removalDate:old?old.removalDate:null,removalReason:old?old.removalReason:null,removalNote:old?old.removalNote:null,removedAt:old?old.removedAt:null};
+ const record={id:old?.id||crypto.randomUUID(),when:old?old.when:nowBR(),updated:nowBR(),insertDate:$("picc-date").value,bed:$("picc-bed").value,vein:$("picc-vein").value,side:$("picc-side").value,punctures:+$("picc-punctures").value||1,length:$("picc-length").value,external:$("picc-external").value,position:$("picc-position").value,b1,b2,b3,bundle,status:old?old.status:"Ativo",removalDate:old?old.removalDate:null,removalReason:old?old.removalReason:null,removalNote:old?old.removalNote:null,removedAt:old?old.removedAt:null};
  if(record.removalDate&&record.removalDate<record.insertDate)return alert("A data de inserção não pode ser posterior à data de retirada.");
  if(editIndex!==null){S.picc[editIndex]=record;clearPiccForm();save();showToast("Registro de PICC atualizado",1200);return}
  const activeSameBed=S.picc.filter(x=>String(x.bed)===String(record.bed)&&x.status==="Ativo");if(activeSameBed.length){const proceed=confirm(`Já existe ${activeSameBed.length} PICC ativo no Leito ${pad(record.bed)}.\n\nSe for apenas correção, cancele e edite o registro existente.\n\nDeseja registrar outro PICC ativo neste leito?`);if(!proceed)return}
@@ -1209,7 +1230,7 @@ $("picc-removal-form").addEventListener("submit",e=>{
  e.preventDefault();const i=+$("picc-removal-index").value,x=S.picc[i],date=$("picc-removal-date").value,reason=$("picc-removal-reason").value;if(!x||x.status!=="Ativo")return alert("PICC ativo não localizado.");if(!date||!reason)return alert("Informe a data e o motivo da retirada.");if(date<piccInsertDate(x))return alert("A retirada não pode ser anterior à inserção.");x.status="Retirado";x.removalDate=date;x.removalReason=reason;x.removalNote=$("picc-removal-note").value.trim();x.removedAt=nowBR();x.updated=nowBR();cancelPiccRemoval();save();showToast(`PICC do Leito ${pad(x.bed)} retirado`,1600)
 })
 
-$("pipa-form").addEventListener("submit",e=>{e.preventDefault();const qty=Number($("pipa-qty").value);if(!$("pipa-date").value||!$("pipa-city").value)return alert("Informe data do encaminhamento e município de origem.");$("pipa-month").value=monthOf($("pipa-date").value);if(!Number.isSafeInteger(qty)||qty<1)return alert("Informe quantidade inteira e maior que zero.");if(!$("pipa-post-discharge").checked)return alert("Confirme que os RNs foram encaminhados após a alta da UTIN.");S.pipa.push({date:$("pipa-date").value,month:$("pipa-month").value,city:$("pipa-city").value,qty,note:$("pipa-note").value.trim(),postDischargeConfirmed:true,updated:nowBR()});$("pipa-qty").value=1;$("pipa-post-discharge").checked=false;$("pipa-note").value="";save()})
+$("pipa-form").addEventListener("submit",e=>{e.preventDefault();const qty=Number($("pipa-qty").value);if(!$("pipa-date").value||!$("pipa-city").value)return alert("Informe data do encaminhamento e município de origem.");$("pipa-month").value=monthOf($("pipa-date").value);if(!Number.isSafeInteger(qty)||qty<1)return alert("Informe quantidade inteira e maior que zero.");if(!$("pipa-post-discharge").checked)return alert("Confirme que os RNs foram encaminhados após a alta da UTIN.");S.pipa.push({id:crypto.randomUUID(),date:$("pipa-date").value,month:$("pipa-month").value,city:$("pipa-city").value,qty,note:$("pipa-note").value.trim(),postDischargeConfirmed:true,updated:nowBR()});$("pipa-qty").value=1;$("pipa-post-discharge").checked=false;$("pipa-note").value="";save()})
 $("pipa-date").addEventListener("change",()=>{$("pipa-month").value=monthOf($("pipa-date").value);renderPipa()})
 $("pending-form").addEventListener("submit",async e=>{
  e.preventDefault();
