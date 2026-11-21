@@ -27,6 +27,24 @@ test("PostgreSQL isolado: auto-fechamento idempotente e admissao pendente",async
   let started=false;
   for(let i=0;i<80;i++){if(child.exitCode!==null)throw Error("Server terminated");try{const r=await fetch("http://127.0.0.1:"+port+"/api/health");if(r.ok){started=true;break}}catch(_){}await new Promise(r=>setTimeout(r,200))}
   assert.equal(started,true,"server did not start");
+  // Real authentication regression against isolated PostgreSQL.
+  const bcrypt=require("bcryptjs");
+  await db.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,$3)",["legacy-nurse",await bcrypt.hash("LegacyPass123",12),"operational"]);
+  const post=async(path,body,token)=>fetch("http://127.0.0.1:"+port+path,{method:"POST",headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})},body:JSON.stringify(body)});
+  let login=await post("/api/login",{username:"legacy-nurse",password:"LegacyPass123"});
+  assert.equal(login.status,200,"legacy password must remain valid");
+  let loginBody=await login.json();
+  assert.ok(loginBody.token);assert.equal("password_hash" in loginBody,false);assert.equal("password" in loginBody,false);
+  const change=await post("/api/change-password",{currentPassword:"LegacyPass123",newPassword:"NovaSenha!123",confirmPassword:"NovaSenha!123"},loginBody.token);
+  assert.equal(change.status,200,"password change must succeed");
+  const changeBody=await change.json();assert.equal(changeBody.ok,true);assert.equal(JSON.stringify(changeBody).includes("NovaSenha"),false);
+  login=await post("/api/login",{username:"legacy-nurse",password:"LegacyPass123"});
+  assert.equal(login.status,401,"old password must be rejected after change");
+  login=await post("/api/login",{username:"legacy-nurse",password:"NovaSenha!123"});
+  assert.equal(login.status,200,"new password must authenticate");
+  const auditRows=await db.query("SELECT action,details FROM siash_cloud_audit WHERE username=$1",["legacy-nurse"]);
+  assert.ok(auditRows.rows.some(x=>x.action.includes("Senha alterada")));
+  assert.equal(JSON.stringify(auditRows.rows).includes("NovaSenha!123"),false,"audit must not expose passwords");
   const daily={date:referenceDate,internados:3,admissoes:0};
   await db.query("INSERT INTO siash_state(id,payload,revision,updated_at) VALUES(1,$1,1,$2)",[{state:{daily:[daily]}},before]);
   let r=await get();assert.equal(r.status,200);let body=await r.json();assert.equal(body.status,"automatic");
