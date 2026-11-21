@@ -90,6 +90,13 @@ async function initDb(){
       reason TEXT NOT NULL,
       state_revision BIGINT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS siash_daily_admission_records(
+      reference_date DATE PRIMARY KEY,
+      admission_count INTEGER NOT NULL CHECK(admission_count>=0),
+      ever_admitted BOOLEAN NOT NULL DEFAULT FALSE,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      recorded_by TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS siash_census_auto_closures(
       reference_date DATE PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -238,7 +245,9 @@ async function reconcileMidnightCensus(){
   const row=await client.query("SELECT payload,revision,updated_at FROM siash_state WHERE id=1 FOR UPDATE");
   if(!row.rows.length){await client.query("ROLLBACK");return {status:"pending",reason:"Estado central não inicializado."};}
   const state=row.rows[0],daily=state.payload?.state?.daily?.find?.(r=>r.date===referenceDate);
-  const decision=decideMidnightClosure({daily,referenceDate,updatedAt:state.updated_at});
+  const admissionQuery=await client.query("SELECT admission_count,ever_admitted,recorded_at FROM siash_daily_admission_records WHERE reference_date=$1",[referenceDate]);
+  const record=admissionQuery.rows[0];
+  const decision=decideMidnightClosure({daily,referenceDate,admissionRecord:record?{count:record.admission_count,everAdmitted:record.ever_admitted,recordedAt:record.recorded_at}:null});
   if(decision.status!=="automatic"){await client.query("ROLLBACK");return decision;}
   const existing=await client.query("SELECT reference_date FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
   if(existing.rows.length){await client.query("ROLLBACK");return {status:"automatic",alreadyRecorded:true,referenceDate};}
@@ -326,6 +335,22 @@ app.put("/api/state",auth,async(req,res)=>{
     if(!cur.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"Estado central não encontrado. Recarregue os dados.",conflict:true});}
     const current=Number(cur.rows[0].revision);
     if(current!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Outro profissional salvou alterações antes de você. Seus dados locais foram preservados; não atualize a página antes de exportar ou conferir seus lançamentos.",conflict:true,current_revision:current});}
+    // Authoritative admission-specific timestamp, independent of PICC/SAE/bed edits.
+    // A historical positive admission can never be erased by later setting the counter to zero.
+    const oldDaily=cur.rows[0].payload?.state?.daily||[];
+    const newDaily=payload?.state?.daily||[];
+    if(!Array.isArray(newDaily)){await client.query("ROLLBACK");return res.status(422).json({error:"Lançamentos diários inválidos."});}
+    for(const daily of newDaily){
+      if(!daily||typeof daily.date!=="string"||!/^\\d{4}-\\d{2}-\\d{2}$/.test(daily.date))continue;
+      const admissions=Number(daily.admissoes);
+      if(!Number.isSafeInteger(admissions)||admissions<0)continue;
+      const previous=Array.isArray(oldDaily)?oldDaily.find(d=>d.date===daily.date):null;
+      if(previous&&Number(previous.admissoes)===admissions)continue;
+      await client.query(`INSERT INTO siash_daily_admission_records(reference_date,admission_count,ever_admitted,recorded_by)
+       VALUES($1,$2,$3,$4) ON CONFLICT(reference_date) DO UPDATE
+       SET admission_count=EXCLUDED.admission_count,ever_admitted=siash_daily_admission_records.ever_admitted OR EXCLUDED.ever_admitted,
+       recorded_at=NOW(),recorded_by=EXCLUDED.recorded_by`,[daily.date,admissions,admissions>0,req.user.u]);
+    }
     const pipaAudit=reconcilePipaAudit(cur.rows[0].payload,payload,req.user.u);
     if(pipaAudit.error){await client.query("ROLLBACK");return res.status(422).json({error:pipaAudit.error});}
     for(const event of pipaAudit.events){
