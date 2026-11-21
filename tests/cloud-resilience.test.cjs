@@ -373,3 +373,20 @@ test('DOM: conflito mesmo leito exige escolha antes do PUT conciliado',async()=>
  assert.equal(h.eval('SIASH_CLOUD.conflict'),false);
  assert.equal(h.data.has('siash_cloud_pending_v1'),false);
 });
+
+test('PICC e PIPA: duas insercoes concorrentes por lista preservam os quatro UUIDs',()=>{
+ const h=harness();
+ const base={picc:[],pipa:[]};
+ const day={picc:[{id:'picc-day-uuid',bed:1,status:'Ativo'}],pipa:[{id:'pipa-day-uuid',city:'A',qty:1}]};
+ const night={picc:[{id:'picc-night-uuid',bed:4,status:'Ativo'}],pipa:[{id:'pipa-night-uuid',city:'B',qty:1}]};
+ const result=JSON.parse(h.eval('JSON.stringify(cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(day)+','+JSON.stringify(night)+'))'));
+ assert.deepEqual(result.conflicts,[]);
+ assert.deepEqual(new Set(result.state.picc.map(x=>x.id)),new Set(['picc-day-uuid','picc-night-uuid']));
+ assert.deepEqual(new Set(result.state.pipa.map(x=>x.id)),new Set(['pipa-day-uuid','pipa-night-uuid']));
+ assert.equal(result.state.picc.length+result.state.pipa.length,4);
+});
+test('PICC e PIPA legados sem UUID bloqueiam conciliacao insegura',()=>{
+ const h=harness();
+ const result=JSON.parse(h.eval('JSON.stringify(cloudThreeWayMerge({picc:[{bed:1}]},{picc:[{bed:1},{id:"a",bed:2}]},{picc:[{bed:1},{id:"b",bed:3}]}))'));
+ assert.equal(result.conflicts[0].path,'picc');
+});
