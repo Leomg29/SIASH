@@ -41,7 +41,7 @@ function cloudThreeWayMerge(base,local,server){
      return structuredCloneSafe(r);
     }
     const bm=new Map(b.map(x=>[x.id,x])),lm=new Map(l.map(x=>[x.id,x])),rm=new Map(r.map(x=>[x.id,x]));
-    const ids=[...new Set([...bm.keys(),...lm.keys(),...rm.keys()])];
+    const ids=[...new Set(path==="pipa"?[...rm.keys(),...lm.keys(),...bm.keys()]:[...bm.keys(),...rm.keys(),...lm.keys()])];
     return ids.map(id=>{
      const bv=bm.get(id),lv=lm.get(id),rv=rm.get(id);
      if(bv===undefined){
