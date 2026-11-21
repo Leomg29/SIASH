@@ -14,26 +14,19 @@
     <p class="muted">UTI Neonatal • Alpha Consolidada v0.14.69</p>
     <div id="owner-setup" class="owner-setup hidden">
       <div class="security-badge">Primeiro acesso do Proprietário</div>
-      <p class="muted">Crie aqui a credencial exclusiva do Administrador Proprietário. Esta etapa aparece somente enquanto não houver proprietário configurado neste navegador.</p>
+      <p class="muted">Crie aqui a credencial exclusiva do Administrador Proprietário. Esta etapa aparece somente enquanto não houver proprietário configurado no servidor.</p>
       <label>Usuário proprietário</label><input id="owner-user" autocomplete="username" placeholder="Ex.: leandro.admin">
-      <label>Senha proprietária</label><input id="owner-pass" type="password" autocomplete="new-password" placeholder="Mínimo 10 caracteres">
+      <label>Senha proprietária</label><input id="owner-pass" type="password" autocomplete="new-password" placeholder="10 caracteres e um especial">
       <label>Confirmar senha</label><input id="owner-pass2" type="password" autocomplete="new-password">
       <button id="owner-create-btn" class="primary">Criar acesso exclusivo</button>
     </div>
     <div id="normal-login">
       <label>Usuário</label><input id="login-user" autocomplete="username">
-      <label>Senha</label><input id="login-pass" type="password" value="siash" autocomplete="current-password">
+      <label>Senha</label><input id="login-pass" type="password" autocomplete="current-password">
       <button id="login-btn" class="primary">Entrar</button>
-      <div class="cloud-migration-tools">
-  <strong>Migração / segurança dos dados</strong>
-  <span>Antes da primeira migração Cloud, você pode exportar o banco local atual. Depois de entrar na Cloud, importe o backup para levar também documentos e validações locais.</span>
-  <div class="form-actions">
-    <button id="export-local-backup" class="secondary" type="button">Exportar banco local</button>
-    <label class="secondary migration-file">Importar backup<input id="import-local-backup" type="file" accept=".json,application/json"></label>
-  </div>
-</div>
+
 <p id="login-feedback" class="login-feedback"></p>
-      <small>Usuário operacional de teste: coordenacao.utin / siash. O acesso de Proprietário é criado no primeiro uso.</small>
+
     </div>
     <small class="security-note">Protótipo local para testes. Não utilize dados identificáveis reais de pacientes.</small>
   </div>
@@ -66,10 +59,21 @@
   <div><h2 id="page-title">Dashboard</h2><p id="top-subtitle">UTI Neonatal • Gestão inteligente e continuidade do cuidado</p></div>
   <div class="top-actions">
     <div class="clock-box"><strong id="clock-date">--/--/----</strong><span id="clock-time">--:--:--</span><small id="shift-label">Turno</small></div>
-    <div class="status-pill">Sistema operacional</div>
+    <button id="change-password-open" type="button" class="secondary">Alterar minha senha</button><div class="status-pill">Sistema operacional</div>
   </div>
 <span id="cloud-status" class="cloud-status">Cloud: aguardando login</span></header>
 
+<section id="change-password-panel" class="panel hidden" aria-label="Alterar minha senha">
+ <h3>Alterar minha senha</h3>
+ <form id="change-password-form" class="form-grid three" autocomplete="off">
+  <label>Senha atual<input id="change-current-password" type="password" required autocomplete="current-password"></label>
+  <label>Nova senha (10 caracteres e um especial)<input id="change-new-password" type="password" minlength="10" required autocomplete="new-password"></label>
+  <label>Confirmar nova senha<input id="change-confirm-password" type="password" minlength="10" required autocomplete="new-password"></label>
+  <button type="submit" class="primary">Salvar nova senha</button>
+  <button id="change-password-cancel" type="button" class="secondary">Cancelar</button>
+ </form>
+ <p id="change-password-feedback" role="status"></p>
+</section>
 <!-- DASHBOARD -->
 <section id="view-dashboard" class="view">
   <div class="hero"><div><h3>Visão geral da UTI Neonatal</h3><p>Produção, ocupação, plantão e pendências em uma única visão.</p></div><button id="refresh-dashboard" class="secondary">Atualizar painel</button></div>
@@ -571,13 +575,24 @@
     <p class="muted">Crie um acesso independente para cada enfermeiro. As senhas não são exibidas nem armazenadas no navegador após o cadastro.</p>
     <form id="admin-user-form" class="form-grid three" autocomplete="off">
       <label>Login do enfermeiro<input id="admin-new-user" maxlength="64" required autocomplete="off" placeholder="ex.: enfermeiro02"></label>
-      <label>Senha inicial (mínimo 10 caracteres)<input id="admin-new-pass" type="password" minlength="10" required autocomplete="new-password"></label>
+      <label>Senha inicial (10 caracteres e um especial)<input id="admin-new-pass" type="password" minlength="10" required autocomplete="new-password"></label>
       <label>Confirmar senha<input id="admin-new-pass-confirm" type="password" minlength="10" required autocomplete="new-password"></label>
       <button class="primary" type="submit">Criar acesso operacional</button>
     </form>
     <p id="admin-user-feedback" role="status" class="muted"></p>
     <div id="admin-user-list" class="table-wrap"><p class="muted">Carregando usuários...</p></div>
     <button id="admin-users-refresh" type="button" class="secondary">Atualizar lista</button>
+  </article>
+  <article class="panel">
+   <div class="panel-head"><h3>Backup local — manutenção administrativa</h3></div>
+         <div class="cloud-migration-tools">
+  <strong>Migração / segurança dos dados</strong>
+  <span>Antes da primeira migração Cloud, você pode exportar o banco local atual. Depois de entrar na Cloud, importe o backup para levar também documentos e validações locais.</span>
+  <div class="form-actions">
+    <button id="export-local-backup" class="secondary" type="button">Exportar banco local</button>
+    <label class="secondary migration-file">Importar backup<input id="import-local-backup" type="file" accept=".json,application/json"></label>
+  </div>
+</div>
   </article>
   <article class="panel security-warning"><strong>Proteção desta versão:</strong> o acesso proprietário é protegido por hash local e bloqueio de interface. Para proteção real contra alteração do código por terceiros, a versão de produção deverá usar servidor/backend, autenticação forte e autorização validada no servidor.</article>
 </section>
