@@ -390,3 +390,24 @@ test('PICC e PIPA legados sem UUID bloqueiam conciliacao insegura',()=>{
  const result=JSON.parse(h.eval('JSON.stringify(cloudThreeWayMerge({picc:[{bed:1}]},{picc:[{bed:1},{id:"a",bed:2}]},{picc:[{bed:1},{id:"b",bed:3}]}))'));
  assert.equal(result.conflicts[0].path,'picc');
 });
+
+test('retrocompatibilidade: PICC legado sem UUID permite retirada quando servidor nao alterou registro',()=>{
+ const h=harness();
+ const base={picc:[{bed:1,insertDate:'2026-10-01',status:'Ativo'}],pipa:[{date:'2026-10-10',month:'2026-10',city:'Cidade A',qty:1,postDischargeConfirmed:true}]};
+ const local=JSON.parse(JSON.stringify(base));local.picc[0].status='Retirado';local.picc[0].removalDate='2026-11-21';
+ const result=JSON.parse(h.eval('JSON.stringify(cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(local)+','+JSON.stringify(base)+'))'));
+ assert.equal(result.conflicts.length,0);
+ assert.equal(result.state.picc[0].status,'Retirado');
+ assert.equal(result.state.picc[0].removalDate,'2026-11-21');
+ assert.equal(result.state.pipa[0].qty,1);
+ assert.equal(result.state.picc[0].id,undefined);
+});
+test('retrocompatibilidade: PICC legado concorrente exige revisao manual sem perda de dados',()=>{
+ const h=harness();
+ const base={picc:[{bed:1,insertDate:'2026-10-01',status:'Ativo'}]};
+ const local=JSON.parse(JSON.stringify(base)),server=JSON.parse(JSON.stringify(base));
+ local.picc[0].status='Retirado';server.picc[0].external='2 cm';
+ const result=JSON.parse(h.eval('JSON.stringify(cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(local)+','+JSON.stringify(server)+'))'));
+ assert.equal(result.conflicts[0].path,'picc');
+ assert.equal(result.state.picc[0].external,'2 cm');
+});
