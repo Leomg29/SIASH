@@ -2,6 +2,8 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const {spawn}=require('node:child_process');
+const fs=require('node:fs');
+const vm=require('node:vm');
 const {Pool}=process.env.SIASH_ISOLATED_CI==='1'?require('pg'):{Pool:null};
 const {setTimeout:delay}=require('node:timers/promises');
 
@@ -68,6 +70,32 @@ test('PostgreSQL real isolado: corrida, falha de rede, rascunho e conciliacao ma
    const remote=await current();assert.equal(remote.revision,2);
    assert.equal((await put(local,1)).status,409);
    assert.deepEqual(JSON.parse(draft.get('siash_cloud_pending_v1')).state,local);
+  });
+  await t.test('merge real: leitos diferentes e PICC permanecem após PUT conciliado',async()=>{
+   const appSource=fs.readFileSync('app.js','utf8');
+   const begin=appSource.indexOf('function cloudThreeWayMerge(');
+   const end=appSource.indexOf('const SIASH_PENDING_KEY=',begin);
+   assert.ok(begin>=0&&end>begin,'algoritmo frontend deve existir');
+   const context=vm.createContext({});
+   vm.runInContext(appSource.slice(begin,end),context);
+   const merge=(base,local,remote)=>vm.runInContext('cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(local)+','+JSON.stringify(remote)+')',context);
+   const initial={beds:[bed('BASE-1','PICC-1'),{n:4,patient:'BASE-4'}],picc:[{bed:1,status:'Ativo'},{bed:4,status:'Ativo'}]};
+   await seed(initial);
+   const base=(await current()).payload.state;
+   const local=clone(base),night=clone(base);
+   local.beds[0].patient='RN-DIURNO';
+   night.beds[1].patient='RN-NOTURNO';
+   night.picc[1].status='Retirado';
+   assert.equal((await put(night,1)).status,200);
+   assert.equal((await put(local,1)).status,409);
+   const remote=await current();
+   const proposal=merge(base,local,remote.payload.state);
+   assert.equal(proposal.conflicts.length,0);
+   assert.equal((await put(proposal.state,remote.revision)).status,200);
+   const final=(await current()).payload.state;
+   assert.equal(final.beds[0].patient,'RN-DIURNO');
+   assert.equal(final.beds[1].patient,'RN-NOTURNO');
+   assert.equal(final.picc[1].status,'Retirado');
   });
   await t.test('conciliação explícita: buscar estado atual, revisar e reenviar nova versão',async()=>{
    await seed({beds:[bed('BASE','PICC-BASE')],notes:[]});
