@@ -97,6 +97,34 @@ test('PostgreSQL real isolado: corrida, falha de rede, rascunho e conciliacao ma
    assert.equal(final.beds[1].patient,'RN-NOTURNO');
    assert.equal(final.picc[1].status,'Retirado');
   });
+  await t.test('PostgreSQL: quatro insercoes PICC/PIPA de dois plantoes preservadas',async()=>{
+   const source=fs.readFileSync('app.js','utf8');
+   const begin=source.indexOf('function cloudThreeWayMerge(');
+   const end=source.indexOf('const SIASH_PENDING_KEY=',begin);
+   assert.ok(begin>=0&&end>begin);
+   const context=vm.createContext({});
+   vm.runInContext(source.slice(begin,end),context);
+   const merge=(base,local,remote)=>vm.runInContext('cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(local)+','+JSON.stringify(remote)+')',context);
+   const base={beds:[bed('BASE','PICC-BASE')],picc:[],pipa:[]};
+   const entry=(id,city)=>({id,date:'2026-11-20',month:'2026-11',city,qty:1,postDischargeConfirmed:true,updated:'2026-11-20'});
+   const day=clone(base),night=clone(base);
+   day.picc.push({id:'picc-day',bed:1,status:'Ativo'});
+   night.picc.push({id:'picc-night',bed:4,status:'Ativo'});
+   day.pipa.push(entry('pipa-day','Cidade A'));
+   night.pipa.push(entry('pipa-night','Cidade B'));
+   await seed(base);
+   assert.equal((await put(night,1)).status,200);
+   assert.equal((await put(day,1)).status,409);
+   const remote=await current();
+   const proposed=merge(base,day,remote.payload.state);
+   assert.equal(proposed.conflicts.length,0);
+   const saved=await put(proposed.state,remote.revision);
+   assert.equal(saved.status,200,JSON.stringify(saved.body));
+   const final=(await current()).payload.state;
+   assert.equal(final.picc.length,2);
+   assert.equal(final.pipa.length,2);
+   assert.deepEqual(new Set([...final.picc,...final.pipa].map(x=>x.id)),new Set(['picc-day','picc-night','pipa-day','pipa-night']));
+  });
   await t.test('conciliação explícita: buscar estado atual, revisar e reenviar nova versão',async()=>{
    await seed({beds:[bed('BASE','PICC-BASE')],notes:[]});
    const old=await current();
