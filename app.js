@@ -140,7 +140,16 @@ function scheduleCloudSave({retry=false}={}){
            SIASH_CLOUD.conflict=true;
            updateCloudBadge("CONFIRMAÇÃO INCERTA · conciliação necessária",true);
            alert("A conexão caiu e o servidor apresenta outra revisão. O rascunho local está protegido. Não reenvie antes de conciliar os dados.");
-         }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+         }else if(remote.exists&&Number.isSafeInteger(remote.revision)&&remote.revision===SIASH_CLOUD.revision){
+           updateCloudBadge("Falha de rede · aguardando reconexão",true);
+           retryCloudWhenOnline();
+         }else{
+           // Uma resposta incompleta não comprova que a gravação anterior falhou.
+           SIASH_CLOUD.conflict=true;
+           preserveCloudDraft("confirmation-unknown");
+           updateCloudBadge("SALVAMENTO INCERTO · conciliação necessária",true);
+           alert("O servidor não confirmou uma revisão válida após a falha de rede. Seu rascunho foi preservado e o reenvio automático bloqueado para evitar conflitos.");
+         }
        }catch(checkError){
          if(checkError.status===401){
            SIASH_CLOUD.conflict=true;
