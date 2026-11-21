@@ -140,6 +140,7 @@ app.post("/api/bootstrap", async(req,res)=>{
 app.post("/api/change-password",auth,async(req,res)=>{
  const current=String(req.body?.currentPassword||""),next=String(req.body?.newPassword||"");
  if(!validNewPassword(next))return res.status(400).json({error:"Nova senha: 10 a 128 caracteres e pelo menos um especial (!@#$%^&*._-)."});
+ if(req.body?.confirmPassword!==next)return res.status(400).json({error:"Confirmação da nova senha não coincide."});
  if(current===next)return res.status(400).json({error:"A nova senha deve ser diferente da atual."});
  const client=await pool.connect();
  try{
