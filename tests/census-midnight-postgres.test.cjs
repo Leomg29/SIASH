@@ -47,12 +47,14 @@ test("PostgreSQL isolado: auto-fechamento idempotente e admissao pendente",async
   assert.equal(JSON.stringify(auditRows.rows).includes("NovaSenha!123"),false,"audit must not expose passwords");
   const daily={date:referenceDate,internados:3,admissoes:0};
   await db.query("INSERT INTO siash_state(id,payload,revision,updated_at) VALUES(1,$1,1,$2)",[{state:{daily:[daily]}},before]);
+  await db.query("INSERT INTO siash_daily_admission_records(reference_date,admission_count,ever_admitted,recorded_at,recorded_by) VALUES($1,0,FALSE,$2,'ci')",[referenceDate,before]);
   let r=await get();assert.equal(r.status,200);let body=await r.json();assert.equal(body.status,"automatic");
   r=await get();assert.equal((await r.json()).status,"automatic");
   let q=await db.query("SELECT count(*)::int AS n FROM siash_census_auto_closures");assert.equal(q.rows[0].n,1);
   q=await db.query("SELECT count(*)::int AS n FROM siash_cloud_audit WHERE username='system'");assert.equal(q.rows[0].n,1);
   await db.query("DELETE FROM siash_census_auto_closures");
   await db.query("UPDATE siash_state SET payload=$1,updated_at=$2",[{state:{daily:[{...daily,admissoes:1}]}},before]);
+  await db.query("UPDATE siash_daily_admission_records SET admission_count=1,ever_admitted=TRUE WHERE reference_date=$1",[referenceDate]);
   r=await get();body=await r.json();assert.equal(body.status,"pending");
   q=await db.query("SELECT count(*)::int AS n FROM siash_census_auto_closures");assert.equal(q.rows[0].n,0);
  }finally{
