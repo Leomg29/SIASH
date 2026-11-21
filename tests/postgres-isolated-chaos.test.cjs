@@ -2,13 +2,13 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const {spawn}=require('node:child_process');
-const {Pool}=require('pg');
+const {Pool}=process.env.SIASH_ISOLATED_CI==='1'?require('pg'):{Pool:null};
 const {setTimeout:delay}=require('node:timers/promises');
 
 const DB='postgres://siash_ci:siash_ci@127.0.0.1:5432/siash_ci';
 const BASE='http://127.0.0.1:18780';
 const SECRET='siash-ci-isolated-jwt-secret-32-chars-minimum';
-const pool=new Pool({connectionString:DB,ssl:false});
+const pool=Pool?new Pool({connectionString:DB,ssl:false}):null;
 let child,token;
 const json=async(path,method='GET',body,signal)=>{
  const r=await fetch(BASE+path,{method,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:body===undefined?undefined:JSON.stringify(body),signal});
@@ -34,7 +34,7 @@ async function boot(){
  const init=await json('/api/state/init','PUT',{payload:payload({beds:[bed('BASE','PICC-BASE')]})});
  assert.equal(init.status,200,JSON.stringify(init.body));
 }
-test('PostgreSQL real isolado: corrida, falha de rede, rascunho e conciliacao manual',async t=>{
+test('PostgreSQL real isolado: corrida, falha de rede, rascunho e conciliacao manual',{skip:process.env.SIASH_ISOLATED_CI!=='1'},async t=>{
  assert.equal(process.env.SIASH_ISOLATED_CI,'1','Execução permitida apenas em CI isolado');
  assert.equal(process.env.DATABASE_URL,DB,'Banco deve ser exclusivamente o container efêmero');
  try{
