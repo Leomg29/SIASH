@@ -314,3 +314,35 @@ test('DOM clinico: HTTP 409 preserva formulario e apresenta comparacao local/rem
  h.eval('scheduleCloudSave({retry:true})');
  assert.equal(h.requests.filter(r=>r.opts?.method==='PUT').length,1,'não reenviar dados conflitantes');
 });
+
+test('three-way merge: leitos distintos e PICC independente preservados',()=>{
+ const h=harness();
+ const result=JSON.parse(h.eval(`JSON.stringify(cloudThreeWayMerge(
+ {beds:[{n:1,patient:"BASE1"},{n:4,patient:"BASE4"}],picc:[{bed:1,status:"Ativo"},{bed:4,status:"Ativo"}]},
+ {beds:[{n:1,patient:"DIURNO"},{n:4,patient:"BASE4"}],picc:[{bed:1,status:"Ativo"},{bed:4,status:"Ativo"}]},
+ {beds:[{n:1,patient:"BASE1"},{n:4,patient:"NOTURNO"}],picc:[{bed:1,status:"Retirado"},{bed:4,status:"Ativo"}]}
+ ))`));
+ assert.equal(result.conflicts.length,0);
+ assert.equal(result.state.beds[0].patient,'DIURNO');
+ assert.equal(result.state.beds[1].patient,'NOTURNO');
+ assert.equal(result.state.picc[0].status,'Retirado');
+});
+test('three-way merge: mesmo campo impede reenvio sem escolha explicita',()=>{
+ const h=harness();
+ const result=JSON.parse(h.eval(`JSON.stringify(cloudThreeWayMerge(
+ {beds:[{n:1,patient:"BASE"}]},
+ {beds:[{n:1,patient:"DIURNO"}]},
+ {beds:[{n:1,patient:"NOTURNO"}]}
+ ))`));
+ assert.equal(result.conflicts.length,1);
+ assert.equal(result.conflicts[0].path,'beds[1].patient');
+ assert.equal(result.state.beds[0].patient,'NOTURNO');
+});
+test('three-way merge: insercoes concorrentes em listas sem ID sao bloqueadas',()=>{
+ const h=harness();
+ const result=JSON.parse(h.eval(`JSON.stringify(cloudThreeWayMerge(
+ {pipa:[]},{pipa:[{city:"A"}]},{pipa:[{city:"B"}]}
+ ))`));
+ assert.equal(result.conflicts.length,1);
+ assert.equal(result.conflicts[0].path,'pipa');
+});
