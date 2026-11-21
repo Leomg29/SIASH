@@ -231,25 +231,90 @@ function scheduleCloudSaveRetry(){
 async function showCloudConflictPanel(){
  const panel=document.getElementById("cloud-conflict-panel");
  if(!panel)return;
- const draft=cloudPending();
- const local=draft?.state||S;
  const localEl=document.getElementById("cloud-conflict-local");
  const remoteEl=document.getElementById("cloud-conflict-remote");
  const msg=document.getElementById("cloud-conflict-message");
- if(localEl)localEl.textContent=JSON.stringify(local,null,2);
- if(remoteEl)remoteEl.textContent="Consultando servidor...";
- panel.hidden=false;
  const refresh=document.getElementById("cloud-conflict-refresh");
  const close=document.getElementById("cloud-conflict-close");
+ const confirm=document.getElementById("cloud-conflict-confirm");
+ const resolutions=document.getElementById("cloud-conflict-resolutions");
+ panel.hidden=false;
  if(close)close.onclick=()=>{panel.hidden=true};
+ let proposal=null,remoteRevision=null,localGeneration=null,remoteState=null;
  async function loadRemote(){
+  proposal=null;if(confirm)confirm.disabled=true;
+  if(resolutions)resolutions.replaceChildren();
+  const pending=cloudPending(),local=pending?.state||S;
+  localGeneration=SIASH_CLOUD.editGeneration;
+  if(localEl)localEl.textContent=JSON.stringify(local,null,2);
+  if(remoteEl)remoteEl.textContent="Consultando servidor...";
   try{
    const remote=await cloudJson("/api/state");
-   if(remoteEl)remoteEl.textContent=remote.exists&&remote.payload?.state?JSON.stringify(remote.payload.state,null,2):"Estado remoto indisponível";
-   if(msg)msg.textContent="Conflito detectado. Rascunho local preservado; compare os dados antes de solicitar conciliação.";
+   if(!remote.exists||!remote.payload?.state||!Number.isSafeInteger(remote.revision)||remote.revision<1)throw Error("Estado ou revisão inválidos");
+   remoteRevision=remote.revision;remoteState=remote.payload.state;
+   if(remoteEl)remoteEl.textContent=JSON.stringify(remoteState,null,2);
+   if(!cloudBaseSnapshot){
+    if(msg)msg.textContent="Base original indisponível. Conciliação automática bloqueada; rascunho protegido.";
+    return;
+   }
+   proposal=cloudThreeWayMerge(cloudBaseSnapshot,local,remoteState);
+   if(!resolutions||!confirm){if(msg)msg.textContent="Interface de resolução indisponível. Rascunho preservado.";return}
+   const choices=new Map();
+   function setReady(){
+    confirm.disabled=proposal.conflicts.some(c=>!choices.has(c.path))||SIASH_CLOUD.editGeneration!==localGeneration;
+   }
+   for(const c of proposal.conflicts){
+    const wrap=document.createElement("div");
+    const title=document.createElement("p");title.textContent="Conflito no campo: "+c.path;wrap.appendChild(title);
+    const select=document.createElement("select");
+    const opts=[["","Selecione uma decisão"],["server","Manter versão do servidor"],["local","Aplicar minha alteração"]];
+    for(const [value,label] of opts){const o=document.createElement("option");o.value=value;o.textContent=label;select.appendChild(o)}
+    select.onchange=()=>{if(select.value)choices.set(c.path,select.value);else choices.delete(c.path);setReady()};
+    wrap.appendChild(select);resolutions.appendChild(wrap);
+   }
+   if(msg)msg.textContent=proposal.conflicts.length?"Existem "+proposal.conflicts.length+" divergências. Escolha cada resolução antes de salvar.":"Alterações independentes identificadas. Confira as duas versões antes de confirmar.";
+   setReady();
+   confirm.onclick=async()=>{
+    if(!proposal||SIASH_CLOUD.editGeneration!==localGeneration||confirm.disabled)return;
+    confirm.disabled=true;
+    // Aplicar escolhas exclusivamente sobre a proposta calculada; não alterar S até commit confirmado.
+    const merged=JSON.parse(JSON.stringify(proposal.state));
+    for(const c of proposal.conflicts){
+     const selected=choices.get(c.path);
+     if(!selected){if(msg)msg.textContent="Há conflitos sem decisão.";return}
+     const tokens=c.path.match(/[^.\[\]]+/g)||[];
+     let target=merged;
+     for(let i=0;i<tokens.length-1;i++){
+      const key=tokens[i];
+      if(key==="beds"){target=target.beds;continue}
+      if(Array.isArray(target)&&i>0&&tokens[i-1]==="beds")target=target.find(x=>Number(x.n)===Number(key));
+      else target=target[key];
+      if(target===undefined||target===null)throw Error("Caminho de conciliação inválido");
+     }
+     const key=tokens[tokens.length-1],value=selected==="local"?c.local:c.server;
+     if(tokens.length===0){if(msg)msg.textContent="Conflito global requer revisão técnica.";return}
+     if(Array.isArray(target)&&tokens[tokens.length-2]==="beds"){
+      const idx=target.findIndex(x=>Number(x.n)===Number(key));
+      if(idx<0){if(msg)msg.textContent="Registro removido; revisão técnica necessária.";return}
+      target[idx]=value;
+     }else if(value===undefined)delete target[key];
+     else target[key]=value;
+    }
+    try{
+     const response=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:{state:merged,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()},base_revision:remoteRevision})});
+     if(SIASH_CLOUD.editGeneration!==localGeneration){preserveCloudDraft("merge-concurrent-edit");SIASH_CLOUD.conflict=true;updateCloudBadge("Nova edição durante conciliação · rascunho protegido",true);return}
+     S=merged;cloudSetBase(merged);SIASH_CLOUD.revision=response.revision;
+     SIASH_CLOUD.conflict=false;clearCloudDraft();localStorage.setItem(STORE,JSON.stringify(S));
+     normalize();renderAll();panel.hidden=true;updateCloudBadge("Conciliação salva");
+    }catch(e){
+     preserveCloudDraft("merge-rejected");SIASH_CLOUD.conflict=true;
+     if(msg)msg.textContent="Conciliação não confirmada: "+e.message+". Rascunho preservado; consulte novamente o servidor.";
+     updateCloudBadge("Conciliação não confirmada",true);
+    }
+   };
   }catch(e){
-   if(remoteEl)remoteEl.textContent="Não foi possível consultar o servidor: "+e.message;
-   if(msg)msg.textContent="Conexão indisponível. O rascunho local foi mantido. Não reenviar automaticamente.";
+   if(remoteEl)remoteEl.textContent="Consulta indisponível: "+e.message;
+   if(msg)msg.textContent="Sem conexão ou revisão válida. Rascunho preservado; reenvio bloqueado.";
   }
  }
  if(refresh)refresh.onclick=loadRemote;
