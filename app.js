@@ -17,6 +17,61 @@ const SIASH_CLOUD={
  editGeneration:0,
  retryCount:0
 };
+// Snapshot imutável da última revisão confirmada. Não usar o estado local como base.
+let cloudBaseSnapshot=null;
+function cloudSetBase(state){cloudBaseSnapshot=JSON.parse(JSON.stringify(state))}
+function cloudThreeWayMerge(base,local,server){
+ const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const conflicts=[];
+ function merge(b,l,r,path){
+  if(eq(l,b))return structuredCloneSafe(r);
+  if(eq(r,b)||eq(l,r))return structuredCloneSafe(l);
+  if(Array.isArray(b)&&Array.isArray(l)&&Array.isArray(r)){
+   if(path==="beds"){
+    const keyed=a=>a.every(x=>x&&Number.isSafeInteger(Number(x.n)))&&new Set(a.map(x=>Number(x.n))).size===a.length;
+    if(!keyed(b)||!keyed(l)||!keyed(r)){conflicts.push({path,base:b,local:l,server:r});return structuredCloneSafe(r)}
+    const bm=new Map(b.map(x=>[Number(x.n),x])),lm=new Map(l.map(x=>[Number(x.n),x])),rm=new Map(r.map(x=>[Number(x.n),x]));
+    const keys=[...new Set([...bm.keys(),...lm.keys(),...rm.keys()])].sort((a,z)=>a-z);
+    return keys.map(k=>merge(bm.get(k),lm.get(k),rm.get(k),path+"["+k+"]")).filter(x=>x!==undefined);
+   }
+   if(path==="picc"||path==="pipa"){
+    const valid=a=>a.every(x=>x&&typeof x.id==="string"&&x.id.length>0)&&new Set(a.map(x=>x.id)).size===a.length;
+    if(!valid(b)||!valid(l)||!valid(r)){
+     conflicts.push({path,base:b,local:l,server:r,reason:"legacy-or-duplicate-id"});
+     return structuredCloneSafe(r);
+    }
+    const bm=new Map(b.map(x=>[x.id,x])),lm=new Map(l.map(x=>[x.id,x])),rm=new Map(r.map(x=>[x.id,x]));
+    const ids=[...new Set(path==="pipa"?[...rm.keys(),...lm.keys(),...bm.keys()]:[...bm.keys(),...rm.keys(),...lm.keys()])];
+    return ids.map(id=>{
+     const bv=bm.get(id),lv=lm.get(id),rv=rm.get(id);
+     if(bv===undefined){
+      if(lv!==undefined&&rv!==undefined&&!eq(lv,rv)){conflicts.push({path:path+"["+id+"]",base:bv,local:lv,server:rv});return structuredCloneSafe(rv)}
+      return structuredCloneSafe(lv===undefined?rv:lv);
+     }
+     if(lv===undefined||rv===undefined){
+      if(eq(lv,bv))return structuredCloneSafe(rv);
+      if(eq(rv,bv))return structuredCloneSafe(lv);
+      conflicts.push({path:path+"["+id+"]",base:bv,local:lv,server:rv});return structuredCloneSafe(rv);
+     }
+     return merge(bv,lv,rv,path+"["+id+"]");
+    }).filter(x=>x!==undefined);
+   }
+   // Without stable identity, changed array sizes or ordering are unsafe.
+   if(b.length!==l.length||b.length!==r.length){conflicts.push({path,base:b,local:l,server:r});return structuredCloneSafe(r)}
+   return b.map((x,i)=>merge(x,l[i],r[i],path+"["+i+"]"));
+  }
+  if(b&&l&&r&&typeof b==="object"&&typeof l==="object"&&typeof r==="object"&&!Array.isArray(b)&&!Array.isArray(l)&&!Array.isArray(r)){
+   const out={};for(const k of new Set([...Object.keys(b),...Object.keys(l),...Object.keys(r)])){
+    if(k==="__proto__"||k==="constructor"||k==="prototype")continue;
+    const v=merge(b[k],l[k],r[k],path?path+"."+k:k);if(v!==undefined)out[k]=v;
+   }return out;
+  }
+  conflicts.push({path,base:b,local:l,server:r});
+  return structuredCloneSafe(r);
+ }
+ function structuredCloneSafe(v){return v===undefined?undefined:JSON.parse(JSON.stringify(v))}
+ return {state:merge(base,local,server,""),conflicts};
+}
 const SIASH_PENDING_KEY="siash_cloud_pending_v1";
 function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
 function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:SIASH_CLOUD.revision,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
@@ -52,9 +107,24 @@ async function cloudLoadAfterLogin(){
    alert("Existe um rascunho não sincronizado neste navegador. Ele foi preservado e o salvamento automático foi bloqueado. Solicite conciliação antes de continuar.");
    return true;
  }
+ // Uma edição local iniciada durante o GET não pode ser substituída pela resposta atrasada.
+ const loadGeneration=SIASH_CLOUD.editGeneration;
  const remote=await cloudJson("/api/state");
+ if(SIASH_CLOUD.editGeneration!==loadGeneration||cloudPending()){
+   preserveCloudDraft("load-race");
+   SIASH_CLOUD.conflict=true;
+   updateCloudBadge("CONFLITO · edição local durante carregamento",true);
+   alert("Houve uma edição local enquanto os dados remotos eram carregados. Rascunho protegido; conciliação necessária.");
+   return true;
+ }
  if(remote.exists&&remote.payload?.state){
+   if(!Number.isSafeInteger(remote.revision)||remote.revision<1){
+     preserveCloudDraft("revision-unavailable");SIASH_CLOUD.conflict=true;
+     updateCloudBadge("REVISÃO REMOTA INVÁLIDA · rascunho protegido",true);
+     throw new Error("Estado remoto sem revisão válida; conciliação necessária.");
+   }
    SIASH_CLOUD.revision=remote.revision;SIASH_CLOUD.conflict=false;
+   cloudSetBase(remote.payload.state);
    S=remote.payload.state; if(remote.payload.security)setSecurityState(remote.payload.security);
    normalize();localStorage.setItem(STORE,JSON.stringify(S));SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
  }
@@ -78,7 +148,7 @@ async function cloudLoadAfterLogin(){
      throw new Error("Migração inicial não confirmada. O rascunho local foi preservado para conciliação: "+e.message);
    }
    if(!Number.isSafeInteger(initialized.revision)||initialized.revision<1){preserveCloudDraft("revision-unavailable");SIASH_CLOUD.conflict=true;throw new Error("Inicialização sem revisão válida. O rascunho foi preservado e a sincronização foi bloqueada.");}
-   SIASH_CLOUD.revision=initialized.revision;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
+   SIASH_CLOUD.revision=initialized.revision;cloudSetBase(S);SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
  }
  return false;
 }
@@ -103,20 +173,39 @@ function scheduleCloudSave({retry=false}={}){
    if(!Number.isSafeInteger(SIASH_CLOUD.revision)){preserveCloudDraft("revision-unavailable");updateCloudBadge("Sessão sem revisão · rascunho protegido",true);return;}
    SIASH_CLOUD.syncing=true;updateCloudBadge("Salvando…");
    const generation=SIASH_CLOUD.editGeneration;
+   const sentState=JSON.parse(JSON.stringify(S));
    try{
      const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
      SIASH_CLOUD.revision=r.revision;
+     cloudSetBase(sentState);
+     // O servidor é a fonte de verdade para autor e horário do cancelamento.
+     // Se houve novas edições durante o PUT, não sobrescrever o rascunho atual.
+     if(Array.isArray(r.pipa_cancellations)&&r.pipa_cancellations.length){
+       // Aplicar somente o carimbo do registro cancelado: outras edições locais
+       // feitas durante a requisição continuam intactas e pendentes de envio.
+       for(const item of r.pipa_cancellations){
+         const record=S.pipa[item.index];
+         if(record&&record.cancelledAt&&record.cancelReason){
+           record.cancelledAt=item.cancelledAt;
+           record.cancelledBy=item.cancelledBy;
+           if(typeof item.cancelReason==="string")record.cancelReason=item.cancelReason;
+         }
+       }
+       localStorage.setItem(STORE,JSON.stringify(S));
+       if(generation!==SIASH_CLOUD.editGeneration)preserveCloudDraft("pending");
+     }
      SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
      if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
    }catch(e){
      console.error(e);
-     preserveCloudDraft(e.status===401?"session-expired":e.conflict||e.status===409||e.status===428?"conflict":"network");
+     preserveCloudDraft(e.status===401?"session-expired":e.conflict||e.status===409||e.status===428||e.status===422?"conflict":"network");
      if(e.status===401){SIASH_CLOUD.conflict=true;updateCloudBadge("Sessão expirada · rascunho protegido",true);alert("Sessão expirada. Seu rascunho foi preservado neste navegador. Entre novamente para conciliar os dados.");}
-     else if(e.conflict||e.status===409||e.status===428){
+     else if(e.conflict||e.status===409||e.status===428||e.status===422){
        SIASH_CLOUD.conflict=true;
        localStorage.setItem(STORE,JSON.stringify(S));
-       updateCloudBadge("CONFLITO · dados locais preservados",true);
-       alert("ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
+       void showCloudConflictPanel();
+       updateCloudBadge(e.status===422?"INTEGRIDADE PIPA · revisão necessária":"CONFLITO · dados locais preservados",true);
+       alert(e.status===422?"O servidor recusou uma alteração do PIPA por inconsistência de integridade: "+e.message+" Seu rascunho está preservado e o envio automático foi bloqueado. Solicite conciliação à coordenação.":"ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
      }else{
        // A resposta pode ter sido perdida depois do commit: conferir a revisão antes de reenviar.
        try{
@@ -125,14 +214,30 @@ function scheduleCloudSave({retry=false}={}){
            SIASH_CLOUD.conflict=true;
            updateCloudBadge("CONFIRMAÇÃO INCERTA · conciliação necessária",true);
            alert("A conexão caiu e o servidor apresenta outra revisão. O rascunho local está protegido. Não reenvie antes de conciliar os dados.");
-         }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+         }else if(remote.exists&&Number.isSafeInteger(remote.revision)&&remote.revision===SIASH_CLOUD.revision){
+           updateCloudBadge("Falha de rede · aguardando reconexão",true);
+           retryCloudWhenOnline();
+         }else{
+           // Uma resposta incompleta não comprova que a gravação anterior falhou.
+           SIASH_CLOUD.conflict=true;
+           preserveCloudDraft("confirmation-unknown");
+           updateCloudBadge("SALVAMENTO INCERTO · conciliação necessária",true);
+           alert("O servidor não confirmou uma revisão válida após a falha de rede. Seu rascunho foi preservado e o reenvio automático bloqueado para evitar conflitos.");
+         }
        }catch(checkError){
          if(checkError.status===401){
            SIASH_CLOUD.conflict=true;
            preserveCloudDraft("session-expired");
            updateCloudBadge("Sessão expirada · rascunho protegido",true);
            alert("A sessão expirou durante a conferência do salvamento. Entre novamente para conciliar o rascunho protegido.");
-         }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+         }else{
+           // Sem leitura de confirmação, o PUT pode ter sido gravado apesar da falha de rede.
+           // Bloquear qualquer reenvio automático, inclusive edições feitas durante a requisição.
+           SIASH_CLOUD.conflict=true;
+           preserveCloudDraft("confirmation-unknown");
+           updateCloudBadge("SALVAMENTO INCERTO · conciliação necessária",true);
+           alert("Não foi possível confirmar se o último salvamento chegou ao servidor. Seu rascunho permanece neste navegador. O reenvio automático foi bloqueado para evitar duplicidades ou conflitos; solicite conciliação antes de continuar.");
+         }
        }
      }
    }finally{
@@ -144,6 +249,98 @@ function scheduleCloudSave({retry=false}={}){
 function scheduleCloudSaveRetry(){
  clearTimeout(cloudSaveTimer);
  cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict)scheduleCloudSave({retry:true})},450);
+}
+async function showCloudConflictPanel(){
+ const panel=document.getElementById("cloud-conflict-panel");
+ if(!panel)return;
+ const localEl=document.getElementById("cloud-conflict-local");
+ const remoteEl=document.getElementById("cloud-conflict-remote");
+ const msg=document.getElementById("cloud-conflict-message");
+ const refresh=document.getElementById("cloud-conflict-refresh");
+ const close=document.getElementById("cloud-conflict-close");
+ const confirm=document.getElementById("cloud-conflict-confirm");
+ const resolutions=document.getElementById("cloud-conflict-resolutions");
+ panel.hidden=false;
+ if(close)close.onclick=()=>{panel.hidden=true};
+ let proposal=null,remoteRevision=null,localGeneration=null,remoteState=null;
+ async function loadRemote(){
+  proposal=null;if(confirm)confirm.disabled=true;
+  if(resolutions)resolutions.replaceChildren();
+  const pending=cloudPending(),local=pending?.state||S;
+  localGeneration=SIASH_CLOUD.editGeneration;
+  if(localEl)localEl.textContent=JSON.stringify(local,null,2);
+  if(remoteEl)remoteEl.textContent="Consultando servidor...";
+  try{
+   const remote=await cloudJson("/api/state");
+   if(!remote.exists||!remote.payload?.state||!Number.isSafeInteger(remote.revision)||remote.revision<1)throw Error("Estado ou revisão inválidos");
+   remoteRevision=remote.revision;remoteState=remote.payload.state;
+   if(remoteEl)remoteEl.textContent=JSON.stringify(remoteState,null,2);
+   if(!cloudBaseSnapshot){
+    if(msg)msg.textContent="Base original indisponível. Conciliação automática bloqueada; rascunho protegido.";
+    return;
+   }
+   proposal=cloudThreeWayMerge(cloudBaseSnapshot,local,remoteState);
+   if(!resolutions||!confirm){if(msg)msg.textContent="Interface de resolução indisponível. Rascunho preservado.";return}
+   const choices=new Map();
+   function setReady(){
+    confirm.disabled=proposal.conflicts.some(c=>!choices.has(c.path))||SIASH_CLOUD.editGeneration!==localGeneration;
+   }
+   for(const c of proposal.conflicts){
+    const wrap=document.createElement("div");
+    const title=document.createElement("p");title.textContent="Conflito no campo: "+c.path;wrap.appendChild(title);
+    const select=document.createElement("select");
+    const opts=[["","Selecione uma decisão"],["server","Manter versão do servidor"],["local","Aplicar minha alteração"]];
+    for(const [value,label] of opts){const o=document.createElement("option");o.value=value;o.textContent=label;select.appendChild(o)}
+    select.onchange=()=>{if(select.value)choices.set(c.path,select.value);else choices.delete(c.path);setReady()};
+    wrap.appendChild(select);resolutions.appendChild(wrap);
+   }
+   if(msg)msg.textContent=proposal.conflicts.length?"Existem "+proposal.conflicts.length+" divergências. Escolha cada resolução antes de salvar.":"Alterações independentes identificadas. Confira as duas versões antes de confirmar.";
+   setReady();
+   confirm.onclick=async()=>{
+    if(!proposal||SIASH_CLOUD.editGeneration!==localGeneration||confirm.disabled)return;
+    confirm.disabled=true;
+    // Aplicar escolhas exclusivamente sobre a proposta calculada; não alterar S até commit confirmado.
+    const merged=JSON.parse(JSON.stringify(proposal.state));
+    for(const c of proposal.conflicts){
+     const selected=choices.get(c.path);
+     if(!selected){if(msg)msg.textContent="Há conflitos sem decisão.";return}
+     const tokens=c.path.match(/[^.\[\]]+/g)||[];
+     let target=merged;
+     for(let i=0;i<tokens.length-1;i++){
+      const key=tokens[i];
+      if(key==="beds"||key==="picc"||key==="pipa"){target=target[key];continue}
+      if(Array.isArray(target)&&i>0&&["beds","picc","pipa"].includes(tokens[i-1]))target=target.find(x=>tokens[i-1]==="beds"?Number(x.n)===Number(key):x.id===key);
+      else target=target[key];
+      if(target===undefined||target===null)throw Error("Caminho de conciliação inválido");
+     }
+     const key=tokens[tokens.length-1],value=selected==="local"?c.local:c.server;
+     if(tokens.length===0){if(msg)msg.textContent="Conflito global requer revisão técnica.";return}
+     if(Array.isArray(target)&&["beds","picc","pipa"].includes(tokens[tokens.length-2])){
+      const idx=target.findIndex(x=>tokens[tokens.length-2]==="beds"?Number(x.n)===Number(key):x.id===key);
+      if(idx<0){if(msg)msg.textContent="Registro removido; revisão técnica necessária.";return}
+      target[idx]=value;
+     }else if(value===undefined)delete target[key];
+     else target[key]=value;
+    }
+    try{
+     const response=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:{state:merged,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()},base_revision:remoteRevision})});
+     if(SIASH_CLOUD.editGeneration!==localGeneration){preserveCloudDraft("merge-concurrent-edit");SIASH_CLOUD.conflict=true;updateCloudBadge("Nova edição durante conciliação · rascunho protegido",true);return}
+     S=merged;cloudSetBase(merged);SIASH_CLOUD.revision=response.revision;
+     SIASH_CLOUD.conflict=false;clearCloudDraft();localStorage.setItem(STORE,JSON.stringify(S));
+     normalize();renderAll();panel.hidden=true;updateCloudBadge("Conciliação salva");
+    }catch(e){
+     preserveCloudDraft("merge-rejected");SIASH_CLOUD.conflict=true;
+     if(msg)msg.textContent="Conciliação não confirmada: "+e.message+". Rascunho preservado; consulte novamente o servidor.";
+     updateCloudBadge("Conciliação não confirmada",true);
+    }
+   };
+  }catch(e){
+   if(remoteEl)remoteEl.textContent="Consulta indisponível: "+e.message;
+   if(msg)msg.textContent="Sem conexão ou revisão válida. Rascunho preservado; reenvio bloqueado.";
+  }
+ }
+ if(refresh)refresh.onclick=loadRemote;
+ await loadRemote();
 }
 function updateCloudBadge(text,bad=false){
  const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad)
@@ -290,20 +487,20 @@ if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.move
 normalize();localStorage.setItem(STORE,JSON.stringify(S));
 function save(){localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
 function currentMonth(){return monthOf(todayISO())}
-function pipaCountOn(date){return S.pipa.filter(x=>x.date===date).reduce((n,x)=>n+(Number(x.qty)||0),0)}
+function pipaCountOn(date){return S.pipa.filter(x=>!x.cancelledAt&&x.date===date).reduce((n,x)=>n+(Number(x.qty)||0),0)}
 function pipaDailyAudit(date){
  const daily=S.daily.find(x=>x.date===date);
  const dated=pipaCountOn(date),legacy=daily?Number(daily.pipa)||0:0;
- return {dated,legacy,hasDated:S.pipa.some(x=>x.date===date),requiresReview:dated>0&&legacy>0};
+ return {dated,legacy,hasDated:S.pipa.some(x=>!x.cancelledAt&&x.date===date),requiresReview:dated>0&&legacy>0};
 }
 function pipaReconciliationSummary(month){
- const dated=S.pipa.filter(x=>x.date&&monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
- const monthlyOnly=S.pipa.filter(x=>!x.date&&x.month===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
+ const dated=S.pipa.filter(x=>!x.cancelledAt&&x.date&&monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
+ const monthlyOnly=S.pipa.filter(x=>!x.cancelledAt&&!x.date&&x.month===month).reduce((n,x)=>n+(Number(x.qty)||0),0);
  const legacyDaily=S.daily.filter(x=>monthOf(x.date)===month).reduce((n,x)=>n+(Number(x.pipa)||0),0);
  const overlapDays=S.daily.filter(x=>monthOf(x.date)===month&&pipaDailyAudit(x.date).requiresReview).length;
  return {dated,monthlyOnly,legacyDaily,overlapDays,needsReview:monthlyOnly>0||overlapDays>0};
 }
-function pipaMonthTotal(m){return S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m).reduce((total,row)=>total+(Number(row.qty)||0),0)}
+function pipaMonthTotal(m){return S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m).reduce((total,row)=>total+(Number(row.qty)||0),0)}
 function thermalCount(date,type){return S.thermalEvents.filter(x=>x.date===date&&x.type===type).length}
 function thermalMonthCount(m,type){return S.thermalEvents.filter(x=>monthOf(x.date)===m&&x.type===type).length}
 function monthStats(m){
@@ -313,7 +510,7 @@ function monthStats(m){
  const latest=rows.length?rows[rows.length-1]:null;
  return{rows,pd,days,ld,outs,occ:ld?pd/ld*100:0,los:outs?pd/outs:0,adm:sum("admissoes"),altas:sum("altas"),transf:sum("transferencias"),deaths:sum("obitos"),pipa:pipaMonthTotal(m),canguru:sum("canguru")+sum("altaCanguru"),altaPediatria:sum("altaPediatria"),altaCanguru:sum("altaCanguru"),picc:S.picc.filter(x=>monthOf(piccInsertDate(x))===m).length,piccDays:piccDaysInMonth(m),piccActive:S.picc.filter(x=>x.status==="Ativo").length,piccRemoved:S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length,pezinho:sum("pezinho"),vmDays:sum("vm"),vmCurrent:latest?(+latest.vm||0):0,intub:sum("intub"),extubProg:sum("extubProg"),extub:sum("extub"),lpp:sum("lpp"),hypothermia:thermalMonthCount(m,"Hipotermia"),hyperthermia:thermalMonthCount(m,"Hipertermia")}
 }
-function allMonths(){const months=[...S.daily.map(r=>monthOf(r.date)),...S.pipa.map(r=>r.date?monthOf(r.date):r.month),...S.picc.map(x=>monthOf(piccInsertDate(x))),...S.picc.filter(x=>x.removalDate).map(x=>monthOf(x.removalDate)),currentMonth()];return [...new Set(months.filter(Boolean))].sort()}
+function allMonths(){const months=[...S.daily.map(r=>monthOf(r.date)),...S.pipa.filter(r=>!r.cancelledAt).map(r=>r.date?monthOf(r.date):r.month),...S.picc.map(x=>monthOf(piccInsertDate(x))),...S.picc.filter(x=>x.removalDate).map(x=>monthOf(x.removalDate)),currentMonth()];return [...new Set(months.filter(Boolean))].sort()}
 function dateBR(s){return s?s.split("-").reverse().join("/"):"—"}
 function nowBR(){return new Date().toLocaleString("pt-BR")}
 function parseISODate(s){if(!s)return null;const p=s.split("-").map(Number);if(p.length!==3||p.some(Number.isNaN))return null;return new Date(Date.UTC(p[0],p[1]-1,p[2]))}
@@ -420,8 +617,27 @@ window.deletePicc=i=>{
  const x=S.picc[i];if(!x)return;if(confirm(`Excluir definitivamente o registro de PICC do Leito ${pad(x.bed)}?\n\nUse esta opção apenas para corrigir um lançamento indevido. Para retirada clínica, use Registrar retirada.`)){S.picc.splice(i,1);clearPiccForm();cancelPiccRemoval();save();showToast("Registro de PICC excluído",1200)}
 }
 
-function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();const m=$("pipa-month").value||monthOf($("pipa-date").value);if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};const audit=pipaReconciliationSummary(m),auditEl=$("pipa-reconciliation");if(auditEl)auditEl.textContent=`Conferência: ${audit.dated} encaminhamento(s) datado(s); ${audit.monthlyOnly} registro(s) histórico(s) sem data; ${audit.legacyDaily} no censo diário legado; ${audit.overlapDays} dia(s) com possível sobreposição. Não somar as fontes sem conciliação.`;rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>`<tr><td>${r.month.split("-").reverse().join("/")}</td><td>${safe(r.city)}</td><td>${r.qty}</td><td>${safe(r.note)}</td><td><button class="ghost" onclick="deletePipa(${S.pipa.length-1-idx})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="5">Nenhum encaminhamento registrado.</td></tr>'}
-window.deletePipa=i=>{S.pipa.splice(i,1);save()}
+function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();const m=$("pipa-month").value||monthOf($("pipa-date").value);if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};const audit=pipaReconciliationSummary(m),auditEl=$("pipa-reconciliation");if(auditEl)auditEl.textContent=`Conferência: ${audit.dated} encaminhamento(s) datado(s); ${audit.monthlyOnly} registro(s) histórico(s) sem data; ${audit.legacyDaily} no censo diário legado; ${audit.overlapDays} dia(s) com possível sobreposição. Não somar as fontes sem conciliação.`;rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>{
+ const i=S.pipa.length-1-idx;
+ const origin=r.date?"Datado — "+dateBR(r.date):"Histórico sem data";
+ const status=r.cancelledAt?"Cancelado":"Ativo";
+ const audit=r.cancelledAt?`<div class="muted">Cancelado em ${safe(new Date(r.cancelledAt).toLocaleString("pt-BR"))} por ${safe(r.cancelledBy||"—")}. Motivo: ${safe(r.cancelReason||"—")}</div>`:"";
+ return `<tr><td>${safe((r.month||monthOf(r.date)||"").split("-").reverse().join("/"))}</td><td>${safe(r.city)}</td><td>${safe(r.qty)}</td><td>${safe(r.note||"")}</td><td>${safe(origin)}</td><td>${status}${audit}</td><td>${r.cancelledAt?"—":`<button class="ghost" onclick="deletePipa(${i})">Cancelar</button>`}</td></tr>`;
+ }).join("")||'<tr><td colspan="7">Nenhum encaminhamento registrado.</td></tr>'}
+window.deletePipa=i=>{
+ const r=S.pipa[i];if(!r||r.cancelledAt)return;
+ const ref=`${r.city} — ${r.qty} RN(s) — ${r.date?dateBR(r.date):"histórico sem data, competência "+r.month}`;
+ if(!confirm(`Cancelar o encaminhamento PIPA: ${ref}?\n\nO registro será preservado no histórico e excluído dos indicadores. Esta ação será sincronizada com os demais usuários.`))return;
+ const reason=prompt("Informe a justificativa obrigatória para cancelar este encaminhamento:");
+ if(reason===null)return;
+ const why=reason.trim();if(why.length<10||why.length>1000){alert("Justificativa obrigatória: informe entre 10 e 1000 caracteres.");return;}
+ r.cancelledAt=new Date().toISOString();
+ r.cancelledBy=String(SESSION.user||"Usuário autenticado");
+ r.cancelReason=why;
+ r.updated=nowBR();
+ save();
+ showToast("Encaminhamento cancelado e preservado para auditoria.",2400);
+}
 let sharedPending=[],pendingLoaded=false,pendingLoading=false;
 async function loadSharedPending(){
  if(!SIASH_CLOUD.token||pendingLoading)return;
@@ -447,7 +663,7 @@ async function changeSharedPending(id,status){
 }
 
 function fillMonthSelect(id){const sel=$(id),cur=sel.value;sel.innerHTML=allMonths().map(m=>`<option value="${m}">${m.split("-").reverse().join("/")}</option>`).join("");sel.value=allMonths().includes(cur)?cur:currentMonth()}
-function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Pediatria",c.altaPediatria],["Altas → Leito Canguru",c.altaCanguru],["Altas para Leito Canguru (total)",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("");const g={};S.pipa.filter(x=>(x.date?monthOf(x.date):x.month)===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
+function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Pediatria",c.altaPediatria],["Altas → Leito Canguru",c.altaCanguru],["Altas para Leito Canguru (total)",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("");const g={};S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
 function renderComparison(){
  const current=currentMonth(),parts=current.split("-").map(Number),months=[];
  for(let offset=-2;offset<=0;offset++){const d=new Date(parts[0],parts[1]-1+offset,1);months.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}`)}
@@ -929,7 +1145,7 @@ async function runCloudflareFallbackDiagnostic(){
    out.innerHTML=`<strong>FALHOU:</strong> ${safe(e.message||"Não foi possível concluir o diagnóstico.")}`;
  }finally{btn.disabled=false}
 }
-function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderHuddle();renderRH();renderSettings();renderAdmin();applyPermissions()}
+function renderAll(){renderClock();populateBedSelects();renderDashboard();renderShift();renderDaily();renderBeds();renderMovements();renderChecklist();renderCare();renderPicc();renderPipa();renderPending();renderIndicators();renderComparison();renderDocs();renderSettings();renderAdmin();applyPermissions()}
 document.querySelectorAll(".nav-item").forEach(btn=>btn.addEventListener("click",()=>{document.querySelectorAll(".nav-item").forEach(b=>b.classList.remove("active"));btn.classList.add("active");document.querySelectorAll(".view").forEach(v=>v.classList.add("hidden"));$("view-"+btn.dataset.view).classList.remove("hidden");$("page-title").textContent=btn.textContent;renderAll();if(btn.dataset.view==="administracao")loadAdminUsers();if(btn.dataset.view==="pendencias")loadSharedPending()}))
 $("admin-user-form").addEventListener("submit",async e=>{
  e.preventDefault();
@@ -1002,7 +1218,7 @@ $("care-save").addEventListener("click",()=>{const bed=$("care-bed").value;if(!b
 $("picc-form").addEventListener("submit",e=>{
  e.preventDefault();if(!$("picc-date").value||!$("picc-bed").value||!$("picc-vein").value)return alert("Informe a data da inserção, o leito e a veia/sítio.");
  const b1=$("picc-b1").value,b2=$("picc-b2").value,b3=$("picc-b3").value,bundle=[b1,b2,b3].every(x=>x==="Sim"),editIndex=$("picc-edit-index").value===""?null:+$("picc-edit-index").value,old=editIndex===null?null:S.picc[editIndex];
- const record={when:old?old.when:nowBR(),updated:nowBR(),insertDate:$("picc-date").value,bed:$("picc-bed").value,vein:$("picc-vein").value,side:$("picc-side").value,punctures:+$("picc-punctures").value||1,length:$("picc-length").value,external:$("picc-external").value,position:$("picc-position").value,b1,b2,b3,bundle,status:old?old.status:"Ativo",removalDate:old?old.removalDate:null,removalReason:old?old.removalReason:null,removalNote:old?old.removalNote:null,removedAt:old?old.removedAt:null};
+ const record={id:old?.id||crypto.randomUUID(),when:old?old.when:nowBR(),updated:nowBR(),insertDate:$("picc-date").value,bed:$("picc-bed").value,vein:$("picc-vein").value,side:$("picc-side").value,punctures:+$("picc-punctures").value||1,length:$("picc-length").value,external:$("picc-external").value,position:$("picc-position").value,b1,b2,b3,bundle,status:old?old.status:"Ativo",removalDate:old?old.removalDate:null,removalReason:old?old.removalReason:null,removalNote:old?old.removalNote:null,removedAt:old?old.removedAt:null};
  if(record.removalDate&&record.removalDate<record.insertDate)return alert("A data de inserção não pode ser posterior à data de retirada.");
  if(editIndex!==null){S.picc[editIndex]=record;clearPiccForm();save();showToast("Registro de PICC atualizado",1200);return}
  const activeSameBed=S.picc.filter(x=>String(x.bed)===String(record.bed)&&x.status==="Ativo");if(activeSameBed.length){const proceed=confirm(`Já existe ${activeSameBed.length} PICC ativo no Leito ${pad(record.bed)}.\n\nSe for apenas correção, cancele e edite o registro existente.\n\nDeseja registrar outro PICC ativo neste leito?`);if(!proceed)return}
@@ -1014,7 +1230,7 @@ $("picc-removal-form").addEventListener("submit",e=>{
  e.preventDefault();const i=+$("picc-removal-index").value,x=S.picc[i],date=$("picc-removal-date").value,reason=$("picc-removal-reason").value;if(!x||x.status!=="Ativo")return alert("PICC ativo não localizado.");if(!date||!reason)return alert("Informe a data e o motivo da retirada.");if(date<piccInsertDate(x))return alert("A retirada não pode ser anterior à inserção.");x.status="Retirado";x.removalDate=date;x.removalReason=reason;x.removalNote=$("picc-removal-note").value.trim();x.removedAt=nowBR();x.updated=nowBR();cancelPiccRemoval();save();showToast(`PICC do Leito ${pad(x.bed)} retirado`,1600)
 })
 
-$("pipa-form").addEventListener("submit",e=>{e.preventDefault();const qty=Number($("pipa-qty").value);if(!$("pipa-date").value||!$("pipa-city").value)return alert("Informe data do encaminhamento e município de origem.");$("pipa-month").value=monthOf($("pipa-date").value);if(!Number.isSafeInteger(qty)||qty<1)return alert("Informe quantidade inteira e maior que zero.");if(!$("pipa-post-discharge").checked)return alert("Confirme que os RNs foram encaminhados após a alta da UTIN.");S.pipa.push({date:$("pipa-date").value,month:$("pipa-month").value,city:$("pipa-city").value,qty,note:$("pipa-note").value.trim(),postDischargeConfirmed:true,updated:nowBR()});$("pipa-qty").value=1;$("pipa-post-discharge").checked=false;$("pipa-note").value="";save()})
+$("pipa-form").addEventListener("submit",e=>{e.preventDefault();const qty=Number($("pipa-qty").value);if(!$("pipa-date").value||!$("pipa-city").value)return alert("Informe data do encaminhamento e município de origem.");$("pipa-month").value=monthOf($("pipa-date").value);if(!Number.isSafeInteger(qty)||qty<1)return alert("Informe quantidade inteira e maior que zero.");if(!$("pipa-post-discharge").checked)return alert("Confirme que os RNs foram encaminhados após a alta da UTIN.");S.pipa.push({id:crypto.randomUUID(),date:$("pipa-date").value,month:$("pipa-month").value,city:$("pipa-city").value,qty,note:$("pipa-note").value.trim(),postDischargeConfirmed:true,updated:nowBR()});$("pipa-qty").value=1;$("pipa-post-discharge").checked=false;$("pipa-note").value="";save()})
 $("pipa-date").addEventListener("change",()=>{$("pipa-month").value=monthOf($("pipa-date").value);renderPipa()})
 $("pending-form").addEventListener("submit",async e=>{
  e.preventDefault();

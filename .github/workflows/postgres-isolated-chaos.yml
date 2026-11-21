@@ -1,0 +1,49 @@
+name: SIASH isolated PostgreSQL concurrency
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches:
+      - safety/pipa-auditoria-cancelamento-20261120
+permissions:
+  contents: read
+jobs:
+  isolated-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: siash_ci
+          POSTGRES_PASSWORD: siash_ci
+          POSTGRES_DB: siash_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U siash_ci -d siash_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      SIASH_ISOLATED_CI: '1'
+      DATABASE_URL: postgres://siash_ci:siash_ci@127.0.0.1:5432/siash_ci
+      PGSSLMODE: disable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Isolated real PostgreSQL chaos suite
+        run: node --test tests/postgres-isolated-chaos.test.cjs
+      - name: Install Chromium for isolated browser E2E
+        run: |
+          npm install --no-save --ignore-scripts --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+      - name: Run real browser clinical conflict E2E
+        run: node --test tests/browser-isolated-e2e.test.cjs

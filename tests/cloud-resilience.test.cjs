@@ -17,7 +17,7 @@ function harness({responses=[],initialPending=null}={}){
   const status={textContent:'',classList:{toggle(){}}};
   const context={
     location:{protocol:'https:'},sessionStorage:{getItem:()=>null,setItem(){},removeItem(){}},
-    localStorage:storage,document:{getElementById:()=>status},
+    localStorage:storage,document:{getElementById:id=>id==='cloud-status'?status:null},
     navigator:{onLine:true},window:{addEventListener:(...args)=>events.push(args)},
     console:{error(){}},alert:()=>{},Date,JSON,Number,Math,
     setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},
@@ -195,4 +195,219 @@ test('estado remoto existente sem payload valido nao aciona migracao inicial',as
  assert.equal(h.requests.length,1);
  assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
  assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'remote-state-invalid');
+});
+
+test('falha de PUT seguida de falha no GET bloqueia retry e mantém rascunho',async()=>{
+ const h=harness({responses:[new Error('PUT sem confirmação'),new Error('GET indisponível')]});
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.requests.length,2);
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'confirmation-unknown');
+ assert.match(h.status.textContent,/SALVAMENTO INCERTO/);
+ h.eval('scheduleCloudSave({retry:true})');
+ assert.equal(h.requests.length,2);
+});
+test('GET sem revisão após falha de PUT exige conciliação',async()=>{
+ const h=harness({responses:[new Error('PUT sem confirmação'),{status:200,body:{exists:true}}]});
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).reason,'confirmation-unknown');
+ assert.match(h.status.textContent,/SALVAMENTO INCERTO/);
+});
+test('GET com revisão não numérica não autoriza reenvio',async()=>{
+ const h=harness({responses:[new Error('PUT sem confirmação'),{status:200,body:{exists:true,revision:'1'}}]});
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(h.requests.length,2);
+ assert.ok(h.data.has('siash_cloud_pending_v1'));
+});
+
+test('confirmacao do servidor atualiza autor data e justificativa PIPA no estado local',async()=>{
+ const h=harness({responses:[{status:200,body:{revision:2,pipa_cancellations:[{index:0,cancelledAt:'2026-11-20T12:00:00.000Z',cancelledBy:'enfermeiro-teste',cancelReason:'Duplicidade confirmada'}]}}]});
+ h.eval('S.pipa=[{city:"Pirapora",month:"2026-11",qty:1,cancelledAt:"provisorio",cancelledBy:"local",cancelReason:"  Duplicidade confirmada  "}]');
+ h.eval('scheduleCloudSave()');await h.tick();
+ assert.equal(h.eval('S.pipa[0].cancelledAt'),'2026-11-20T12:00:00.000Z');
+ assert.equal(h.eval('S.pipa[0].cancelledBy'),'enfermeiro-teste');
+ assert.equal(h.eval('S.pipa[0].cancelReason'),'Duplicidade confirmada');
+ assert.equal(h.eval('SIASH_CLOUD.revision'),2);
+ assert.equal(h.data.has('siash_cloud_pending_v1'),false);
+});
+
+test('race condition: dois plantoes editam mesmo leito; somente um commit e outro preserva rascunho',async()=>{
+ let revision=1;
+ let remoteBed={n:1,status:'Livre',patient:''};
+ const requests=[];
+ let release;
+ const barrier=new Promise(resolve=>{release=resolve});
+ let arrived=0;
+ const server=async(url,opts)=>{
+   assert.equal(url,'/api/state');
+   assert.equal(opts.method,'PUT');
+   const body=JSON.parse(opts.body);
+   requests.push(body);
+   arrived++;
+   if(arrived===2)release();
+   await barrier;
+   // Equivalente ao SELECT FOR UPDATE + verificação de base_revision no PostgreSQL.
+   if(body.base_revision!==revision){
+     return {ok:false,status:409,json:async()=>({conflict:true,current_revision:revision,error:'Conflito de revisão'})};
+   }
+   remoteBed=JSON.parse(JSON.stringify(body.payload.state.beds[0]));
+   revision++;
+   return {ok:true,status:200,json:async()=>({revision})};
+ };
+ const a=harness(),b=harness();
+ for(const [h,user,patient] of [[a,'plantao-a','RN-A'],[b,'plantao-b','RN-B']]){
+   h.eval('SESSION.user='+JSON.stringify(user));
+   h.eval('S.beds=[{n:1,status:"Ocupado",patient:'+JSON.stringify(patient)+'}]');
+   h.context.fetch=async(url,opts)=>{h.requests.push({url,opts});return server(url,opts)};
+   h.eval('scheduleCloudSave()');
+ }
+ await Promise.all([a.tick(),b.tick()]);
+ assert.equal(requests.length,2,'ambos tentaram gravar a mesma revisão');
+ assert.equal(revision,2,'apenas uma gravação pode avançar a revisão');
+ const winner=remoteBed.patient==='RN-A'?a:b;
+ const loser=winner===a?b:a;
+ const losingPatient=winner===a?'RN-B':'RN-A';
+ assert.equal(winner.eval('SIASH_CLOUD.revision'),2);
+ assert.equal(loser.eval('SIASH_CLOUD.conflict'),true,'o perdedor deve sinalizar conflito');
+ assert.equal(loser.eval('S.beds[0].patient'),losingPatient,'a edição local não pode ser substituída');
+ assert.equal(JSON.parse(loser.data.get('siash_cloud_pending_v1')).state.beds[0].patient,losingPatient,'o rascunho deve persistir');
+ assert.match(loser.status.textContent,/CONFLITO/);
+ loser.eval('scheduleCloudSave({retry:true})');
+ assert.equal(loser.requests.length,1,'não reenviar automaticamente após 409');
+});
+
+test('GET atrasado no login não sobrescreve edição local feita durante a consulta',async()=>{
+ let release;
+ const waiting=new Promise(resolve=>{release=resolve});
+ const h=harness();
+ h.context.fetch=async()=>{await waiting;return {ok:true,status:200,json:async()=>({exists:true,revision:2,payload:{state:{beds:[{n:1,patient:'RN-remoto'}]}}})}};
+ const loading=h.eval('cloudLoadAfterLogin()');
+ h.eval('S.beds=[{n:1,patient:"RN-local"}];scheduleCloudSave()');
+ release();
+ await loading;
+ assert.equal(h.eval('S.beds[0].patient'),'RN-local');
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).state.beds[0].patient,'RN-local');
+});
+
+test('DOM clinico: HTTP 409 preserva formulario e apresenta comparacao local/remoto',async()=>{
+ const h=harness({responses:[
+  {status:409,body:{conflict:true,error:'Revisão obsoleta'}},
+  {status:200,body:{exists:true,revision:2,payload:{state:{beds:[{n:1,patient:'RN-SERVIDOR'}]}}}}
+ ]});
+ const elements=new Map();
+ for(const id of ['cloud-conflict-panel','cloud-conflict-local','cloud-conflict-remote','cloud-conflict-message','cloud-conflict-refresh','cloud-conflict-close'])
+  elements.set(id,{hidden:true,textContent:'',onclick:null});
+ const oldGet=h.context.document.getElementById;
+ h.context.document.getElementById=id=>elements.get(id)||oldGet(id);
+ h.eval('S.beds=[{n:1,patient:"RN-LOCAL"}];scheduleCloudSave()');
+ await h.tick();
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(h.eval('S.beds[0].patient'),'RN-LOCAL');
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).state.beds[0].patient,'RN-LOCAL');
+ assert.equal(elements.get('cloud-conflict-panel').hidden,false);
+ assert.match(elements.get('cloud-conflict-local').textContent,/RN-LOCAL/);
+ assert.match(elements.get('cloud-conflict-remote').textContent,/RN-SERVIDOR/);
+ assert.equal(h.eval('SIASH_CLOUD.revision'),1,'não atualizar revisão automaticamente');
+ h.eval('scheduleCloudSave({retry:true})');
+ assert.equal(h.requests.filter(r=>r.opts?.method==='PUT').length,1,'não reenviar dados conflitantes');
+});
+
+test('three-way merge: leitos distintos e PICC independente preservados',()=>{
+ const h=harness();
+ const result=JSON.parse(h.eval(`JSON.stringify(cloudThreeWayMerge(
+ {beds:[{n:1,patient:"BASE1"},{n:4,patient:"BASE4"}],picc:[{bed:1,status:"Ativo"},{bed:4,status:"Ativo"}]},
+ {beds:[{n:1,patient:"DIURNO"},{n:4,patient:"BASE4"}],picc:[{bed:1,status:"Ativo"},{bed:4,status:"Ativo"}]},
+ {beds:[{n:1,patient:"BASE1"},{n:4,patient:"NOTURNO"}],picc:[{bed:1,status:"Retirado"},{bed:4,status:"Ativo"}]}
+ ))`));
+ assert.equal(result.conflicts.length,0);
+ assert.equal(result.state.beds[0].patient,'DIURNO');
+ assert.equal(result.state.beds[1].patient,'NOTURNO');
+ assert.equal(result.state.picc[0].status,'Retirado');
+});
+test('three-way merge: mesmo campo impede reenvio sem escolha explicita',()=>{
+ const h=harness();
+ const result=JSON.parse(h.eval(`JSON.stringify(cloudThreeWayMerge(
+ {beds:[{n:1,patient:"BASE"}]},
+ {beds:[{n:1,patient:"DIURNO"}]},
+ {beds:[{n:1,patient:"NOTURNO"}]}
+ ))`));
+ assert.equal(result.conflicts.length,1);
+ assert.equal(result.conflicts[0].path,'beds[1].patient');
+ assert.equal(result.state.beds[0].patient,'NOTURNO');
+});
+test('three-way merge: insercoes concorrentes em listas sem ID sao bloqueadas',()=>{
+ const h=harness();
+ const result=JSON.parse(h.eval(`JSON.stringify(cloudThreeWayMerge(
+ {pipa:[]},{pipa:[{city:"A"}]},{pipa:[{city:"B"}]}
+ ))`));
+ assert.equal(result.conflicts.length,1);
+ assert.equal(result.conflicts[0].path,'pipa');
+});
+
+test('DOM: conflito mesmo leito exige escolha antes do PUT conciliado',async()=>{
+ const h=harness({responses:[
+  {status:200,body:{exists:true,revision:2,payload:{state:{beds:[{n:1,patient:'RN-SERVIDOR'}]}}}},
+  {status:200,body:{revision:3}}
+ ]});
+ const els=new Map();
+ const make=()=>({hidden:false,disabled:false,textContent:'',value:'',children:[],onclick:null,onchange:null,appendChild(x){this.children.push(x)},replaceChildren(){this.children=[]}});
+ for(const id of ['cloud-conflict-panel','cloud-conflict-local','cloud-conflict-remote','cloud-conflict-message','cloud-conflict-refresh','cloud-conflict-close','cloud-conflict-confirm','cloud-conflict-resolutions'])els.set(id,make());
+ h.context.document.getElementById=id=>els.get(id)||null;
+ h.context.document.createElement=()=>make();
+ h.eval('renderAll=()=>{};S={beds:[{n:1,patient:"RN-LOCAL"}]};cloudSetBase({beds:[{n:1,patient:"RN-BASE"}]});preserveCloudDraft("conflict");SIASH_CLOUD.conflict=true');
+ await h.eval('showCloudConflictPanel()');
+ const button=els.get('cloud-conflict-confirm');
+ assert.equal(button.disabled,true,'mesmo campo exige decisão explícita');
+ const choice=els.get('cloud-conflict-resolutions').children[0].children[1];
+ choice.value='local';choice.onchange();
+ assert.equal(button.disabled,false);
+ await button.onclick();
+ const puts=h.requests.filter(r=>r.opts?.method==='PUT');
+ assert.equal(puts.length,1);
+ assert.equal(JSON.parse(puts[0].opts.body).base_revision,2);
+ assert.equal(JSON.parse(puts[0].opts.body).payload.state.beds[0].patient,'RN-LOCAL');
+ assert.equal(h.eval('SIASH_CLOUD.revision'),3);
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),false);
+ assert.equal(h.data.has('siash_cloud_pending_v1'),false);
+});
+
+test('PICC e PIPA: duas insercoes concorrentes por lista preservam os quatro UUIDs',()=>{
+ const h=harness();
+ const base={picc:[],pipa:[]};
+ const day={picc:[{id:'picc-day-uuid',bed:1,status:'Ativo'}],pipa:[{id:'pipa-day-uuid',city:'A',qty:1}]};
+ const night={picc:[{id:'picc-night-uuid',bed:4,status:'Ativo'}],pipa:[{id:'pipa-night-uuid',city:'B',qty:1}]};
+ const result=JSON.parse(h.eval('JSON.stringify(cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(day)+','+JSON.stringify(night)+'))'));
+ assert.deepEqual(result.conflicts,[]);
+ assert.deepEqual(new Set(result.state.picc.map(x=>x.id)),new Set(['picc-day-uuid','picc-night-uuid']));
+ assert.deepEqual(new Set(result.state.pipa.map(x=>x.id)),new Set(['pipa-day-uuid','pipa-night-uuid']));
+ assert.equal(result.state.picc.length+result.state.pipa.length,4);
+});
+test('PICC e PIPA legados sem UUID bloqueiam conciliacao insegura',()=>{
+ const h=harness();
+ const result=JSON.parse(h.eval('JSON.stringify(cloudThreeWayMerge({picc:[{bed:1}]},{picc:[{bed:1},{id:"a",bed:2}]},{picc:[{bed:1},{id:"b",bed:3}]}))'));
+ assert.equal(result.conflicts[0].path,'picc');
+});
+
+test('retrocompatibilidade: PICC legado sem UUID permite retirada quando servidor nao alterou registro',()=>{
+ const h=harness();
+ const base={picc:[{bed:1,insertDate:'2026-10-01',status:'Ativo'}],pipa:[{date:'2026-10-10',month:'2026-10',city:'Cidade A',qty:1,postDischargeConfirmed:true}]};
+ const local=JSON.parse(JSON.stringify(base));local.picc[0].status='Retirado';local.picc[0].removalDate='2026-11-21';
+ const result=JSON.parse(h.eval('JSON.stringify(cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(local)+','+JSON.stringify(base)+'))'));
+ assert.equal(result.conflicts.length,0);
+ assert.equal(result.state.picc[0].status,'Retirado');
+ assert.equal(result.state.picc[0].removalDate,'2026-11-21');
+ assert.equal(result.state.pipa[0].qty,1);
+ assert.equal(result.state.picc[0].id,undefined);
+});
+test('retrocompatibilidade: PICC legado concorrente exige revisao manual sem perda de dados',()=>{
+ const h=harness();
+ const base={picc:[{bed:1,insertDate:'2026-10-01',status:'Ativo'}]};
+ const local=JSON.parse(JSON.stringify(base)),server=JSON.parse(JSON.stringify(base));
+ local.picc[0].status='Retirado';server.picc[0].external='2 cm';
+ const result=JSON.parse(h.eval('JSON.stringify(cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(local)+','+JSON.stringify(server)+'))'));
+ assert.equal(result.conflicts[0].path,'picc');
+ assert.equal(result.state.picc[0].external,'2 cm');
 });
