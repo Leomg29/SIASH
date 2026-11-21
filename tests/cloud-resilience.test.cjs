@@ -291,3 +291,26 @@ test('GET atrasado no login não sobrescreve edição local feita durante a cons
  assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
  assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).state.beds[0].patient,'RN-local');
 });
+
+test('DOM clinico: HTTP 409 preserva formulario e apresenta comparacao local/remoto',async()=>{
+ const h=harness({responses:[
+  {status:409,body:{conflict:true,error:'Revisão obsoleta'}},
+  {status:200,body:{exists:true,revision:2,payload:{state:{beds:[{n:1,patient:'RN-SERVIDOR'}]}}}}
+ ]});
+ const elements=new Map();
+ for(const id of ['cloud-conflict-panel','cloud-conflict-local','cloud-conflict-remote','cloud-conflict-message','cloud-conflict-refresh','cloud-conflict-close'])
+  elements.set(id,{hidden:true,textContent:'',onclick:null});
+ const oldGet=h.context.document.getElementById;
+ h.context.document.getElementById=id=>elements.get(id)||oldGet(id);
+ h.eval('S.beds=[{n:1,patient:"RN-LOCAL"}];scheduleCloudSave()');
+ await h.tick();
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(h.eval('S.beds[0].patient'),'RN-LOCAL');
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).state.beds[0].patient,'RN-LOCAL');
+ assert.equal(elements.get('cloud-conflict-panel').hidden,false);
+ assert.match(elements.get('cloud-conflict-local').textContent,/RN-LOCAL/);
+ assert.match(elements.get('cloud-conflict-remote').textContent,/RN-SERVIDOR/);
+ assert.equal(h.eval('SIASH_CLOUD.revision'),1,'não atualizar revisão automaticamente');
+ h.eval('scheduleCloudSave({retry:true})');
+ assert.equal(h.requests.filter(r=>r.opts?.method==='PUT').length,1,'não reenviar dados conflitantes');
+});
