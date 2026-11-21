@@ -147,7 +147,14 @@ function scheduleCloudSave({retry=false}={}){
            preserveCloudDraft("session-expired");
            updateCloudBadge("Sessão expirada · rascunho protegido",true);
            alert("A sessão expirou durante a conferência do salvamento. Entre novamente para conciliar o rascunho protegido.");
-         }else{updateCloudBadge("Falha de rede · aguardando reconexão",true);retryCloudWhenOnline()}
+         }else{
+           // Sem leitura de confirmação, o PUT pode ter sido gravado apesar da falha de rede.
+           // Bloquear qualquer reenvio automático, inclusive edições feitas durante a requisição.
+           SIASH_CLOUD.conflict=true;
+           preserveCloudDraft("confirmation-unknown");
+           updateCloudBadge("SALVAMENTO INCERTO · conciliação necessária",true);
+           alert("Não foi possível confirmar se o último salvamento chegou ao servidor. Seu rascunho permanece neste navegador. O reenvio automático foi bloqueado para evitar duplicidades ou conflitos; solicite conciliação antes de continuar.");
+         }
        }
      }
    }finally{
