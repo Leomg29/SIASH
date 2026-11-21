@@ -254,3 +254,20 @@ test('renderizacao principal nao executa modulos removidos do menu',()=>{
  assert.match(render,/renderPipa\s*\(/);
  assert.match(render,/renderDocs\s*\(/);
 });
+
+test('PUT cloud mantém lock e verificação de revisão na mesma transação antes do UPDATE',()=>{
+ const begin=source.indexOf('app.put("/api/state",auth,async(req,res)=>');
+ const end=source.indexOf('app.put("/api/state/init"',begin);
+ assert.ok(begin>=0&&end>begin);
+ const route=source.slice(begin,end);
+ const beginAt=route.indexOf('await client.query("BEGIN")');
+ const lockAt=route.indexOf('SELECT payload,revision FROM siash_state WHERE id=1 FOR UPDATE');
+ const compareAt=route.indexOf('if(current!==base)');
+ const updateAt=route.indexOf('UPDATE siash_state SET payload=$1');
+ const commitAt=route.indexOf('await client.query("COMMIT")');
+ assert.ok(beginAt>=0&&beginAt<lockAt&&lockAt<compareAt&&compareAt<updateAt&&updateAt<commitAt,
+  'ordem transacional: BEGIN, SELECT FOR UPDATE, comparar versão, UPDATE, COMMIT');
+ assert.match(route,/if\(current!==base\)\{await client\.query\("ROLLBACK"\);return res\.status\(409\)/,
+  'revisão obsoleta deve fazer ROLLBACK e retornar HTTP 409');
+ assert.match(route,/finally\{client\.release\(\)\}/,'conexão deve ser liberada');
+});
