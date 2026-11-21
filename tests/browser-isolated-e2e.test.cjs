@@ -42,7 +42,7 @@ test('Chromium real: dois plantoes, 409, resolucao e persistencia apos reload',{
   }
   const day=await prepare(a,'plantao-diurno'),night=await prepare(b,'plantao-noturno');
   await night.evaluate(()=>{S.beds[0].patient='RN-NOTURNO';scheduleCloudSave()});
-  await night.waitForFunction(()=>SIASH_CLOUD.revision===2,{timeout:10000});
+  await night.waitForFunction(()=>SIASH_CLOUD.revision===2,null,{timeout:10000});
   await day.evaluate(()=>{S.beds[0].patient='RN-DIURNO';scheduleCloudSave()});
   await day.locator('#cloud-conflict-panel').waitFor({state:'visible',timeout:15000});
   assert.match(await day.locator('#cloud-conflict-local').innerText(),/RN-DIURNO/);
@@ -53,7 +53,7 @@ test('Chromium real: dois plantoes, 409, resolucao e persistencia apos reload',{
   await day.locator('#cloud-conflict-resolutions select').first().selectOption('local');
   assert.equal(await confirm.isEnabled(),true);
   await confirm.click();
-  await day.waitForFunction(()=>SIASH_CLOUD.revision===3&&SIASH_CLOUD.conflict===false,{timeout:15000});
+  await day.waitForFunction(()=>SIASH_CLOUD.revision===3&&SIASH_CLOUD.conflict===false,null,{timeout:15000});
   const db=await pool.query('SELECT payload,revision FROM siash_state WHERE id=1');
   assert.equal(Number(db.rows[0].revision),3);
   assert.equal(db.rows[0].payload.state.beds[0].patient,'RN-DIURNO');
