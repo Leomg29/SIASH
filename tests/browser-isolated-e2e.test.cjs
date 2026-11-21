@@ -3,13 +3,14 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const {spawn}=require('node:child_process');
 const {setTimeout:delay}=require('node:timers/promises');
-const {Pool}=require('pg');
-const {chromium}=require('playwright');
+const isolated=process.env.SIASH_ISOLATED_CI==='1';
+const Pool=isolated?require('pg').Pool:null;
+const chromium=isolated?require('playwright').chromium:null;
 const URL='http://127.0.0.1:18781';
 const DB='postgres://siash_ci:siash_ci@127.0.0.1:5432/siash_ci';
-const pool=new Pool({connectionString:DB,ssl:false});
+const pool=isolated?new Pool({connectionString:DB,ssl:false}):null;
 const initial={beds:[{n:1,patient:'BASE'},{n:4,patient:'BASE4'}],picc:[],pipa:[]};
-test('Chromium real: dois plantoes, 409, resolucao e persistencia apos reload',{timeout:120000},async()=>{
+test('Chromium real: dois plantoes, 409, resolucao e persistencia apos reload',{timeout:120000,skip:!isolated},async()=>{
  assert.equal(process.env.SIASH_ISOLATED_CI,'1');
  assert.equal(process.env.DATABASE_URL,DB);
  const child=spawn(process.execPath,['server.js'],{env:{...process.env,PORT:'18781',DATABASE_URL:DB,PGSSLMODE:'disable',JWT_SECRET:'siash-ci-isolated-browser-secret-32-chars'},stdio:['ignore','pipe','pipe']});
@@ -22,10 +23,9 @@ test('Chromium real: dois plantoes, 409, resolucao e persistencia apos reload',{
    if(i===149)throw Error('Server startup: '+logs);
    await delay(100);
   }
-  const bootstrap=await fetch(URL+'/api/bootstrap',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'isolated_browser',password:'isolated-browser-password'})});
+  const bootstrap=await fetch(URL+'/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({username:'siash_ci_owner',password:'isolated-only-password'})});
   assert.equal(bootstrap.status,200);const token=(await bootstrap.json()).token;
-  const init=await fetch(URL+'/api/state/init',{method:'PUT',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({payload:{state:initial,security:{}}})});
-  assert.equal(init.status,200);
+  await pool.query('UPDATE siash_state SET payload=$1,revision=1 WHERE id=1',[{state:initial,security:{}}]);
   browser=await chromium.launch({headless:true});
   const a=await browser.newContext(),b=await browser.newContext();
   async function prepare(context,user){
