@@ -39,6 +39,8 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Password and midnight census safety regressions
+        run: node --test tests/auth-password.test.cjs tests/census-midnight.test.cjs
       - name: Isolated real PostgreSQL chaos suite
         run: node --test tests/postgres-isolated-chaos.test.cjs
       - name: Install Chromium for isolated browser E2E
