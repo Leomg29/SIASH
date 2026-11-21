@@ -242,3 +242,15 @@ test('menu da UTIN não exibe NIR/Huddle nem Pessoas/RH',()=>{
  assert.doesNotMatch(html,/<button[^>]*data-view="rh"/);
  assert.match(html,/<button[^>]*data-view="docs"/);
 });
+
+test('renderizacao principal nao executa modulos removidos do menu',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ const start=app.indexOf('function renderAll(){');
+ const end=app.indexOf('document.querySelectorAll(".nav-item")',start);
+ assert.ok(start>=0&&end>start);
+ const render=app.slice(start,end);
+ assert.doesNotMatch(render,/renderHuddle\s*\(/);
+ assert.doesNotMatch(render,/renderRH\s*\(/);
+ assert.match(render,/renderPipa\s*\(/);
+ assert.match(render,/renderDocs\s*\(/);
+});
