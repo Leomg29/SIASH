@@ -116,6 +116,7 @@ function scheduleCloudSave({retry=false}={}){
          if(record&&record.cancelledAt&&record.cancelReason){
            record.cancelledAt=item.cancelledAt;
            record.cancelledBy=item.cancelledBy;
+           if(typeof item.cancelReason==="string")record.cancelReason=item.cancelReason;
          }
        }
        localStorage.setItem(STORE,JSON.stringify(S));
