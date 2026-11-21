@@ -52,8 +52,22 @@ async function cloudLoadAfterLogin(){
    alert("Existe um rascunho não sincronizado neste navegador. Ele foi preservado e o salvamento automático foi bloqueado. Solicite conciliação antes de continuar.");
    return true;
  }
+ // Uma edição local iniciada durante o GET não pode ser substituída pela resposta atrasada.
+ const loadGeneration=SIASH_CLOUD.editGeneration;
  const remote=await cloudJson("/api/state");
+ if(SIASH_CLOUD.editGeneration!==loadGeneration||cloudPending()){
+   preserveCloudDraft("load-race");
+   SIASH_CLOUD.conflict=true;
+   updateCloudBadge("CONFLITO · edição local durante carregamento",true);
+   alert("Houve uma edição local enquanto os dados remotos eram carregados. Rascunho protegido; conciliação necessária.");
+   return true;
+ }
  if(remote.exists&&remote.payload?.state){
+   if(!Number.isSafeInteger(remote.revision)||remote.revision<1){
+     preserveCloudDraft("revision-unavailable");SIASH_CLOUD.conflict=true;
+     updateCloudBadge("REVISÃO REMOTA INVÁLIDA · rascunho protegido",true);
+     throw new Error("Estado remoto sem revisão válida; conciliação necessária.");
+   }
    SIASH_CLOUD.revision=remote.revision;SIASH_CLOUD.conflict=false;
    S=remote.payload.state; if(remote.payload.security)setSecurityState(remote.payload.security);
    normalize();localStorage.setItem(STORE,JSON.stringify(S));SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
