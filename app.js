@@ -145,6 +145,7 @@ function scheduleCloudSave({retry=false}={}){
      else if(e.conflict||e.status===409||e.status===428||e.status===422){
        SIASH_CLOUD.conflict=true;
        localStorage.setItem(STORE,JSON.stringify(S));
+       void showCloudConflictPanel();
        updateCloudBadge(e.status===422?"INTEGRIDADE PIPA · revisão necessária":"CONFLITO · dados locais preservados",true);
        alert(e.status===422?"O servidor recusou uma alteração do PIPA por inconsistência de integridade: "+e.message+" Seu rascunho está preservado e o envio automático foi bloqueado. Solicite conciliação à coordenação.":"ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
      }else{
@@ -190,6 +191,33 @@ function scheduleCloudSave({retry=false}={}){
 function scheduleCloudSaveRetry(){
  clearTimeout(cloudSaveTimer);
  cloudSaveTimer=setTimeout(()=>{if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict)scheduleCloudSave({retry:true})},450);
+}
+async function showCloudConflictPanel(){
+ const panel=document.getElementById("cloud-conflict-panel");
+ if(!panel)return;
+ const draft=cloudPending();
+ const local=draft?.state||S;
+ const localEl=document.getElementById("cloud-conflict-local");
+ const remoteEl=document.getElementById("cloud-conflict-remote");
+ const msg=document.getElementById("cloud-conflict-message");
+ if(localEl)localEl.textContent=JSON.stringify(local,null,2);
+ if(remoteEl)remoteEl.textContent="Consultando servidor...";
+ panel.hidden=false;
+ const refresh=document.getElementById("cloud-conflict-refresh");
+ const close=document.getElementById("cloud-conflict-close");
+ if(close)close.onclick=()=>{panel.hidden=true};
+ async function loadRemote(){
+  try{
+   const remote=await cloudJson("/api/state");
+   if(remoteEl)remoteEl.textContent=remote.exists&&remote.payload?.state?JSON.stringify(remote.payload.state,null,2):"Estado remoto indisponível";
+   if(msg)msg.textContent="Conflito detectado. Rascunho local preservado; compare os dados antes de solicitar conciliação.";
+  }catch(e){
+   if(remoteEl)remoteEl.textContent="Não foi possível consultar o servidor: "+e.message;
+   if(msg)msg.textContent="Conexão indisponível. O rascunho local foi mantido. Não reenviar automaticamente.";
+  }
+ }
+ if(refresh)refresh.onclick=loadRemote;
+ await loadRemote();
 }
 function updateCloudBadge(text,bad=false){
  const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad)
