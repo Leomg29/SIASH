@@ -232,3 +232,62 @@ test('confirmacao do servidor atualiza autor data e justificativa PIPA no estado
  assert.equal(h.eval('SIASH_CLOUD.revision'),2);
  assert.equal(h.data.has('siash_cloud_pending_v1'),false);
 });
+
+test('race condition: dois plantoes editam mesmo leito; somente um commit e outro preserva rascunho',async()=>{
+ let revision=1;
+ let remoteBed={n:1,status:'Livre',patient:''};
+ const requests=[];
+ let release;
+ const barrier=new Promise(resolve=>{release=resolve});
+ let arrived=0;
+ const server=async(url,opts)=>{
+   assert.equal(url,'/api/state');
+   assert.equal(opts.method,'PUT');
+   const body=JSON.parse(opts.body);
+   requests.push(body);
+   arrived++;
+   if(arrived===2)release();
+   await barrier;
+   // Equivalente ao SELECT FOR UPDATE + verificação de base_revision no PostgreSQL.
+   if(body.base_revision!==revision){
+     return {ok:false,status:409,json:async()=>({conflict:true,current_revision:revision,error:'Conflito de revisão'})};
+   }
+   remoteBed=JSON.parse(JSON.stringify(body.payload.state.beds[0]));
+   revision++;
+   return {ok:true,status:200,json:async()=>({revision})};
+ };
+ const a=harness(),b=harness();
+ for(const [h,user,patient] of [[a,'plantao-a','RN-A'],[b,'plantao-b','RN-B']]){
+   h.eval('SESSION.user='+JSON.stringify(user));
+   h.eval('S.beds=[{n:1,status:"Ocupado",patient:'+JSON.stringify(patient)+'}]');
+   h.context.fetch=async(url,opts)=>{h.requests.push({url,opts});return server(url,opts)};
+   h.eval('scheduleCloudSave()');
+ }
+ await Promise.all([a.tick(),b.tick()]);
+ assert.equal(requests.length,2,'ambos tentaram gravar a mesma revisão');
+ assert.equal(revision,2,'apenas uma gravação pode avançar a revisão');
+ const winner=remoteBed.patient==='RN-A'?a:b;
+ const loser=winner===a?b:a;
+ const losingPatient=winner===a?'RN-B':'RN-A';
+ assert.equal(winner.eval('SIASH_CLOUD.revision'),2);
+ assert.equal(loser.eval('SIASH_CLOUD.conflict'),true,'o perdedor deve sinalizar conflito');
+ assert.equal(loser.eval('S.beds[0].patient'),losingPatient,'a edição local não pode ser substituída');
+ assert.equal(JSON.parse(loser.data.get('siash_cloud_pending_v1')).state.beds[0].patient,losingPatient,'o rascunho deve persistir');
+ assert.match(loser.status.textContent,/CONFLITO/);
+ loser.eval('scheduleCloudSave({retry:true})');
+ assert.equal(loser.requests.length,1,'não reenviar automaticamente após 409');
+});
+
+test('GET atrasado no login não sobrescreve edição local feita durante a consulta',async()=>{
+ let release;
+ const waiting=new Promise(resolve=>{release=resolve});
+ const h=harness();
+ h.context.fetch=async()=>{await waiting;return {ok:true,status:200,json:async()=>({exists:true,revision:2,payload:{state:{beds:[{n:1,patient:'RN-remoto'}]}}})}};
+ const loading=h.eval('cloudLoadAfterLogin()');
+ h.eval('S.beds=[{n:1,patient:"RN-local"}];scheduleCloudSave()');
+ release();
+ await loading;
+ assert.equal(h.eval('S.beds[0].patient'),'RN-local');
+ assert.equal(h.eval('SIASH_CLOUD.conflict'),true);
+ assert.equal(JSON.parse(h.data.get('siash_cloud_pending_v1')).state.beds[0].patient,'RN-local');
+});
