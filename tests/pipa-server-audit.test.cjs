@@ -224,3 +224,14 @@ test('reenvio apos falha de rede exige revisao remota valida e igual',()=>{
  assert.match(save,/Uma resposta incompleta não comprova/);
  assert.match(save,/preserveCloudDraft\("confirmation-unknown"\)/);
 });
+
+test('confirmacao cloud reconcilia justificativa canonica do cancelamento PIPA',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ const route=source.slice(end,source.indexOf('app.put("/api/state/init"',end));
+ assert.match(route,/cancelReason:payload\.state\.pipa\[e\.index\]\.cancelReason/);
+ assert.match(app,/if\(typeof item\.cancelReason==="string"\)record\.cancelReason=item\.cancelReason/);
+ const original={...row()};
+ const pending={...original,cancelledAt:'falso',cancelledBy:'falso',cancelReason:'   Duplicidade confirmada   '};
+ const result=reconcile([original],[pending]);
+ assert.equal(result.payload.state.pipa[0].cancelReason,'Duplicidade confirmada');
+});
