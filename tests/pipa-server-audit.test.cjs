@@ -214,3 +214,13 @@ test('falha de PUT e da consulta de revisao bloqueia reenvio automatico',()=>{
  assert.match(save,/if\(!SIASH_CLOUD\.conflict&&generation!==SIASH_CLOUD\.editGeneration\)/);
  assert.match(save,/reenvio automático foi bloqueado/);
 });
+
+test('reenvio apos falha de rede exige revisao remota valida e igual',()=>{
+ const app=fs.readFileSync('app.js','utf8');
+ const start=app.indexOf('function scheduleCloudSave(');
+ const end=app.indexOf('function scheduleCloudSaveRetry(',start);
+ const save=app.slice(start,end);
+ assert.match(save,/else if\(remote\.exists&&Number\.isSafeInteger\(remote\.revision\)&&remote\.revision===SIASH_CLOUD\.revision\)/);
+ assert.match(save,/Uma resposta incompleta não comprova/);
+ assert.match(save,/preserveCloudDraft\("confirmation-unknown"\)/);
+});
