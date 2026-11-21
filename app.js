@@ -458,6 +458,7 @@ function applyPermissions(){
  if(owner&&$("admin-owner-name"))$("admin-owner-name").textContent=SESSION.user||"Proprietário";
  if($("doc-access-badge"))$("doc-access-badge").textContent=owner?"Super Admin · todos os setores":`${a.sector} · ${a.level==="validator"?"Validador":a.level==="editor"?"Editor/Revisor":"Leitor"}`;
 }
+function validStrongPassword(password){return typeof password==="string"&&password.length>=10&&password.length<=128&&/[!@#$%^&*._-]/.test(password)}
 function initRememberedLogin(){const el=$("login-user");if(el&&!el.value)el.value=rememberedLogin()||"leomg29"}
 function initSecurityUI(){initRememberedLogin();
  if(SIASH_CLOUD.enabled){
@@ -1152,7 +1153,7 @@ $("admin-user-form").addEventListener("submit",async e=>{
  if(!isOwner())return alert("Somente o Administrador Proprietário pode cadastrar usuários.");
  const username=$("admin-new-user").value.trim(),password=$("admin-new-pass").value,confirmPass=$("admin-new-pass-confirm").value,feedback=$("admin-user-feedback");
  if(!/^[a-zA-Z0-9._-]{3,64}$/.test(username))return feedback.textContent="Informe um login de 3 a 64 caracteres, sem espaços.";
- if(password.length<10||password.length>128)return feedback.textContent="A senha deve ter de 10 a 128 caracteres.";
+ if(!validStrongPassword(password))return feedback.textContent="A senha deve ter 10 a 128 caracteres e pelo menos um especial (!@#$%^&*._-).";
  if(password!==confirmPass)return feedback.textContent="As senhas não coincidem.";
  const button=e.currentTarget.querySelector('button[type="submit"]');button.disabled=true;feedback.textContent="Cadastrando...";
  try{
@@ -1163,9 +1164,22 @@ $("admin-user-form").addEventListener("submit",async e=>{
  finally{button.disabled=false}
 });
 $("admin-users-refresh").addEventListener("click",loadAdminUsers);
+$("change-password-open")?.addEventListener("click",()=>{$("change-password-panel").classList.toggle("hidden");$("change-password-feedback").textContent="";});
+$("change-password-cancel")?.addEventListener("click",()=>{$("change-password-panel").classList.add("hidden");$("change-password-form").reset();});
+$("change-password-form")?.addEventListener("submit",async e=>{
+ e.preventDefault();
+ const feedback=$("change-password-feedback"),currentPassword=$("change-current-password").value,newPassword=$("change-new-password").value,confirmPassword=$("change-confirm-password").value;
+ if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return feedback.textContent="A troca de senha exige sessão autenticada na Cloud.";
+ if(!validStrongPassword(newPassword))return feedback.textContent="Nova senha: mínimo 10 caracteres e um especial (!@#$%^&*._-).";
+ if(newPassword!==confirmPassword)return feedback.textContent="A confirmação não coincide.";
+ const btn=e.currentTarget.querySelector('button[type="submit"]');btn.disabled=true;
+ try{await cloudJson("/api/change-password",{method:"POST",body:JSON.stringify({currentPassword,newPassword})});e.currentTarget.reset();feedback.textContent="Senha alterada com sucesso.";}
+ catch(err){feedback.textContent="Não foi possível alterar a senha: "+err.message;}
+ finally{btn.disabled=false}
+});
 $("owner-create-btn").addEventListener("click",async()=>{
  const user=$("owner-user").value.trim(),pass=$("owner-pass").value,pass2=$("owner-pass2").value;
- if(!user)return alert("Informe o usuário proprietário.");if(pass.length<10)return alert("A senha proprietária deve ter pelo menos 10 caracteres.");if(pass!==pass2)return alert("As senhas não coincidem.");
+ if(!user)return alert("Informe o usuário proprietário.");if(!validStrongPassword(pass))return alert("A senha proprietária deve ter 10 a 128 caracteres e pelo menos um especial (!@#$%^&*._-).");if(pass!==pass2)return alert("As senhas não coincidem.");
  try{
    if(SIASH_CLOUD.enabled){
      await cloudAuthenticate(user,pass,true);
@@ -1179,7 +1193,7 @@ $("owner-create-btn").addEventListener("click",async()=>{
  }catch(e){alert(e.message||"Falha na configuração Cloud.")}
 })
 $("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}rememberLogin(SESSION.user||user);$("login-view").classList.add("hidden");$("app-view").classList.remove("hidden");$("logged-user").textContent=SESSION.user;applyPermissions();if(role==="owner")auditAdmin("Login do Administrador Proprietário.");renderAll();if(role==="owner")setTimeout(()=>migrateLegacyWordDocsIfNeeded().catch(e=>console.error("Migração automática .doc",e)),700)}catch(e){$("login-feedback").textContent=e.message||"Falha no login."}})
-$("logout-btn").addEventListener("click",()=>{SIASH_CLOUD.token="";sessionStorage.removeItem("siash_cloud_token");SESSION={authenticated:false,role:null,user:null};$("app-view").classList.add("hidden");$("login-view").classList.remove("hidden");initSecurityUI()})
+$("logout-btn").addEventListener("click",()=>{SIASH_CLOUD.token="";sessionStorage.removeItem("siash_cloud_token");SESSION={authenticated:false,role:null,user:null};$("change-password-panel")?.classList.add("hidden");$("change-password-form")?.reset();$("app-view").classList.add("hidden");$("login-view").classList.remove("hidden");initSecurityUI()})
 $("refresh-dashboard").addEventListener("click",renderAll)
 $("reset-shift").addEventListener("click",()=>{if(confirm("Iniciar novo plantão? O histórico mensal será preservado.")){S.checklist=CHECKS.map(x=>({text:x,status:"Pendente"}));S.events=[];S.pending=[];S.shiftStarted=new Date().toISOString();save()}})
 $("event-form").addEventListener("submit",e=>{e.preventDefault();if(!$("ev-text").value.trim())return;S.events.unshift({when:nowBR(),type:$("ev-type").value,bed:$("ev-bed").value,text:$("ev-text").value.trim()});$("ev-text").value="";save()})
