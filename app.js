@@ -17,6 +17,39 @@ const SIASH_CLOUD={
  editGeneration:0,
  retryCount:0
 };
+// Snapshot imutável da última revisão confirmada. Não usar o estado local como base.
+let cloudBaseSnapshot=null;
+function cloudSetBase(state){cloudBaseSnapshot=JSON.parse(JSON.stringify(state))}
+function cloudThreeWayMerge(base,local,server){
+ const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const conflicts=[];
+ function merge(b,l,r,path){
+  if(eq(l,b))return structuredCloneSafe(r);
+  if(eq(r,b)||eq(l,r))return structuredCloneSafe(l);
+  if(Array.isArray(b)&&Array.isArray(l)&&Array.isArray(r)){
+   if(path==="beds"){
+    const keyed=a=>a.every(x=>x&&Number.isSafeInteger(Number(x.n)))&&new Set(a.map(x=>Number(x.n))).size===a.length;
+    if(!keyed(b)||!keyed(l)||!keyed(r)){conflicts.push({path,base:b,local:l,server:r});return structuredCloneSafe(r)}
+    const bm=new Map(b.map(x=>[Number(x.n),x])),lm=new Map(l.map(x=>[Number(x.n),x])),rm=new Map(r.map(x=>[Number(x.n),x]));
+    const keys=[...new Set([...bm.keys(),...lm.keys(),...rm.keys()])].sort((a,z)=>a-z);
+    return keys.map(k=>merge(bm.get(k),lm.get(k),rm.get(k),path+"["+k+"]")).filter(x=>x!==undefined);
+   }
+   // Arrays without immutable IDs cannot be merged by index if inserts/deletes occurred.
+   if(b.length!==l.length||b.length!==r.length){conflicts.push({path,base:b,local:l,server:r});return structuredCloneSafe(r)}
+   return b.map((x,i)=>merge(x,l[i],r[i],path+"["+i+"]"));
+  }
+  if(b&&l&&r&&typeof b==="object"&&typeof l==="object"&&typeof r==="object"&&!Array.isArray(b)&&!Array.isArray(l)&&!Array.isArray(r)){
+   const out={};for(const k of new Set([...Object.keys(b),...Object.keys(l),...Object.keys(r)])){
+    if(k==="__proto__"||k==="constructor"||k==="prototype")continue;
+    const v=merge(b[k],l[k],r[k],path?path+"."+k:k);if(v!==undefined)out[k]=v;
+   }return out;
+  }
+  conflicts.push({path,base:b,local:l,server:r});
+  return structuredCloneSafe(r);
+ }
+ function structuredCloneSafe(v){return v===undefined?undefined:JSON.parse(JSON.stringify(v))}
+ return {state:merge(base,local,server,""),conflicts};
+}
 const SIASH_PENDING_KEY="siash_cloud_pending_v1";
 function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
 function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:SIASH_CLOUD.revision,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
@@ -69,6 +102,7 @@ async function cloudLoadAfterLogin(){
      throw new Error("Estado remoto sem revisão válida; conciliação necessária.");
    }
    SIASH_CLOUD.revision=remote.revision;SIASH_CLOUD.conflict=false;
+   cloudSetBase(remote.payload.state);
    S=remote.payload.state; if(remote.payload.security)setSecurityState(remote.payload.security);
    normalize();localStorage.setItem(STORE,JSON.stringify(S));SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
  }
@@ -92,7 +126,7 @@ async function cloudLoadAfterLogin(){
      throw new Error("Migração inicial não confirmada. O rascunho local foi preservado para conciliação: "+e.message);
    }
    if(!Number.isSafeInteger(initialized.revision)||initialized.revision<1){preserveCloudDraft("revision-unavailable");SIASH_CLOUD.conflict=true;throw new Error("Inicialização sem revisão válida. O rascunho foi preservado e a sincronização foi bloqueada.");}
-   SIASH_CLOUD.revision=initialized.revision;SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
+   SIASH_CLOUD.revision=initialized.revision;cloudSetBase(S);SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=new Date().toISOString();updateCloudBadge("Dados locais migrados");loadSharedPending();return true;
  }
  return false;
 }
@@ -117,9 +151,11 @@ function scheduleCloudSave({retry=false}={}){
    if(!Number.isSafeInteger(SIASH_CLOUD.revision)){preserveCloudDraft("revision-unavailable");updateCloudBadge("Sessão sem revisão · rascunho protegido",true);return;}
    SIASH_CLOUD.syncing=true;updateCloudBadge("Salvando…");
    const generation=SIASH_CLOUD.editGeneration;
+   const sentState=JSON.parse(JSON.stringify(S));
    try{
      const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
      SIASH_CLOUD.revision=r.revision;
+     cloudSetBase(sentState);
      // O servidor é a fonte de verdade para autor e horário do cancelamento.
      // Se houve novas edições durante o PUT, não sobrescrever o rascunho atual.
      if(Array.isArray(r.pipa_cancellations)&&r.pipa_cancellations.length){
