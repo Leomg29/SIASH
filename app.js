@@ -36,6 +36,7 @@ function cloudThreeWayMerge(base,local,server){
    }
    // Arrays without immutable IDs cannot be merged by index if inserts/deletes occurred.
    if(b.length!==l.length||b.length!==r.length){conflicts.push({path,base:b,local:l,server:r});return structuredCloneSafe(r)}
+   if(path==="picc"&&b.some((x,i)=>!x||!l[i]||!r[i]||String(x.bed)!==String(l[i].bed)||String(x.bed)!==String(r[i].bed)||String(x.date||x.insertDate||"")!==String(l[i].date||l[i].insertDate||"")||String(x.date||x.insertDate||"")!==String(r[i].date||r[i].insertDate||""))){conflicts.push({path,base:b,local:l,server:r});return structuredCloneSafe(r)}
    return b.map((x,i)=>merge(x,l[i],r[i],path+"["+i+"]"));
   }
   if(b&&l&&r&&typeof b==="object"&&typeof l==="object"&&typeof r==="object"&&!Array.isArray(b)&&!Array.isArray(l)&&!Array.isArray(r)){
