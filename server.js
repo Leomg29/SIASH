@@ -1,5 +1,6 @@
 
 const express = require("express");
+const {decideMidnightClosure,dateInBrazil,previousDate,NOTE}=require("./census-midnight.cjs");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -87,6 +88,14 @@ async function initDb(){
       record_index INTEGER NOT NULL,
       record_before JSONB NOT NULL,
       reason TEXT NOT NULL,
+      state_revision BIGINT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS siash_census_auto_closures(
+      reference_date DATE PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      midnight_at TIMESTAMPTZ NOT NULL,
+      census_count INTEGER NOT NULL,
+      note TEXT NOT NULL,
       state_revision BIGINT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS siash_cloud_audit(
@@ -219,7 +228,37 @@ app.get("/api/pending/:id/history",auth,async(req,res)=>{
   const q=await pool.query('SELECT actor,action,previous_status,new_status,created_at FROM siash_pending_history WHERE task_id=$1 ORDER BY id DESC',[id]);res.json({items:q.rows});
 });
 
+// Idempotent midnight reconciliation: called on startup and authenticated requests.
+async function reconcileMidnightCensus(){
+ const today=dateInBrazil(new Date()),referenceDate=previousDate(today);
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const row=await client.query("SELECT payload,revision,updated_at FROM siash_state WHERE id=1 FOR UPDATE");
+  if(!row.rows.length){await client.query("ROLLBACK");return {status:"pending",reason:"Estado central não inicializado."};}
+  const state=row.rows[0],daily=state.payload?.daily?.find?.(r=>r.date===referenceDate);
+  const decision=decideMidnightClosure({daily,referenceDate,updatedAt:state.updated_at});
+  if(decision.status!=="automatic"){await client.query("ROLLBACK");return decision;}
+  const existing=await client.query("SELECT reference_date FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
+  if(existing.rows.length){await client.query("ROLLBACK");return {status:"automatic",alreadyRecorded:true,referenceDate};}
+  // Never rewrite the clinical payload or overwrite a manual census conference.
+  const inserted=await client.query("INSERT INTO siash_census_auto_closures(reference_date,midnight_at,census_count,note,state_revision) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING reference_date",[referenceDate,decision.registeredAt,decision.count,NOTE,state.revision]);
+  if(inserted.rows.length)await client.query("INSERT INTO siash_cloud_audit(username,action,details) VALUES($1,$2,$3)",["system",NOTE,JSON.stringify({referenceDate,count:decision.count,midnightAt:decision.registeredAt})]);
+  await client.query("COMMIT");
+  return {status:"automatic",referenceDate,alreadyRecorded:!inserted.rows.length};
+ }catch(err){try{await client.query("ROLLBACK")}catch(_){}throw err}finally{client.release()}
+}
+app.get("/api/census/midnight-status",auth,async(req,res)=>{
+ try{
+  const referenceDate=previousDate(dateInBrazil(new Date()));
+  const closure=await pool.query("SELECT reference_date,midnight_at,census_count,note FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
+  if(closure.rows.length)return res.json({status:"automatic",referenceDate,count:closure.rows[0].census_count,note:NOTE});
+  const result=await reconcileMidnightCensus();
+  res.json({status:result.status,referenceDate,reason:result.reason||null});
+ }catch(err){res.status(503).json({status:"unavailable",error:"Não foi possível verificar o fechamento do censo."})}
+});
 app.get("/api/state",auth,async(req,res)=>{
+  await reconcileMidnightCensus();
   const q=await pool.query("SELECT payload,updated_at,updated_by,revision FROM siash_state WHERE id=1");
   if(!q.rows.length) return res.json({exists:false});
   res.json({exists:true,payload:q.rows[0].payload,updated_at:q.rows[0].updated_at,updated_by:q.rows[0].updated_by,revision:Number(q.rows[0].revision)});
@@ -1677,4 +1716,4 @@ app.post("/api/users",auth,async(req,res)=>{
 app.use(express.static(__dirname,{extensions:["html"]}));
 app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"index.html")));
 
-initDb().then(()=>app.listen(PORT,()=>console.log(`SIASH Cloud ativa na porta ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});
+initDb().then(async()=>{await reconcileMidnightCensus();app.listen(PORT,()=>console.log(`SIASH Cloud ativa na porta ${PORT}`));setInterval(()=>reconcileMidnightCensus().catch(err=>console.error("Falha no fechamento automático do censo:",err.message)),60000).unref();}).catch(e=>{console.error(e);process.exit(1)});
