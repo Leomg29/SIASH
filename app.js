@@ -1182,7 +1182,7 @@ $("change-password-form")?.addEventListener("submit",async e=>{
  if(!validStrongPassword(newPassword))return feedback.textContent="Nova senha: mínimo 10 caracteres e um especial (!@#$%^&*._-).";
  if(newPassword!==confirmPassword)return feedback.textContent="A confirmação não coincide.";
  const btn=e.currentTarget.querySelector('button[type="submit"]');btn.disabled=true;
- try{await cloudJson("/api/change-password",{method:"POST",body:JSON.stringify({currentPassword,newPassword})});e.currentTarget.reset();feedback.textContent="Senha alterada com sucesso.";}
+ try{await cloudJson("/api/change-password",{method:"POST",body:JSON.stringify({currentPassword,newPassword,confirmPassword})});e.currentTarget.reset();feedback.textContent="Senha alterada com sucesso.";}
  catch(err){feedback.textContent="Não foi possível alterar a senha: "+err.message;}
  finally{btn.disabled=false}
 });
