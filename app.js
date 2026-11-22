@@ -589,27 +589,25 @@ function registerCensusConference(date,responsible){
  return {ok:true};
 }
 async function refreshMidnightCensusStatus(){
- const el=$("census-midnight-alert");if(!el||!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
+ const el=$("census-midnight-alert"),attention=$("census-pending-attention");
+ if(!el||!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
  try{
-  const data=await cloudJson("/api/census/midnight-status");
-  const selected=$("d-date")?.value||todayISO();
+  const data=await cloudJson("/api/census/window-status");
   const ref=dateBR(data.referenceDate);
-  const context=selected!==data.referenceDate?" (a data selecionada no formulário é "+dateBR(selected)+").":"";
-  if(data.status==="pending"){
-   el.textContent="ATENÇÃO — Censo de "+ref+" pendente de conferência manual pelo plantão noturno."+context+" "+(data.reason||"");
-   el.style.color="#b45309";
-  }else if(data.status==="automatic"){
-   el.textContent="Censo de "+ref+" fechado automaticamente pelo sistema às 00:00, sem admissões pendentes.";
-   el.style.color="";
-  }else if(data.status==="manual"){
-   el.textContent="Censo de "+ref+" com conferência manual registrada"+(data.responsible?" por "+data.responsible:"")+". O registro não certifica que a contagem ocorreu exatamente à meia-noite.";
-   el.style.color="";
-  }else{
-   el.textContent="Não foi possível determinar o status do censo de "+ref+". Verifique a conferência.";
-   el.style.color="#b45309";
-  }
- }catch(err){el.textContent="Não foi possível consultar o fechamento da meia-noite. Conferir manualmente.";el.style.color="#b45309";}
+  const selected=$("d-date")?.value||todayISO();
+  const context=selected===data.referenceDate?"":" Selecione "+ref+" no lançamento diário para conferir.";
+  const pending=data.attention==="overdue",warning=data.attention==="warning";
+  if(attention){attention.classList.toggle("hidden",!pending);attention.disabled=!pending;}
+  if(pending){el.textContent="ATENÇÃO — Censo de "+ref+" pendente após 00h10. Regularização supervisionada necessária."+context;el.style.color="#b45309";}
+  else if(warning){el.textContent="Censo de "+ref+": faltam menos de cinco minutos para o encerramento da janela de confirmação manual."+context;el.style.color="#b45309";}
+  else if(data.attention==="closed"){el.textContent="Conferência manual de "+ref+" registrada. A confirmação histórica não comprova, por si só, presença à meia-noite.";el.style.color="";}
+  else if(data.phase==="preparation"){el.textContent="Preparação do censo de "+ref+" disponível; confirmação oficial somente após 00h00.";el.style.color="";}
+  else if(data.phase==="confirmation"){el.textContent="Janela de conferência manual do censo de "+ref+" aberta até 00h10.";el.style.color="";}
+  else{el.textContent="Verifique o censo de "+ref+" e o estado de sincronização.";el.style.color="";}
+ }catch(err){if(attention)attention.classList.add("hidden");el.textContent="Não foi possível consultar o servidor. O status do censo está indisponível; não presuma fechamento.";el.style.color="#b45309";}
 }
+$("census-pending-attention")?.addEventListener("click",()=>{const selected=$("d-date")?.value||todayISO();$("census-closer")?.focus();$("census-midnight-alert")?.scrollIntoView({behavior:"smooth",block:"center"});});
+
 function renderCensusConference(date){
  const daily=S.daily.find(r=>r.date===date);
  const occupied=S.beds.filter(b=>b.status==="Ocupado").length;
@@ -1487,7 +1485,7 @@ $("s-test-ai-fallback")?.addEventListener("click",runCloudflareFallbackDiagnosti
 $("settings-form").addEventListener("submit",e=>{e.preventDefault();if(!requireOwner("alterações nas Configurações da Unidade"))return;const beds=+$("s-beds").value,intensive=+$("s-intensive").value,intermediate=+$("s-intermediate").value;if(intensive+intermediate!==beds)return alert("Intensivos + intermediários deve ser igual ao total de leitos.");S.settings={unit:$("s-unit").value,beds,intensive,intermediate,target:+$("s-target").value,hospital:$("s-hospital").value,aiProvider:$("s-ai-provider")?.value||"auto"};auditAdmin("Configurações estruturais da unidade alteradas.");save();alert("Configurações salvas pelo Administrador Proprietário.")})
 if($("admin-test-lock"))$("admin-test-lock").addEventListener("click",()=>{if(requireOwner("o teste administrativo")){auditAdmin("Teste de bloqueio estrutural executado com sucesso.");save();alert("Sessão proprietária validada: acesso estrutural autorizado.")}});$("export-local-backup")?.addEventListener("click",exportLocalBackup);
 $("import-local-backup")?.addEventListener("change",async e=>{const f=e.target.files?.[0];if(!f)return;try{await importBackupFile(f,!!(SIASH_CLOUD.enabled&&SIASH_CLOUD.token))}catch(err){alert(err.message)}e.target.value=""});
-$("d-date").value=todayISO();loadDailyForm($("d-date").value);$("picc-date").value=todayISO();$("picc-removal-date").value=todayISO();$("pipa-month").value=currentMonth();initSecurityUI();setInterval(renderClock,1000);
+$("d-date").value=todayISO();loadDailyForm($("d-date").value);$("picc-date").value=todayISO();$("picc-removal-date").value=todayISO();$("pipa-month").value=currentMonth();initSecurityUI();setInterval(renderClock,1000);setInterval(()=>{if(SESSION?.authenticated&&SIASH_CLOUD.enabled&&SIASH_CLOUD.token)void refreshMidnightCensusStatus()},30000);
 $("doc-access-form")?.addEventListener("submit",e=>{
  e.preventDefault();if(!requireOwner("a gestão de acessos documentais"))return;
  const user=$("doc-access-user").value.trim(),sector=$("doc-access-sector").value.trim(),level=$("doc-access-level").value;

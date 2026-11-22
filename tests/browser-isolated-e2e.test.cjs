@@ -58,12 +58,18 @@ test('Chromium real: dois plantoes, 409, resolucao e persistencia apos reload',{
     censusConferenceFeedback('Conferência salva e sincronizada.');
     const saved=!button.disabled&&alert.textContent.includes('sincronizada');
     date.value='2026-11-22';
-    cloudJson=async()=>({status:'pending',referenceDate:'2026-11-21',reason:'Conferência manual necessária.'});
+    const pendingButton=document.getElementById('census-pending-attention');
+    if(!pendingButton)throw Error('Botão de pendência do censo ausente');
+    const pendingState={attention:'overdue',phase:'expired',referenceDate:'2026-11-21',clinicalStatus:'pending'};
+    cloudJson=async(path)=>{if(path!=='/api/census/window-status')throw Error('Endpoint inesperado: '+path);return pendingState};
     await refreshMidnightCensusStatus();
-    const pending=alert.textContent.includes('21/11/2026')&&alert.textContent.includes('22/11/2026')&&alert.textContent.includes('pendente');
-    cloudJson=async()=>({status:'manual',referenceDate:'2026-11-21',responsible:'Enfermagem',registeredAt:'2026-11-22T11:42:33Z'});
+    const pending=pendingState.attention==='overdue'&&pendingState.referenceDate==='2026-11-21'&&
+      !pendingButton.classList.contains('hidden')&&!pendingButton.disabled;
+    const closedState={attention:'closed',phase:'expired',referenceDate:'2026-11-21',clinicalStatus:'manual'};
+    cloudJson=async(path)=>{if(path!=='/api/census/window-status')throw Error('Endpoint inesperado: '+path);return closedState};
     await refreshMidnightCensusStatus();
-    const manual=alert.textContent.includes('conferência manual registrada')&&!alert.textContent.includes('pendente');
+    const manual=closedState.attention==='closed'&&pendingButton.classList.contains('hidden')&&
+      alert.textContent.includes('Conferência manual');
     return {saving,saved,pending,manual};
    }finally{cloudJson=originalCloudJson;date.value=originalDate;censusConferencePending=null;button.disabled=initialDisabled;}
   });

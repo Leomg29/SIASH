@@ -4,7 +4,7 @@ const fs=require("node:fs");
 const vm=require("node:vm");
 const source=fs.readFileSync("app.js","utf8");
 const start=source.indexOf("function registerCensusConference(");
-const end=source.indexOf("function renderCensusConference(",start);
+const end=source.indexOf("async function refreshMidnightCensusStatus(",start);
 assert.ok(start>=0&&end>start,"census conference function not found");
 const fn=source.slice(start,end);
 function run(history){

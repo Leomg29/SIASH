@@ -246,6 +246,19 @@ async function reconcileMidnightCensus(){
  const decision=decideMidnightClosure({daily,referenceDate});
  return decision;
 }
+// Prévia de janela calculada exclusivamente com o relógio do servidor; sem mutações clínicas.
+app.get("/api/census/window-status",auth,async(req,res)=>{
+ try{
+  const {censusAttention}=require("./census-window.cjs");
+  const now=new Date(),window=censusAttention({now});
+  const row=await pool.query("SELECT payload FROM siash_state WHERE id=1");
+  const daily=row.rows[0]?.payload?.state?.daily?.find?.(r=>r.date===window.referenceDate);
+  const decision=decideMidnightClosure({daily,referenceDate:window.referenceDate,now});
+  const officiallyClosed=decision.status==="manual";
+  const attention=censusAttention({now,officiallyClosed});
+  res.json({...attention,serverTime:now.toISOString(),clinicalStatus:decision.status,informationalOnly:true});
+ }catch(err){res.status(503).json({status:"unavailable",error:"Não foi possível verificar a janela do censo."})}
+});
 app.get("/api/census/midnight-status",auth,async(req,res)=>{
  try{
   const referenceDate=previousDate(dateInBrazil(new Date()));
@@ -346,6 +359,24 @@ app.put("/api/state",auth,async(req,res)=>{
     const removalAudit=detectDailyRecordRemoval(oldDaily,newDaily);
     if(removalAudit.blocked){await client.query("ROLLBACK");return res.status(422).json({error:"CLINICAL_RECORD_REMOVAL_BLOCKED",message:removalAudit.reason,date:removalAudit.date||null});}
     if(!Array.isArray(newDaily)){await client.query("ROLLBACK");return res.status(422).json({error:"Lançamentos diários inválidos."});}
+    // Proteção transacional: nenhuma conferência nova fora da janela oficial,
+    // nem substituição ou remoção de conferências históricas existentes.
+    const {validateConferenceMutation}=require("./census-window.cjs");
+    const serverNow=new Date();
+    for(const before of oldDaily){
+      if(!before?.censusConference)continue;
+      const after=newDaily.find(d=>d?.date===before.date);
+      if(!after||JSON.stringify(after.censusConference??null)!==JSON.stringify(before.censusConference)){
+        await client.query("ROLLBACK");return res.status(422).json({error:"CENSUS_CONFERENCE_IMMUTABLE",date:before.date,message:"Conferência histórica protegida; use fluxo supervisionado de retificação."});
+      }
+    }
+    for(const after of newDaily){
+      if(!after?.censusConference)continue;
+      const before=oldDaily.find(d=>d?.date===after.date);
+      const verdict=validateConferenceMutation({before,after,referenceDate:after.date,now:serverNow});
+      if(!verdict.ok){await client.query("ROLLBACK");return res.status(422).json({error:verdict.code,date:after.date,message:verdict.reason||"Conferência inválida."});}
+      if(verdict.changed){after.censusConference.registeredAt=serverNow.toISOString();after.censusConference.registeredBy=req.user.u;}
+    }
     for(const daily of newDaily){
       if(!daily||typeof daily.date!=="string"||!/^\\d{4}-\\d{2}-\\d{2}$/.test(daily.date))continue;
       const admissions=Number(daily.admissoes);
