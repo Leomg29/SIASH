@@ -5,7 +5,7 @@ const dateOK=s=>typeof s==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNa
 const legacyKey=(x,i)=>x?.id||"legacy:"+i;
 const legacyDate=x=>{if(dateOK(x?.insertDate))return x.insertDate;const m=String(x?.when||"").match(/(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);if(!m)return null;const d=m[3]+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0");return dateOK(d)?d:null};
 function validatePiccMutation(previous,incoming){
- const old=previous?.state?.picc??[],next=incoming?.state?.picc;
+ const old=previous?.state?.picc??[],next=incoming?.state?.picc??(old.length===0?[]:undefined);
  if(!Array.isArray(old)||!Array.isArray(next))return {ok:false,code:"PICC_INVALID_COLLECTION"};
  if(next.length<old.length)return {ok:false,code:"PICC_HISTORY_REMOVAL_BLOCKED"};
  const ids=new Set();
@@ -40,7 +40,7 @@ function validatePiccMutation(previous,incoming){
  return {ok:true};
 }
 function stampPiccEvents(previous,incoming,user){
- const old=previous?.state?.picc??[],next=incoming.state.picc,events=incoming.state.piccEvents??(incoming.state.piccEvents=[]);
+ const old=previous?.state?.picc??[],next=incoming.state.picc??(incoming.state.picc=[]),events=incoming.state.piccEvents??(incoming.state.piccEvents=[]);
  const now=new Date(),at=now.toISOString(),atSaoPaulo=new Intl.DateTimeFormat("sv-SE",{timeZone:"America/Sao_Paulo",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}).format(now);
  const stamps=[];
  const add=(type,index,details)=>{const e={id:crypto.randomUUID(),type,recordIndex:index,deviceRef:legacyKey(next[index],index),recordedBy:user,recordedAt:at,recordedAtSaoPaulo:atSaoPaulo,...details};events.push(e);stamps.push(e)};
