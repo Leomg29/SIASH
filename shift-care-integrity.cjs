@@ -20,7 +20,7 @@ function validateShiftMutation(previous,next){
   }
  }
  const oldEvents=arr(old.events),newEvents=arr(cur.events),closures=arr(cur.shiftHistory).slice(arr(old.shiftHistory).length);
- const closed=closures.find(x=>x.shiftId===old.shiftId);
+ const closed=closures.find(x=>x.shiftId===old.shiftId)||(old.shiftClosed?arr(old.shiftHistory).find(x=>x.shiftId===old.shiftId):null);
  if(old.shiftId&&cur.shiftId!==old.shiftId){
   if(!closed||!Array.isArray(closed.events)||!Array.isArray(closed.checklist)||!same(closed.events,oldEvents)||!same(closed.checklist,arr(old.checklist)))return bad("SHIFT_CLOSURE_REQUIRED","shiftId");
   if(!uuid(cur.shiftId))return bad("SHIFT_ID_UUID_REQUIRED","shiftId");
