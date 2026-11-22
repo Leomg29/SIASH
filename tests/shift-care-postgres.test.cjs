@@ -5,7 +5,7 @@ test("PR99 PostgreSQL: immutable shift/checklist/SAE, 409, 422, official stamps 
  assert.match(process.env.DATABASE_URL||"",/siash_ci/);
  const {Pool}=require("pg"),bcrypt=require("bcryptjs"),db=new Pool({connectionString:process.env.DATABASE_URL,ssl:false});
  const port=18918,url="http://127.0.0.1:"+port;
- const child=spawn(process.execPath,["server.js"],{env:{...process.env,PORT:String(port),PGSSLMODE:"disable",JWT_SECRET:"pr99-isolated-test-secret-2026"},stdio:["ignore","pipe","pipe"]});
+ const child=spawn(process.execPath,["server.js"],{env:{...process.env,PORT:String(port),PGSSLMODE:"disable",JWT_SECRET:"pr99-isolated-test-secret-2026-longer-than-32"},stdio:["ignore","pipe","pipe"]});
  let logs="";child.stdout.on("data",d=>logs+=d);child.stderr.on("data",d=>logs+=d);
  const clone=x=>structuredClone(x),shiftId="a05eab1c-69a0-4d16-aac2-138e19dfe012";
  try{
