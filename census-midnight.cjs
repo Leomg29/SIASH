@@ -22,7 +22,7 @@ function decideMidnightClosure({daily,referenceDate,admissionRecord,now=new Date
  if(referenceDate!==previousDate(today))return {status:"skip",reason:"Somente o último dia encerrado é elegível."};
  if(!daily)return {status:"pending",reason:"Lançamento diário ausente: conferência manual necessária."};
  const conference=daily.censusConference;
- if(conference&&conference.referenceDate===referenceDate&&Number.isSafeInteger(Number(conference.count))&&Number.isSafeInteger(Number(daily.internados))&&Number(conference.count)>=0&&Number(conference.count)<=10&&Number(conference.count)===Number(daily.internados)&&
+ if(conference&&conference.referenceDate===referenceDate&&conference.count!==null&&conference.count!==""&&Number.isSafeInteger(Number(conference.count))&&Number.isSafeInteger(Number(daily.internados))&&Number(conference.count)>=0&&Number(conference.count)<=10&&Number(conference.count)===Number(daily.internados)&&
     typeof conference.responsible==="string"&&conference.responsible.trim()&&
     Number.isFinite(new Date(conference.registeredAt).getTime()))
   return {status:"manual",referenceDate,registeredAt:conference.registeredAt,responsible:conference.responsible,reason:"Conferência manual válida registrada para a data de referência."};
