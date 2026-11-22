@@ -1811,6 +1811,11 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 
+app.get("/api/admin/audit",auth,async(req,res)=>{
+ if(req.user.r!=="owner")return res.status(403).json({error:"OWNER_REQUIRED"});
+ const q=await pool.query("SELECT id,username,action,details,created_at FROM siash_cloud_audit ORDER BY id DESC LIMIT 100");
+ res.json({events:q.rows});
+});
 app.get("/api/users",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente Administrador Proprietário."});
   const q=await pool.query("SELECT username,role,created_at FROM siash_users ORDER BY username");res.json(q.rows);
