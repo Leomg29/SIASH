@@ -25,3 +25,21 @@ test('cadastro exige confirmação explícita diante de possível duplicidade',(
  assert.match(app,/const duplicates=pipaPossibleDuplicates\(candidate\)/);
  assert.match(app,/duplicates\.length&&!window\.confirm/);
 });
+
+test('retificação é append-only e transacional, sem alterar S.pipa',()=>{
+ const server=fs.readFileSync('server.js','utf8');
+ const start=server.indexOf('app.post("/api/pipa/rectifications"');
+ const end=server.indexOf('app.get("/api/pipa/rectifications"',start);
+ assert.ok(start>0&&end>start);
+ const route=server.slice(start,end);
+ for(const needle of ['BEGIN','FOR UPDATE','base_revision','INSERT INTO siash_pipa_rectification_audit','COMMIT','ROLLBACK','siash_users'])assert.ok(route.includes(needle),needle);
+ assert.doesNotMatch(route,/UPDATE siash_state SET|DELETE FROM siash_pipa|\.splice\(/);
+ assert.match(server,/CREATE TABLE IF NOT EXISTS siash_pipa_rectification_audit/);
+});
+test('frontend preserva rascunho no HTTP 409 e expõe histórico de retificações',()=>{
+ const html=fs.readFileSync('index.html','utf8');
+ assert.match(html,/id="pipa-rectifications"/);
+ assert.match(app,/window\.rectifyPipa=async i=>/);
+ assert.match(app,/refreshPipaRectifications/);
+ assert.match(app,/SIASH_CLOUD\.conflict=true;\s*localStorage\.setItem\(STORE,JSON\.stringify\(S\)\)/);
+});
