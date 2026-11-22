@@ -33,6 +33,7 @@ test("PR98 PostgreSQL: PIPA legacy immutability, 409, 422 and append-only rectif
   assert.ok(rect.data.created_at);assert.ok(rect.data.created_at_sao_paulo);
   const rows=await db.query("SELECT username,record_before,correction,reason,created_at FROM siash_pipa_rectification_audit WHERE id=$1",[rect.data.id]);
   assert.equal(rows.rows.length,1);assert.equal(rows.rows[0].username,username);assert.deepEqual(rows.rows[0].record_before,legacy);
+  await assert.rejects(db.query("DELETE FROM siash_pipa_rectification_audit WHERE id=$1",[rect.data.id]),/append-only/);
   const afterRect=await db.query("SELECT payload,revision FROM siash_state WHERE id=1");
   assert.deepEqual(afterRect.rows[0].payload,payload);assert.equal(Number(afterRect.rows[0].revision),1);
   const addition=clone(payload);addition.state.pipa.push({id:"pipa-pr98-new",date:"2026-11-21",month:"2026-11",city:"Ibiaí",qty:1,postDischargeConfirmed:true,updated:"21/11/2026"});
