@@ -30,5 +30,28 @@ test("PR96 Chromium: invalid occupancy blocked before local or cloud write",{ski
   await page.locator("#bed-rn").fill("RN-INVALID");
   await page.locator("#bed-form button[type=submit]").click();
   assert.equal(await page.evaluate(()=>S.beds[0].rn),"");
+  await page.locator("#bed-status").selectOption("Ocupado");
+  await page.locator("#bed-rn").fill("RN-96");
+  await page.locator("#bed-form button[type=submit]").click();
+  assert.equal(await page.evaluate(()=>S.beds[0].status),"Ocupado");
+  await page.locator("#profile-bed").selectOption("1");
+  await page.locator("#profile-new").selectOption("Intermediário");
+  await page.locator("#profile-form button[type=submit]").click();
+  assert.equal(await page.evaluate(()=>S.beds[0].profile),"Intermediário");
+  assert.equal(await page.evaluate(()=>S.profileHistory.at(-1).bed),1);
+  await page.locator("#move-origin").selectOption("1");
+  await page.locator("#move-target").selectOption("9");
+  await page.locator("#move-bed-form button[type=submit]").click();
+  assert.equal(await page.evaluate(()=>S.beds[8].rn),"RN-96");
+  assert.equal(await page.evaluate(()=>S.beds[8].profile),"Intermediário");
+  assert.equal(await page.evaluate(()=>S.beds[0].status),"Livre");
+  assert.equal(await page.evaluate(()=>S.bedMoves.at(-1).target),9);
+  await page.evaluate(()=>{
+    S.daily=[{date:todayISO(),internados:3}];
+    renderBeds();
+  });
+  assert.match(await page.locator("#bed-reconciliation-alert").innerText(),/Conferência humana necessária/);
+  assert.equal(await page.locator("#bed-sync-status").innerText(),"Persistência: Rascunho local");
+
  }finally{await browser?.close();child.kill("SIGTERM")}
 });
