@@ -519,8 +519,8 @@ function auditDailyBalance(records,month){
  const counts=new Map(),warnings=[];
  for(const r of rows)counts.set(r.date,(counts.get(r.date)||0)+1);
  const unique=[...new Map(rows.map(r=>[r.date,r])).entries()].sort(([a],[b])=>a.localeCompare(b));
- const validDate=d=>{if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(d))return false;const x=new Date(d+"T00:00:00Z");return !Number.isNaN(x.getTime())&&x.toISOString().slice(0,10)===d};
- const count=r=>Number.isSafeInteger(r)&&r>=0?r:(typeof r==="string"&&/^(0|[1-9]\\d*)$/.test(r)&&Number.isSafeInteger(Number(r))?Number(r):null);
+ const validDate=d=>{if(!/^\d{4}-\d{2}-\d{2}$/.test(d))return false;const x=new Date(d+"T00:00:00Z");return !Number.isNaN(x.getTime())&&x.toISOString().slice(0,10)===d};
+ const count=r=>Number.isSafeInteger(r)&&r>=0?r:(typeof r==="string"&&/^(0|[1-9]\d*)$/.test(r)&&Number.isSafeInteger(Number(r))?Number(r):null);
  for(let i=0;i<unique.length;i++){
   const [date,r]=unique[i];
   if(!validDate(date)){warnings.push({date,type:"invalid-date"});continue}
