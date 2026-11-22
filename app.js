@@ -195,7 +195,7 @@ function scheduleCloudSave({retry=false}={}){
        if(generation!==SIASH_CLOUD.editGeneration)preserveCloudDraft("pending");
      }
      SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
-     if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
+     if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado");void refreshMidnightCensusStatus()}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
    }catch(e){
      console.error(e);
      preserveCloudDraft(e.status===401?"session-expired":e.conflict||e.status===409||e.status===428||e.status===422?"conflict":"network");
@@ -547,9 +547,22 @@ async function refreshMidnightCensusStatus(){
  const el=$("census-midnight-alert");if(!el||!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
  try{
   const data=await cloudJson("/api/census/midnight-status");
-  if(data.status==="pending"){el.textContent="ATENÇÃO — Censo de "+dateBR(data.referenceDate)+" pendente de conferência manual pelo plantão noturno. "+(data.reason||"");el.style.color="#b45309";}
-  else if(data.status==="automatic"){el.textContent="Censo de "+dateBR(data.referenceDate)+" fechado automaticamente pelo sistema às 00:00, sem admissões pendentes.";el.style.color="";}
-  else {el.textContent=data.status==="manual"?"Censo anterior com conferência manual registrada.":"";el.style.color="";}
+  const selected=$("d-date")?.value||todayISO();
+  const ref=dateBR(data.referenceDate);
+  const context=selected!==data.referenceDate?" (a data selecionada no formulário é "+dateBR(selected)+").":"";
+  if(data.status==="pending"){
+   el.textContent="ATENÇÃO — Censo de "+ref+" pendente de conferência manual pelo plantão noturno."+context+" "+(data.reason||"");
+   el.style.color="#b45309";
+  }else if(data.status==="automatic"){
+   el.textContent="Censo de "+ref+" fechado automaticamente pelo sistema às 00:00, sem admissões pendentes.";
+   el.style.color="";
+  }else if(data.status==="manual"){
+   el.textContent="Censo de "+ref+" com conferência manual registrada"+(data.responsible?" por "+data.responsible:"")+". O registro não certifica que a contagem ocorreu exatamente à meia-noite.";
+   el.style.color="";
+  }else{
+   el.textContent="Não foi possível determinar o status do censo de "+ref+". Verifique a conferência.";
+   el.style.color="#b45309";
+  }
  }catch(err){el.textContent="Não foi possível consultar o fechamento da meia-noite. Conferir manualmente.";el.style.color="#b45309";}
 }
 function renderCensusConference(date){
@@ -1213,7 +1226,7 @@ $("census-close").addEventListener("click",()=>{
  if(!window.confirm("Confirmar conferência manual do plantão noturno? A data e hora reais serão registradas; isso não certifica automaticamente o fechamento à meia-noite."))return;
  const result=registerCensusConference(date,responsible);
  if(!result.ok)return alert(result.reason);
- save();refreshMidnightCensusStatus();showToast("Conferência registrada; verifique a referência de meia-noite",2200);
+ save();if(SIASH_CLOUD.enabled&&SIASH_CLOUD.token){$("census-midnight-alert").textContent="Conferência registrada neste navegador; aguardando confirmação de sincronização com o servidor…";}else{void refreshMidnightCensusStatus();}showToast("Conferência registrada; verifique a referência de meia-noite",2200);
 });
 $("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):0);$("d-obs").value=""})
 $("d-date").addEventListener("change",()=>{const date=$("d-date").value;loadDailyForm(date);renderDaily()})
