@@ -1900,8 +1900,7 @@ app.post("/api/census/late-requests",auth,async(req,res)=>{
  },res);
 });
 app.post("/api/census/late-requests/:protocol/decision",auth,async(req,res)=>{
- if(!canDecideClinical(await databaseRole(req.user.u)))return lateError(res,"SUPERVISOR_PERMISSION_REQUIRED",403);
- // Papel clínico é verificado no banco, jamais pelo JWT ou payload.
+ // Papel clínico é verificado dentro da transação, jamais pelo JWT ou payload.
  const base=req.body?.base_revision;
  if(!Number.isSafeInteger(base)||base<1)return lateError(res,"BASE_REVISION_REQUIRED",428);
  const protocol=req.params.protocol;
