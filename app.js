@@ -767,8 +767,31 @@ function renderThermalEvents(date){
 }
 window.deleteThermalEvent=id=>{if(confirm("Excluir este evento térmico?")){S.thermalEvents=S.thermalEvents.filter(x=>x.id!==id);save()}}
 window.deleteDaily=date=>{alert("Exclusão de lançamento clínico bloqueada. Preserve o registro e solicite correção auditável à coordenação.");return false;}
+function bedSyncStatus(){
+ if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return "Rascunho local";
+ if(SIASH_CLOUD.conflict)return "Conflito HTTP 409 / revisão clínica";
+ if(SIASH_CLOUD.syncing)return "Sincronizando";
+ if(cloudPending())return "Rascunho local · aguardando sincronização";
+ return "Salvo no PostgreSQL";
+}
+function renderBedReconciliation(){
+ const status=$("bed-sync-status"),alert=$("bed-reconciliation-alert");
+ if(status)status.textContent="Persistência: "+bedSyncStatus();
+ if(!alert)return;
+ const today=todayISO(),day=S.daily.find(d=>d.date===today);
+ const occupied=S.beds.filter(b=>b.status==="Ocupado").length;
+ const issues=[];
+ if(day&&Number.isFinite(Number(day.internados))&&occupied!==Number(day.internados))
+   issues.push("Mapa atual: "+occupied+" RN(s); lançamento de "+today+": "+Number(day.internados)+". Horários de referência podem diferir.");
+ const recent=S.bedMoves.filter(m=>String(m.recordedAtSaoPaulo||m.when||"").startsWith(today));
+ if(recent.length){
+   const last=recent[recent.length-1],target=S.beds.find(b=>b.n===Number(last.target));
+   if(target?.rn!==last.rn)issues.push("Último remanejamento do dia difere do mapa atual no leito "+pad(last.target)+". Conferir eventos posteriores.");
+ }
+ alert.textContent=issues.length?"Conferência humana necessária: "+issues.join(" ")+" Nenhum dado foi ajustado automaticamente.":"Sem divergência numérica identificada para hoje; conferir horários de referência.";
+}
 function renderBeds(){
- populateBedSelects();
+ populateBedSelects();renderBedReconciliation();
  $("bed-grid").innerHTML=S.beds.map(b=>`<div class="bed-card ${b.status==="Ocupado"?"occupied":""} ${b.profile==="Intermediário"?"intermediate":""} ${b.status==="Bloqueado"?"blocked":""}">
  <div class="title"><span>Leito ${pad(b.n)}</span><span>${b.status}</span></div>
  <div class="type">${b.profile}${b.isolation?' • Isolamento':''}</div>
@@ -1446,6 +1469,7 @@ $("profile-form").addEventListener("submit",e=>{
  if(b.status!=="Ocupado")return alert("A alteração de perfil assistencial deve ser feita em um leito ocupado.");
  const old=b.profile,newp=$("profile-new").value;
  if(old===newp)return alert(`O RN já está classificado como ${newp}.`);
+ if(!window.confirm(`Confirmar mudança de perfil?\nRN: ${b.rn}\nLeito físico: ${pad(n)} (sem deslocamento)\nDe: ${old}\nPara: ${newp}`))return;
  b.profile=newp;
  const note=$("profile-note").value.trim();
  S.profileHistory.push({when:nowBR(),bed:n,rn:b.rn,from:old,to:newp,note});
@@ -1454,7 +1478,7 @@ $("profile-form").addEventListener("submit",e=>{
  save();
  alert(`Perfil do RN no Leito ${pad(n)} alterado para ${newp}. O RN permaneceu no mesmo leito.`);
 })
-$("move-bed-form").addEventListener("submit",e=>{e.preventDefault();const o=+$("move-origin").value,t=+$("move-target").value;if(!o||!t||o===t)return alert("Selecione leitos diferentes.");const a=S.beds.find(x=>x.n===o),b=S.beds.find(x=>x.n===t);if(a.status!=="Ocupado")return alert("O leito de origem precisa estar ocupado.");if(!String(a.rn||"").trim())return alert("Identifique o RN no leito de origem antes de remanejar.");if(b.status!=="Livre")return alert("O leito de destino precisa estar livre.");const rn=a.rn,profile=a.profile;b.status="Ocupado";b.rn=rn;b.profile=profile;b.note=$("move-note").value.trim()||`Remanejado do leito ${o}`;a.status="Livre";a.rn="";a.note="";a.profile="Intensivo";S.bedMoves.push({when:nowBR(),origin:o,target:t,rn,profile,note:$("move-note").value.trim()});S.events.unshift({when:nowBR(),type:"Remanejamento físico de leito",bed:String(t),text:`RN remanejado fisicamente do leito ${o} para o leito ${t}, mantendo perfil ${profile}.`});$("move-note").value="";save();alert("Remanejamento físico registrado. O perfil assistencial do RN foi mantido.")})
+$("move-bed-form").addEventListener("submit",e=>{e.preventDefault();const o=+$("move-origin").value,t=+$("move-target").value;if(!o||!t||o===t)return alert("Selecione leitos diferentes.");const a=S.beds.find(x=>x.n===o),b=S.beds.find(x=>x.n===t);if(a.status!=="Ocupado")return alert("O leito de origem precisa estar ocupado.");if(!String(a.rn||"").trim())return alert("Identifique o RN no leito de origem antes de remanejar.");if(b.status!=="Livre")return alert("O leito de destino precisa estar livre.");const rn=a.rn,profile=a.profile;if(!window.confirm(`Confirmar remanejamento físico?\nRN: ${rn}\nOrigem: leito ${pad(o)}\nDestino: leito ${pad(t)} (Livre)\nPerfil preservado: ${profile}`))return;b.status="Ocupado";b.rn=rn;b.profile=profile;b.note=$("move-note").value.trim()||`Remanejado do leito ${o}`;a.status="Livre";a.rn="";a.note="";a.profile="Intensivo";S.bedMoves.push({when:nowBR(),origin:o,target:t,rn,profile,note:$("move-note").value.trim()});S.events.unshift({when:nowBR(),type:"Remanejamento físico de leito",bed:String(t),text:`RN remanejado fisicamente do leito ${o} para o leito ${t}, mantendo perfil ${profile}.`});$("move-note").value="";save();alert("Remanejamento físico registrado. O perfil assistencial do RN foi mantido.")})
 $("mv-type").addEventListener("change",updateMovementFields)
 $("movement-form").addEventListener("submit",e=>{e.preventDefault();S.movements.push({when:nowBR(),type:$("mv-type").value,bedtype:$("mv-bedtype").value,context:$("mv-context").disabled?"":$("mv-context").value.trim(),note:$("mv-note").value.trim()});$("mv-note").value="";save()})
 $("care-save").addEventListener("click",()=>{const bed=$("care-bed").value;if(!bed)return alert("Selecione o leito.");S.care[bed]={sae:$("care-sae").value,evol:$("care-evol").value,multi:$("care-multi").value,updated:nowBR()};save()})
