@@ -108,7 +108,7 @@ test('conferencias anteriores permanecem no historico apos nova conferencia',()=
 });
 test('alterar total diario arquiva conferencia anterior sem apaga-la',()=>{
  assert.match(js,/if\(previous\?\.censusConferenceHistory\)r\.censusConferenceHistory=previous\.censusConferenceHistory/);
- assert.match(js,/else r\.censusConferenceHistory=\[\.\.\.\(r\.censusConferenceHistory\|\|\[\]\),previous\.censusConference\]/);
+ assert.match(js,/else\{r\.censusConferenceHistory=\[\.\.\.\(r\.censusConferenceHistory\|\|\[\]\),previous\.censusConference\];delete r\.censusConference;\}/);
 });
 
 test('interface informa quantidade de conferencias anteriores',()=>{
