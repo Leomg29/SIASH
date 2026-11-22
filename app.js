@@ -196,6 +196,17 @@ function scheduleCloudSave({retry=false}={}){
        }
        localStorage.setItem(STORE,JSON.stringify(S));
      }
+     if(Array.isArray(r.picc_event_stamps)){
+       for(const stamp of r.picc_event_stamps){
+         const index=stamp.recordIndex;
+         if(!Array.isArray(sentState.piccEvents))sentState.piccEvents=[];
+         if(!Array.isArray(S.piccEvents))S.piccEvents=[];
+         const existing=sentState.piccEvents.findIndex(e=>e.id===stamp.id||(!e.id&&e.type===stamp.type&&e.recordIndex===index&&e.justification===stamp.justification));
+         if(existing>=0){sentState.piccEvents[existing]=stamp;if(S.piccEvents[existing])S.piccEvents[existing]=stamp;}
+         else{sentState.piccEvents.push(stamp);S.piccEvents.push(stamp);}
+       }
+       localStorage.setItem(STORE,JSON.stringify(S));
+     }
      cloudSetBase(sentState);
      // O servidor é a fonte de verdade para autor e horário do cancelamento.
      // Se houve novas edições durante o PUT, não sobrescrever o rascunho atual.
