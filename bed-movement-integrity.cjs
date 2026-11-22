@@ -28,7 +28,7 @@ function validateBedMovementMutation(previousPayload, nextPayload) {
   }
   const beforeBeds = oldState.beds;
   const afterBeds = nextState.beds;
-  if (Array.isArray(beforeBeds) && beforeBeds.length === 10 && !same(beforeBeds,afterBeds)) {
+  if (Array.isArray(beforeBeds) && beforeBeds.length === 10 && beforeBeds.every(b => ["Livre","Ocupado","Bloqueado"].includes(b?.status) && ["Intensivo","Intermediário"].includes(b?.profile)) && !same(beforeBeds,afterBeds)) {
     if (!Array.isArray(afterBeds) || afterBeds.length !== 10)
       return {ok:false,code:"BED_STATE_INVALID",path:"beds"};
     const nums = new Set();
