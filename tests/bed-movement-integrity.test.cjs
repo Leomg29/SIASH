@@ -46,3 +46,9 @@ test("JSONB reordered object keys do not falsely trigger historical mutation",()
  const after=wrap({bedMoves:[{note:"ok",target:2,origin:1,when:"old"}]});
  assert.equal(check(before,after).ok,true);
 });
+
+test("legacy 10-bed records without canonical status are not rewritten or rejected",()=>{
+ const before=wrap({beds:Array.from({length:10},(_,i)=>({n:i+1,patient:"LEGACY"}))});
+ const after=structuredClone(before);after.state.beds[0].patient="LEGACY-UPDATED";
+ assert.equal(check(before,after).ok,true);
+});
