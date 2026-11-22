@@ -68,3 +68,11 @@ test("conferência já existente é imutável, inclusive exclusão",()=>{
  assert.equal(validateConferenceMutation({before,after:{internados:4},referenceDate:"2026-11-22",now:at("2026-11-23","00:05:00")}).code,"CENSUS_CONFERENCE_IMMUTABLE");
  assert.equal(validateConferenceMutation({before,after:{internados:4,censusConference:{...original,count:5}},referenceDate:"2026-11-22",now:at("2026-11-23","00:05:00")}).code,"CENSUS_CONFERENCE_IMMUTABLE");
 });
+
+test("reenvio idêntico não cria nova conferência e histórico não admite alteração",()=>{
+ const existing={referenceDate:"2026-11-22",count:4,responsible:"Noturno",registeredAt:"2026-11-23T03:05:00.000Z",registeredBy:"enfermeiro"};
+ const before={internados:4,censusConference:existing};
+ const unchanged={internados:4,censusConference:{...existing}};
+ assert.deepEqual(validateConferenceMutation({before,after:unchanged,referenceDate:"2026-11-22",now:at("2026-11-23","00:07:00")}),{ok:true,changed:false});
+ assert.equal(validateConferenceMutation({before,after:{internados:4,censusConference:{...existing,registeredBy:"outro"}},referenceDate:"2026-11-22",now:at("2026-11-23","00:07:00")}).code,"CENSUS_CONFERENCE_IMMUTABLE");
+});
