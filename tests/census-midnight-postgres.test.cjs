@@ -4,7 +4,7 @@ const {spawn}=require("node:child_process");
 const net=require("node:net");
 
 const {dateInBrazil,previousDate,midnightBrazilUtc}=require("../census-midnight.cjs");
-test("PostgreSQL isolado: auto-fechamento idempotente e admissao pendente",async()=>{
+test("PostgreSQL isolado: censo exclusivamente manual, legado preservado e admissao pendente",async()=>{
  if(process.env.SIASH_ISOLATED_CI!=="1")return;
  const {Pool}=require("pg");
  const jwt=require("jsonwebtoken");
@@ -48,15 +48,35 @@ test("PostgreSQL isolado: auto-fechamento idempotente e admissao pendente",async
   const daily={date:referenceDate,internados:3,admissoes:0};
   await db.query("INSERT INTO siash_state(id,payload,revision,updated_at) VALUES(1,$1,1,$2)",[{state:{daily:[daily]}},before]);
   await db.query("INSERT INTO siash_daily_admission_records(reference_date,admission_count,ever_admitted,recorded_at,recorded_by) VALUES($1,0,FALSE,$2,'ci')",[referenceDate,before]);
-  let r=await get();assert.equal(r.status,200);let body=await r.json();assert.equal(body.status,"automatic");
-  r=await get();assert.equal((await r.json()).status,"automatic");
-  let q=await db.query("SELECT count(*)::int AS n FROM siash_census_auto_closures");assert.equal(q.rows[0].n,1);
-  q=await db.query("SELECT count(*)::int AS n FROM siash_cloud_audit WHERE username='system'");assert.equal(q.rows[0].n,1);
-  await db.query("DELETE FROM siash_census_auto_closures");
-  await db.query("UPDATE siash_state SET payload=$1,updated_at=$2",[{state:{daily:[{...daily,admissoes:1}]}},before]);
-  await db.query("UPDATE siash_daily_admission_records SET admission_count=1,ever_admitted=TRUE WHERE reference_date=$1",[referenceDate]);
-  r=await get();body=await r.json();assert.equal(body.status,"pending");
+  // Sem conferencia, a leitura repetida nao cria nem promove fechamento automatico.
+  let r=await get();assert.equal(r.status,200);let body=await r.json();
+  assert.equal(body.status,"pending");assert.equal(body.legacyAutomaticRecordExists,false);
+  r=await get();assert.equal((await r.json()).status,"pending");
+  let q=await db.query("SELECT count(*)::int AS n FROM siash_census_auto_closures");assert.equal(q.rows[0].n,0);
+  q=await db.query("SELECT count(*)::int AS n FROM siash_cloud_audit WHERE username='system'");assert.equal(q.rows[0].n,0);
+  // Uma conferencia explicita e valida e a unica via para status manual.
+  const conference={referenceDate,count:3,responsible:"Enfermeira plantonista CI",registeredAt:new Date().toISOString()};
+  await db.query("UPDATE siash_state SET payload=$1,updated_at=$2 WHERE id=1",[{state:{daily:[{...daily,censusConference:conference}]}},before]);
+  r=await get();assert.equal(r.status,200);body=await r.json();
+  assert.equal(body.status,"manual");assert.equal(body.responsible,conference.responsible);
+  assert.equal(body.registeredAt,conference.registeredAt);
   q=await db.query("SELECT count(*)::int AS n FROM siash_census_auto_closures");assert.equal(q.rows[0].n,0);
+  // Um fechamento historico simulado deve permanecer intacto e nao equivale a conferencia manual.
+  await db.query("INSERT INTO siash_census_auto_closures(reference_date,midnight_at,census_count,note,state_revision) VALUES($1,$2,$3,$4,$5)",[referenceDate,midnight,3,"LEGADO CI - preservar sem promover",1]);
+  await db.query("UPDATE siash_state SET payload=$1,updated_at=$2 WHERE id=1",[{state:{daily:[daily]}},before]);
+  r=await get();assert.equal(r.status,200);body=await r.json();
+  assert.equal(body.status,"pending");assert.equal(body.legacyAutomaticRecordExists,true);
+  r=await get();assert.equal((await r.json()).status,"pending");
+  q=await db.query("SELECT census_count,note,state_revision FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
+  assert.equal(q.rows.length,1);assert.equal(q.rows[0].census_count,3);
+  assert.equal(q.rows[0].note,"LEGADO CI - preservar sem promover");assert.equal(Number(q.rows[0].state_revision),1);
+  // Admissao pendente tambem nao autoriza fechamento, nem modifica o legado.
+  await db.query("UPDATE siash_state SET payload=$1,updated_at=$2 WHERE id=1",[{state:{daily:[{...daily,admissoes:1}]}},before]);
+  await db.query("UPDATE siash_daily_admission_records SET admission_count=1,ever_admitted=TRUE WHERE reference_date=$1",[referenceDate]);
+  r=await get();assert.equal(r.status,200);body=await r.json();assert.equal(body.status,"pending");
+  assert.equal(body.legacyAutomaticRecordExists,true);
+  q=await db.query("SELECT count(*)::int AS n FROM siash_census_auto_closures");assert.equal(q.rows[0].n,1);
+  q=await db.query("SELECT count(*)::int AS n FROM siash_cloud_audit WHERE username='system'");assert.equal(q.rows[0].n,0);
  }finally{
   child.kill("SIGTERM");await db.end();await base.query('DROP SCHEMA IF EXISTS '+schema+' CASCADE');await base.end();
  }
