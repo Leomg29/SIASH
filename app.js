@@ -824,6 +824,11 @@ function renderPicc(){
  <td><button class="ghost" onclick="editPicc(${i})">Retificar</button> <button class="secondary compact-btn" onclick="startPiccRemoval(${i})">Registrar retirada</button> <button class="ghost danger-text" onclick="editPicc(${i})">Retificar</button></td>
  </tr>`).join("")||'<tr><td colspan="9">Nenhum PICC ativo.</td></tr>';
  $("picc-history-table").innerHTML=removed.map(({x,i})=>`<tr><td>Leito ${pad(x.bed)}</td><td>${dateBR(piccInsertDate(x))}</td><td>${dateBR(x.removalDate)}</td><td>${piccDays(x)}</td><td>${safe(x.removalReason||"—")}</td><td>${safe(x.vein)} / ${safe(x.side)}</td><td><button class="ghost" onclick="editPicc(${i})">Retificar</button> <button class="ghost danger-text" onclick="editPicc(${i})">Retificar</button></td></tr>`).join("")||'<tr><td colspan="7">Nenhum PICC retirado registrado.</td></tr>';
+ const events=$("picc-event-table");
+ if(events)events.innerHTML=(S.piccEvents||[]).map(e=>`<tr><td>${safe(e.type)}</td><td>${safe(e.deviceRef||"Legado / pendente")}</td><td>${safe(e.recordedAtSaoPaulo||"Rascunho local")}</td><td>${safe(e.recordedBy||"Pendente")}</td><td>${safe(e.justification||e.correctionText||e.removalReason||e.insertDate||"—")}</td></tr>`).join("")||'<tr><td colspan="5">Nenhum evento PICC auditado nesta versão.</td></tr>';
+ const sync=$("picc-sync-status");if(sync)sync.textContent=SIASH_CLOUD.conflict?"Conflito HTTP 409 · rascunho local preservado":SIASH_CLOUD.syncing?"Sincronizando":cloudPending()?"Rascunho local · aguardando PostgreSQL":SIASH_CLOUD.lastSync?"Salvo no PostgreSQL":"Rascunho local";
+ const warnings=[];for(const x of active.map(v=>v.x)){const bed=S.beds.find(b=>String(b.n)===String(x.bed));if(!bed||bed.status!=="Ocupado")warnings.push(`PICC ativo associado ao leito ${pad(x.bed)} sem ocupação atual correspondente; confira remanejamento e identificação do RN.`);if(!piccInsertDate(x))warnings.push(`PICC legado do leito ${pad(x.bed)} sem data de inserção válida: conferência humana necessária.`);}
+ const warn=$("picc-reconciliation");if(warn)warn.textContent=warnings.length?"Alertas informativos (sem baixa automática): "+warnings.join(" | "):"Nenhuma divergência identificada entre PICCs ativos e ocupação atual. Conferência clínica permanece necessária.";
 }
 
 function clearPiccForm(){
