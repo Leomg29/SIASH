@@ -264,7 +264,7 @@ app.get("/api/census/midnight-status",auth,async(req,res)=>{
   const closure=await pool.query("SELECT reference_date,midnight_at,census_count,note FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
   if(closure.rows.length)return res.json({status:"automatic",referenceDate,count:closure.rows[0].census_count,note:NOTE});
   const result=await reconcileMidnightCensus();
-  res.json({status:result.status,referenceDate,reason:result.reason||null});
+  res.json({status:result.status,referenceDate,reason:result.reason||null,...(result.status==="manual"?{responsible:result.responsible,registeredAt:result.registeredAt}:{})});
  }catch(err){res.status(503).json({status:"unavailable",error:"Não foi possível verificar o fechamento do censo."})}
 });
 app.get("/api/state",auth,async(req,res)=>{
