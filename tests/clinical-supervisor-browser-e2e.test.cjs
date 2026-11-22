@@ -22,6 +22,7 @@ test("Chromium: owner grants supervisor, nurse requests, supervisor decides with
    },{username,role,token});return page;
   }
   const ownerPage=await open(owner,"owner",ownerToken);
+  await ownerPage.locator('.nav-item[data-view="administracao"]').click();
   await ownerPage.locator("#admin-new-user").fill(supervisor);
   await ownerPage.locator("#admin-new-pass").fill(password);
   await ownerPage.locator("#admin-new-pass-confirm").fill(password);
