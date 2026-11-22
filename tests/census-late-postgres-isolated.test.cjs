@@ -42,7 +42,7 @@ test("PostgreSQL isolado: regularização tardia transacional, dupla custódia, 
   assert.match(created.data.requestedAt,/Z$/);
   const protocol=created.data.protocol,decision="/api/census/late-requests/"+protocol+"/decision";
   const self=await post(decision,nurseToken,{base_revision:revision,approved:true,reason:"Evidências suficientes para aprovação"});
-  assert.equal(self.status,403);assert.equal(self.data.error,"SUPERVISOR_PERMISSION_REQUIRED");
+  assert.equal(self.status,403);assert.equal(self.data.error,"SELF_APPROVAL_FORBIDDEN");
   const unauthorized=await post(decision,otherToken,{base_revision:revision,approved:true,reason:"Evidências suficientes para aprovação"});
   assert.equal(unauthorized.status,403);
   const approved=await post(decision,superToken,{base_revision:revision,approved:true,reason:"Conferência independente dos documentos"});
