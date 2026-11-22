@@ -419,6 +419,10 @@ app.put("/api/state",auth,async(req,res)=>{
     if(!cur.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"Estado central não encontrado. Recarregue os dados.",conflict:true});}
     const current=Number(cur.rows[0].revision);
     if(current!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Outro profissional salvou alterações antes de você. Seus dados locais foram preservados; não atualize a página antes de exportar ou conferir seus lançamentos.",conflict:true,current_revision:current});}
+    const {validateShiftMutation,stampShiftMutation}=require("./shift-care-integrity.cjs");
+    const shiftVerdict=validateShiftMutation(cur.rows[0].payload,payload);
+    if(!shiftVerdict.ok){await client.query("ROLLBACK");return res.status(422).json({error:shiftVerdict.code,path:shiftVerdict.path});}
+    const shiftEventStamps=stampShiftMutation(cur.rows[0].payload,payload,req.user.u);
     // PR #96: validate bed-state changes and immutable movement histories before any writes.
     const {validateBedMovementMutation}=require("./bed-movement-integrity.cjs");
     const bedAudit=validateBedMovementMutation(cur.rows[0].payload,payload);
@@ -476,7 +480,7 @@ app.put("/api/state",auth,async(req,res)=>{
     await client.query("INSERT INTO siash_state_history(payload,saved_by,reason) VALUES($1,$2,$3)",[cur.rows[0].payload,req.user.u,req.body?.reason||"Antes de atualização do estado"]);
     const updated=await client.query("UPDATE siash_state SET payload=$1,updated_at=NOW(),updated_by=$2,revision=revision+1 WHERE id=1 RETURNING revision,updated_at",[payload,req.user.u]);
     await client.query("COMMIT");
-    return res.json({ok:true,picc_event_stamps:piccEventStamps,bed_event_stamps:Object.fromEntries(["bedMoves","profileHistory","movements"].map(key=>[key,(payload.state?.[key]||[]).slice((cur.rows[0].payload?.state?.[key]||[]).length).map((event,i)=>({index:i+(cur.rows[0].payload?.state?.[key]||[]).length,event}))])),revision:Number(updated.rows[0].revision),updated_at:updated.rows[0].updated_at,pipa_cancellations:pipaAudit.events.map(e=>({index:e.index,cancelledAt:payload.state.pipa[e.index].cancelledAt,cancelledBy:req.user.u,cancelReason:payload.state.pipa[e.index].cancelReason}))});
+    return res.json({ok:true,shift_event_stamps:shiftEventStamps,picc_event_stamps:piccEventStamps,bed_event_stamps:Object.fromEntries(["bedMoves","profileHistory","movements"].map(key=>[key,(payload.state?.[key]||[]).slice((cur.rows[0].payload?.state?.[key]||[]).length).map((event,i)=>({index:i+(cur.rows[0].payload?.state?.[key]||[]).length,event}))])),revision:Number(updated.rows[0].revision),updated_at:updated.rows[0].updated_at,pipa_cancellations:pipaAudit.events.map(e=>({index:e.index,cancelledAt:payload.state.pipa[e.index].cancelledAt,cancelledBy:req.user.u,cancelReason:payload.state.pipa[e.index].cancelReason}))});
   }catch(e){try{await client.query("ROLLBACK")}catch(_){}throw e}finally{client.release()}
 });
 // Complementary correction: append-only audit; never mutates an original PIPA row.

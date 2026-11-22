@@ -1,0 +1,6 @@
+const test=require("node:test"),assert=require("node:assert/strict");const {validateShiftMutation,stampShiftMutation}=require("../shift-care-integrity.cjs");
+const wrap=state=>({state});
+test("preserva histórico imutável",()=>{const old=wrap({shiftHistory:[{shiftId:"a",closedAt:"t",events:[],checklist:[]}],events:[],care:{}});const next=structuredClone(old);next.state.shiftHistory=[];assert.equal(validateShiftMutation(old,next).code,"SHIFT_HISTORY_REMOVAL_BLOCKED")});
+test("não permite apagar eventos sem arquivamento",()=>{const old=wrap({events:[{text:"evento"}]});assert.equal(validateShiftMutation(old,wrap({events:[]})).code,"SHIFT_EVENTS_REMOVAL_BLOCKED")});
+test("exige encerramento antes de trocar turno",()=>{const old=wrap({shiftId:"old",events:[]});assert.equal(validateShiftMutation(old,wrap({shiftId:"new",shiftHistory:[]})).code,"SHIFT_CLOSURE_REQUIRED")});
+test("carimbo de autoria é oficial",()=>{const next=wrap({checklistHistory:[{newStatus:"Realizado",recordedBy:"falso"}]});const stamps=stampShiftMutation(wrap({}),next,"enfermeiro",new Date("2026-11-22T12:00:00Z"));assert.equal(stamps.checklistHistory[0].event.recordedBy,"enfermeiro");assert.equal(stamps.checklistHistory[0].event.recordedAt,"2026-11-22T12:00:00.000Z")});
