@@ -39,11 +39,15 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Password and midnight census safety regressions
+        run: node --test tests/auth-password.test.cjs tests/census-midnight.test.cjs
       - name: Isolated real PostgreSQL chaos suite
         run: node --test tests/postgres-isolated-chaos.test.cjs
+      - name: Real PostgreSQL midnight census integration and idempotency
+        run: node --test tests/census-midnight-postgres.test.cjs
       - name: Install Chromium for isolated browser E2E
         run: |
           npm install --no-save --ignore-scripts --no-audit --no-fund playwright
           npx playwright install --with-deps chromium
       - name: Run real browser clinical conflict E2E
-        run: node --test tests/browser-isolated-e2e.test.cjs
+        run: node --test tests/browser-isolated-e2e.test.cjs && node --test tests/browser-pr81-auth-census.test.cjs

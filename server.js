@@ -1,5 +1,6 @@
 
 const express = require("express");
+const {decideMidnightClosure,dateInBrazil,previousDate,NOTE}=require("./census-midnight.cjs");
 const { Pool } = require("pg");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -89,6 +90,21 @@ async function initDb(){
       reason TEXT NOT NULL,
       state_revision BIGINT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS siash_daily_admission_records(
+      reference_date DATE PRIMARY KEY,
+      admission_count INTEGER NOT NULL CHECK(admission_count>=0),
+      ever_admitted BOOLEAN NOT NULL DEFAULT FALSE,
+      recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      recorded_by TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS siash_census_auto_closures(
+      reference_date DATE PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      midnight_at TIMESTAMPTZ NOT NULL,
+      census_count INTEGER NOT NULL,
+      note TEXT NOT NULL,
+      state_revision BIGINT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS siash_cloud_audit(
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -98,6 +114,8 @@ async function initDb(){
     );
   `);
 }
+const STRONG_PASSWORD=/[!@#$%^&*._-]/;
+function validNewPassword(password){return typeof password==="string"&&password.length>=10&&password.length<=128&&STRONG_PASSWORD.test(password)}
 function tokenFor(user){ return jwt.sign({u:user.username,r:user.role}, JWT_SECRET,{expiresIn:"12h"}); }
 function auth(req,res,next){
   const h=req.headers.authorization||"";
@@ -118,7 +136,7 @@ app.post("/api/bootstrap", async(req,res)=>{
   if(count.rows[0].n>0) return res.status(409).json({error:"Administrador já configurado."});
   const username=String(req.body.username||"").trim();
   const password=String(req.body.password||"");
-  if(!username || password.length<10) return res.status(400).json({error:"Usuário e senha de pelo menos 10 caracteres são obrigatórios."});
+  if(!username || !validNewPassword(password)) return res.status(400).json({error:"Usuário e senha de 10 a 128 caracteres com pelo menos um especial (!@#$%^&*._-) são obrigatórios."});
   const hash=await bcrypt.hash(password,12);
   await pool.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,'owner')",[username,hash]);
   await audit(username,"Administrador Proprietário Cloud criado.");
@@ -126,6 +144,23 @@ app.post("/api/bootstrap", async(req,res)=>{
   res.json({token:tokenFor(user),role:"owner",user:username});
 });
 
+app.post("/api/change-password",auth,async(req,res)=>{
+ const current=String(req.body?.currentPassword||""),next=String(req.body?.newPassword||"");
+ if(!validNewPassword(next))return res.status(400).json({error:"Nova senha: 10 a 128 caracteres e pelo menos um especial (!@#$%^&*._-)."});
+ if(req.body?.confirmPassword!==next)return res.status(400).json({error:"Confirmação da nova senha não coincide."});
+ if(current===next)return res.status(400).json({error:"A nova senha deve ser diferente da atual."});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const q=await client.query("SELECT password_hash FROM siash_users WHERE username=$1 FOR UPDATE",[req.user.u]);
+  if(!q.rows.length||!(await bcrypt.compare(current,q.rows[0].password_hash))){await client.query("ROLLBACK");return res.status(403).json({error:"Senha atual incorreta."});}
+  const hash=await bcrypt.hash(next,12);
+  await client.query("UPDATE siash_users SET password_hash=$1 WHERE username=$2",[hash,req.user.u]);
+  await client.query("INSERT INTO siash_cloud_audit(username,action) VALUES($1,$2)",[req.user.u,"Senha alterada pelo próprio usuário."]);
+  await client.query("COMMIT");
+  res.json({ok:true});
+ }catch(e){try{await client.query("ROLLBACK")}catch(_){}throw e}finally{client.release()}
+});
 app.post("/api/login", async(req,res)=>{
   const username=String(req.body.username||"").trim(), password=String(req.body.password||"");
   const q=await pool.query("SELECT username,password_hash,role FROM siash_users WHERE username=$1",[username]);
@@ -201,7 +236,39 @@ app.get("/api/pending/:id/history",auth,async(req,res)=>{
   const q=await pool.query('SELECT actor,action,previous_status,new_status,created_at FROM siash_pending_history WHERE task_id=$1 ORDER BY id DESC',[id]);res.json({items:q.rows});
 });
 
+// Idempotent midnight reconciliation: called on startup and authenticated requests.
+async function reconcileMidnightCensus(){
+ const today=dateInBrazil(new Date()),referenceDate=previousDate(today);
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const row=await client.query("SELECT payload,revision,updated_at FROM siash_state WHERE id=1 FOR UPDATE");
+  if(!row.rows.length){await client.query("ROLLBACK");return {status:"pending",reason:"Estado central não inicializado."};}
+  const state=row.rows[0],daily=state.payload?.state?.daily?.find?.(r=>r.date===referenceDate);
+  const admissionQuery=await client.query("SELECT admission_count,ever_admitted,recorded_at FROM siash_daily_admission_records WHERE reference_date=$1",[referenceDate]);
+  const record=admissionQuery.rows[0];
+  const decision=decideMidnightClosure({daily,referenceDate,admissionRecord:record?{count:record.admission_count,everAdmitted:record.ever_admitted,recordedAt:record.recorded_at}:null});
+  if(decision.status!=="automatic"){await client.query("ROLLBACK");return decision;}
+  const existing=await client.query("SELECT reference_date FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
+  if(existing.rows.length){await client.query("ROLLBACK");return {status:"automatic",alreadyRecorded:true,referenceDate};}
+  // Never rewrite the clinical payload or overwrite a manual census conference.
+  const inserted=await client.query("INSERT INTO siash_census_auto_closures(reference_date,midnight_at,census_count,note,state_revision) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING reference_date",[referenceDate,decision.registeredAt,decision.count,NOTE,state.revision]);
+  if(inserted.rows.length)await client.query("INSERT INTO siash_cloud_audit(username,action,details) VALUES($1,$2,$3)",["system",NOTE,JSON.stringify({referenceDate,count:decision.count,midnightAt:decision.registeredAt})]);
+  await client.query("COMMIT");
+  return {status:"automatic",referenceDate,alreadyRecorded:!inserted.rows.length};
+ }catch(err){try{await client.query("ROLLBACK")}catch(_){}throw err}finally{client.release()}
+}
+app.get("/api/census/midnight-status",auth,async(req,res)=>{
+ try{
+  const referenceDate=previousDate(dateInBrazil(new Date()));
+  const closure=await pool.query("SELECT reference_date,midnight_at,census_count,note FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
+  if(closure.rows.length)return res.json({status:"automatic",referenceDate,count:closure.rows[0].census_count,note:NOTE});
+  const result=await reconcileMidnightCensus();
+  res.json({status:result.status,referenceDate,reason:result.reason||null});
+ }catch(err){res.status(503).json({status:"unavailable",error:"Não foi possível verificar o fechamento do censo."})}
+});
 app.get("/api/state",auth,async(req,res)=>{
+  await reconcileMidnightCensus();
   const q=await pool.query("SELECT payload,updated_at,updated_by,revision FROM siash_state WHERE id=1");
   if(!q.rows.length) return res.json({exists:false});
   res.json({exists:true,payload:q.rows[0].payload,updated_at:q.rows[0].updated_at,updated_by:q.rows[0].updated_by,revision:Number(q.rows[0].revision)});
@@ -268,6 +335,22 @@ app.put("/api/state",auth,async(req,res)=>{
     if(!cur.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"Estado central não encontrado. Recarregue os dados.",conflict:true});}
     const current=Number(cur.rows[0].revision);
     if(current!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Outro profissional salvou alterações antes de você. Seus dados locais foram preservados; não atualize a página antes de exportar ou conferir seus lançamentos.",conflict:true,current_revision:current});}
+    // Authoritative admission-specific timestamp, independent of PICC/SAE/bed edits.
+    // A historical positive admission can never be erased by later setting the counter to zero.
+    const oldDaily=cur.rows[0].payload?.state?.daily||[];
+    const newDaily=payload?.state?.daily||[];
+    if(!Array.isArray(newDaily)){await client.query("ROLLBACK");return res.status(422).json({error:"Lançamentos diários inválidos."});}
+    for(const daily of newDaily){
+      if(!daily||typeof daily.date!=="string"||!/^\\d{4}-\\d{2}-\\d{2}$/.test(daily.date))continue;
+      const admissions=Number(daily.admissoes);
+      if(!Number.isSafeInteger(admissions)||admissions<0)continue;
+      const previous=Array.isArray(oldDaily)?oldDaily.find(d=>d.date===daily.date):null;
+      if(previous&&Number(previous.admissoes)===admissions)continue;
+      await client.query(`INSERT INTO siash_daily_admission_records(reference_date,admission_count,ever_admitted,recorded_by)
+       VALUES($1,$2,$3,$4) ON CONFLICT(reference_date) DO UPDATE
+       SET admission_count=EXCLUDED.admission_count,ever_admitted=siash_daily_admission_records.ever_admitted OR EXCLUDED.ever_admitted,
+       recorded_at=NOW(),recorded_by=EXCLUDED.recorded_by`,[daily.date,admissions,admissions>0,req.user.u]);
+    }
     const pipaAudit=reconcilePipaAudit(cur.rows[0].payload,payload,req.user.u);
     if(pipaAudit.error){await client.query("ROLLBACK");return res.status(422).json({error:pipaAudit.error});}
     for(const event of pipaAudit.events){
@@ -1646,8 +1729,8 @@ app.get("/api/users",auth,async(req,res)=>{
 app.post("/api/users",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente Administrador Proprietário."});
   const username=String(req.body?.username||"").trim(),password=String(req.body?.password||"");
-  if(!/^[a-zA-Z0-9._-]{3,64}$/.test(username)||password.length<10||password.length>128)
-    return res.status(400).json({error:"Login: 3 a 64 caracteres (letras, números, ponto, hífen ou sublinhado). Senha: 10 a 128 caracteres."});
+  if(!/^[a-zA-Z0-9._-]{3,64}$/.test(username)||!validNewPassword(password))
+    return res.status(400).json({error:"Login: 3 a 64 caracteres (letras, números, ponto, hífen ou sublinhado). Senha: 10 a 128 caracteres com pelo menos um especial (!@#$%^&*._-)."});
   const hash=await bcrypt.hash(password,12);
   try{
     await pool.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,'operational')",[username,hash]);
@@ -1659,4 +1742,4 @@ app.post("/api/users",auth,async(req,res)=>{
 app.use(express.static(__dirname,{extensions:["html"]}));
 app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"index.html")));
 
-initDb().then(()=>app.listen(PORT,()=>console.log(`SIASH Cloud ativa na porta ${PORT}`))).catch(e=>{console.error(e);process.exit(1)});
+initDb().then(async()=>{await reconcileMidnightCensus();app.listen(PORT,()=>console.log(`SIASH Cloud ativa na porta ${PORT}`));setInterval(()=>reconcileMidnightCensus().catch(err=>console.error("Falha no fechamento automático do censo:",err.message)),60000).unref();}).catch(e=>{console.error(e);process.exit(1)});
