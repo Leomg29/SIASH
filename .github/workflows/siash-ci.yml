@@ -27,6 +27,8 @@ jobs:
           node --check app.js
       - name: Clinical supervisor security contract
         run: node --test tests/clinical-supervisor-contract.test.cjs
+      - name: Bed movement integrity unit tests
+        run: node --test tests/bed-movement-integrity.test.cjs
       - name: Regression suite
         shell: bash
         run: |

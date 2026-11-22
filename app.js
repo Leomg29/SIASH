@@ -179,6 +179,23 @@ function scheduleCloudSave({retry=false}={}){
    try{
      const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
      SIASH_CLOUD.revision=r.revision;
+     // Incorporar metadados oficiais do servidor na base e no rascunho atual.
+     // Nunca sobrescrever edições feitas durante o envio.
+     if(r.bed_event_stamps){
+       for(const key of ["bedMoves","profileHistory","movements"]){
+         for(const stamp of r.bed_event_stamps[key]||[]){
+           if(Array.isArray(sentState[key])&&sentState[key][stamp.index]){
+             sentState[key][stamp.index]=stamp.event;
+             if(Array.isArray(S[key])&&S[key][stamp.index]){
+               const current=S[key][stamp.index],official=stamp.event;
+               const core=x=>JSON.stringify(Object.fromEntries(Object.entries(x).filter(([k])=>!["id","recordedBy","recordedAt","recordedAtSaoPaulo","timeZone"].includes(k))));
+               if(core(current)===core(official))S[key][stamp.index]=official;
+             }
+           }
+         }
+       }
+       localStorage.setItem(STORE,JSON.stringify(S));
+     }
      cloudSetBase(sentState);
      // O servidor é a fonte de verdade para autor e horário do cancelamento.
      // Se houve novas edições durante o PUT, não sobrescrever o rascunho atual.
@@ -207,8 +224,8 @@ function scheduleCloudSave({retry=false}={}){
        SIASH_CLOUD.conflict=true;
        localStorage.setItem(STORE,JSON.stringify(S));
        void showCloudConflictPanel();
-       updateCloudBadge(e.status===422?"INTEGRIDADE PIPA · revisão necessária":"CONFLITO · dados locais preservados",true);
-       alert(e.status===422?"O servidor recusou uma alteração do PIPA por inconsistência de integridade: "+e.message+" Seu rascunho está preservado e o envio automático foi bloqueado. Solicite conciliação à coordenação.":"ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
+       updateCloudBadge(e.status===422?"INTEGRIDADE PIPA / LEITOS · revisão necessária":"CONFLITO · dados locais preservados",true);
+       alert(e.status===422?"O servidor recusou uma alteração do PIPA por inconsistência de integridade, ou outra alteração clínica protegida: "+e.message+" Seu rascunho está preservado e o envio automático foi bloqueado. Solicite conciliação à coordenação.":"ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
      }else{
        // A resposta pode ter sido perdida depois do commit: conferir a revisão antes de reenviar.
        try{
@@ -346,7 +363,7 @@ async function showCloudConflictPanel(){
  await loadRemote();
 }
 function updateCloudBadge(text,bad=false){
- const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad)
+ const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);if(document.getElementById("bed-sync-status"))renderBedReconciliation();
 }
 async function uploadDocCloud(key,file){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token||!file)return;
@@ -716,7 +733,7 @@ $("census-late-clinical")?.addEventListener("click",()=>lateCensusDecide(null));
 
 function renderCensusConference(date){
  const daily=S.daily.find(r=>r.date===date);
- const occupied=S.beds.filter(b=>b.status==="Ocupado").length;
+ const occupied=(Array.isArray(S.beds)?S.beds:[]).filter(b=>b.status==="Ocupado").length;
  const count=$("census-daily-count"),beds=$("census-beds-occupied"),difference=$("census-difference"),status=$("census-status");
  if(!count||!beds||!difference||!status)return;
  beds.textContent=occupied;
@@ -750,17 +767,40 @@ function renderThermalEvents(date){
 }
 window.deleteThermalEvent=id=>{if(confirm("Excluir este evento térmico?")){S.thermalEvents=S.thermalEvents.filter(x=>x.id!==id);save()}}
 window.deleteDaily=date=>{alert("Exclusão de lançamento clínico bloqueada. Preserve o registro e solicite correção auditável à coordenação.");return false;}
+function bedSyncStatus(){
+ if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return "Rascunho local";
+ if(SIASH_CLOUD.conflict)return "Conflito HTTP 409 / revisão clínica";
+ if(SIASH_CLOUD.syncing)return "Sincronizando";
+ if(cloudPending())return "Rascunho local · aguardando sincronização";
+ return "Salvo no PostgreSQL";
+}
+function renderBedReconciliation(){
+ const status=$("bed-sync-status"),alert=$("bed-reconciliation-alert");
+ if(status)status.textContent="Persistência: "+bedSyncStatus();
+ if(!alert)return;
+ const today=todayISO(),day=(Array.isArray(S.daily)?S.daily:[]).find(d=>d.date===today);
+ const occupied=S.beds.filter(b=>b.status==="Ocupado").length;
+ const issues=[];
+ if(day&&Number.isFinite(Number(day.internados))&&occupied!==Number(day.internados))
+   issues.push("Mapa atual: "+occupied+" RN(s); lançamento de "+today+": "+Number(day.internados)+". Horários de referência podem diferir.");
+ const recent=(Array.isArray(S.bedMoves)?S.bedMoves:[]).filter(m=>String(m.recordedAtSaoPaulo||m.when||"").startsWith(today));
+ if(recent.length){
+   const last=recent[recent.length-1],target=(S.beds||[]).find(b=>b.n===Number(last.target));
+   if(target?.rn!==last.rn)issues.push("Último remanejamento do dia difere do mapa atual no leito "+pad(last.target)+". Conferir eventos posteriores.");
+ }
+ alert.textContent=issues.length?"Conferência humana necessária: "+issues.join(" ")+" Nenhum dado foi ajustado automaticamente.":"Sem divergência numérica identificada para hoje; conferir horários de referência.";
+}
 function renderBeds(){
- populateBedSelects();
+ populateBedSelects();renderBedReconciliation();
  $("bed-grid").innerHTML=S.beds.map(b=>`<div class="bed-card ${b.status==="Ocupado"?"occupied":""} ${b.profile==="Intermediário"?"intermediate":""} ${b.status==="Bloqueado"?"blocked":""}">
  <div class="title"><span>Leito ${pad(b.n)}</span><span>${b.status}</span></div>
  <div class="type">${b.profile}${b.isolation?' • Isolamento':''}</div>
  <div class="patient">${safe(b.rn||"Sem identificador")}</div><small>${safe(b.note||"")}</small></div>`).join("");
- $("profile-history-table").innerHTML=[...S.profileHistory].reverse().map(x=>`<tr><td>${safe(x.when)}</td><td>Leito ${pad(x.bed)}</td><td>${safe(x.rn)}</td><td>${safe(x.from)}</td><td>${safe(x.to)}</td><td>${safe(x.note)}</td></tr>`).join("")||'<tr><td colspan="6">Nenhuma alteração de perfil registrada.</td></tr>';
- $("bed-moves-table").innerHTML=[...S.bedMoves].reverse().map(x=>`<tr><td>${safe(x.when)}</td><td>Leito ${pad(x.origin)}</td><td>Leito ${pad(x.target)}</td><td>${safe(x.rn)}</td><td>${safe(x.profile||"—")}</td><td>${safe(x.note)}</td></tr>`).join("")||'<tr><td colspan="6">Nenhum remanejamento físico registrado.</td></tr>';
+ $("profile-history-table").innerHTML=[...S.profileHistory].reverse().map(x=>`<tr><td>${safe(x.recordedAtSaoPaulo||x.when)}${x.recordedBy?" · "+safe(x.recordedBy):""}</td><td>Leito ${pad(x.bed)}</td><td>${safe(x.rn)}</td><td>${safe(x.from)}</td><td>${safe(x.to)}</td><td>${safe(x.note)}</td></tr>`).join("")||'<tr><td colspan="6">Nenhuma alteração de perfil registrada.</td></tr>';
+ $("bed-moves-table").innerHTML=[...S.bedMoves].reverse().map(x=>`<tr><td>${safe(x.recordedAtSaoPaulo||x.when)}${x.recordedBy?" · "+safe(x.recordedBy):""}</td><td>Leito ${pad(x.origin)}</td><td>Leito ${pad(x.target)}</td><td>${safe(x.rn)}</td><td>${safe(x.profile||"—")}</td><td>${safe(x.note)}</td></tr>`).join("")||'<tr><td colspan="6">Nenhum remanejamento físico registrado.</td></tr>';
 }
 function updateMovementFields(){const t=$("mv-type").value,lab=$("mv-context-label"),input=$("mv-context"),help=$("mv-help");input.disabled=false;if(t==="Admissão"){lab.childNodes[0].nodeValue="Município de origem";input.placeholder="Ex.: Pirapora";help.innerHTML="Na admissão, informe de qual município o RN é proveniente."}else if(t==="Alta"){lab.childNodes[0].nodeValue="Destino após alta";input.placeholder="Ex.: Domicílio";help.innerHTML="Registre o destino após a alta quando pertinente."}else if(t==="Transferência"){lab.childNodes[0].nodeValue="Destino da transferência";input.placeholder="Ex.: outro hospital / setor";help.innerHTML="Informe para onde o RN foi transferido."}else if(t==="Óbito"){lab.childNodes[0].nodeValue="Origem / Destino";input.value="";input.disabled=true;help.innerHTML="Para óbito, este campo não se aplica."}else if(t==="Encaminhamento PIPA"){lab.childNodes[0].nodeValue="Município do PIPA";input.placeholder="Município";help.innerHTML="Informe o município correspondente ao encaminhamento PIPA."}else{lab.childNodes[0].nodeValue="Destino";input.value="Pediatria / Leito Canguru";help.innerHTML="Alta da Neonatal com destino à Pediatria / leito Canguru."}}
-function renderMovements(){$("movement-table").innerHTML=[...S.movements].reverse().map(x=>`<tr><td>${safe(x.when)}</td><td>${safe(x.type)}</td><td>${safe(x.bedtype)}</td><td>${safe(x.context)}</td><td>${safe(x.note)}</td></tr>`).join("")||'<tr><td colspan="5">Nenhuma movimentação registrada.</td></tr>';updateMovementFields()}
+function renderMovements(){$("movement-table").innerHTML=[...S.movements].reverse().map(x=>`<tr><td>${safe(x.recordedAtSaoPaulo||x.when)}${x.recordedBy?" · "+safe(x.recordedBy):""}</td><td>${safe(x.type)}</td><td>${safe(x.bedtype)}</td><td>${safe(x.context)}</td><td>${safe(x.note)}</td></tr>`).join("")||'<tr><td colspan="5">Nenhuma movimentação registrada.</td></tr>';updateMovementFields()}
 function renderChecklist(){$("checklist-score").textContent="Adesão "+checkScore()+"%";$("checklist-list").innerHTML=S.checklist.map((c,i)=>`<div class="check-row"><span>${safe(c.text)}</span><select onchange="setCheck(${i},this.value)">${["Pendente","Realizado","Não realizado","N/A"].map(v=>`<option ${c.status===v?"selected":""}>${v}</option>`).join("")}</select></div>`).join("")}
 window.setCheck=(i,v)=>{S.checklist[i].status=v;save()}
 function renderCare(){$("care-table").innerHTML=Object.entries(S.care).sort((a,b)=>+a[0]-+b[0]).map(([bed,x])=>`<tr><td>Leito ${pad(bed)}</td><td>${safe(x.sae)}</td><td>${safe(x.evol)}</td><td>${safe(x.multi)}</td><td>${safe(x.updated)}</td></tr>`).join("")||'<tr><td colspan="5">Nenhum status assistencial registrado.</td></tr>'}
@@ -1421,7 +1461,7 @@ $("d-altas-todas-canguru").addEventListener("change",syncAllDischargesToCanguru)
 $("d-alta-canguru").addEventListener("input",()=>{$("d-altas-todas-canguru").checked=false});
 $("d-date").addEventListener("change",()=>{const date=$("d-date").value;loadDailyForm(date);renderDaily()})
 $("thermal-add").addEventListener("click",()=>{const date=$("d-date").value||todayISO(),bedNo=+$("thermal-bed").value,b=S.beds.find(x=>x.n===bedNo);if(!b)return alert("Selecione um leito válido.");if(b.status!=="Ocupado")return alert("O leito selecionado não está marcado como ocupado. Atualize a Gestão de Leitos antes de registrar o evento.");if(!String(b.rn||"").trim())return alert("O leito ocupado está sem identificador do RN. Informe o identificador não nominal na Gestão de Leitos.");S.thermalEvents.push({id:"THERM-"+Date.now()+"-"+Math.random().toString(36).slice(2,7),date,bed:bedNo,rn:String(b.rn).trim(),type:$("thermal-type").value,note:$("thermal-note").value.trim(),createdAt:new Date().toISOString()});$("thermal-note").value="";save();showToast("Evento térmico registrado",1200)})
-$("bed-form").addEventListener("submit",e=>{e.preventDefault();const b=S.beds.find(x=>x.n==+$("bed-number").value);if(!b)return;b.status=$("bed-status").value;b.profile=$("bed-profile").value;b.rn=$("bed-rn").value.trim();b.note=$("bed-note").value.trim();save()})
+$("bed-form").addEventListener("submit",e=>{e.preventDefault();const b=S.beds.find(x=>x.n==+$("bed-number").value);if(!b)return;const status=$("bed-status").value,rn=$("bed-rn").value.trim();if(status==="Ocupado"&&!rn)return alert("Informe o identificador não nominal do RN antes de ocupar o leito.");if(status!=="Ocupado"&&rn)return alert("Leitos livres ou bloqueados não podem manter um identificador de RN. Confira a movimentação antes de salvar.");if(b.status==="Ocupado"&&status==="Ocupado"&&b.rn!==rn)return alert("Substituição de RN em leito ocupado bloqueada. Registre a movimentação clínica e confira a ocupação.");if(b.status==="Ocupado"&&status==="Ocupado"&&b.profile!==$("bed-profile").value)return alert("Para mudar o perfil assistencial sem deslocar o RN, use o formulário Alterar perfil assistencial.");b.status=status;b.profile=$("bed-profile").value;b.rn=rn;b.note=$("bed-note").value.trim();save()})
 $("profile-form").addEventListener("submit",e=>{
  e.preventDefault();
  const n=+$("profile-bed").value,b=S.beds.find(x=>x.n===n);
@@ -1429,6 +1469,7 @@ $("profile-form").addEventListener("submit",e=>{
  if(b.status!=="Ocupado")return alert("A alteração de perfil assistencial deve ser feita em um leito ocupado.");
  const old=b.profile,newp=$("profile-new").value;
  if(old===newp)return alert(`O RN já está classificado como ${newp}.`);
+ if(!window.confirm(`Confirmar mudança de perfil?\nRN: ${b.rn}\nLeito físico: ${pad(n)} (sem deslocamento)\nDe: ${old}\nPara: ${newp}`))return;
  b.profile=newp;
  const note=$("profile-note").value.trim();
  S.profileHistory.push({when:nowBR(),bed:n,rn:b.rn,from:old,to:newp,note});
@@ -1437,7 +1478,7 @@ $("profile-form").addEventListener("submit",e=>{
  save();
  alert(`Perfil do RN no Leito ${pad(n)} alterado para ${newp}. O RN permaneceu no mesmo leito.`);
 })
-$("move-bed-form").addEventListener("submit",e=>{e.preventDefault();const o=+$("move-origin").value,t=+$("move-target").value;if(!o||!t||o===t)return alert("Selecione leitos diferentes.");const a=S.beds.find(x=>x.n===o),b=S.beds.find(x=>x.n===t);if(a.status!=="Ocupado")return alert("O leito de origem precisa estar ocupado.");if(b.status!=="Livre")return alert("O leito de destino precisa estar livre.");const rn=a.rn,profile=a.profile;b.status="Ocupado";b.rn=rn;b.profile=profile;b.note=$("move-note").value.trim()||`Remanejado do leito ${o}`;a.status="Livre";a.rn="";a.note="";a.profile="Intensivo";S.bedMoves.push({when:nowBR(),origin:o,target:t,rn,profile,note:$("move-note").value.trim()});S.events.unshift({when:nowBR(),type:"Remanejamento físico de leito",bed:String(t),text:`RN remanejado fisicamente do leito ${o} para o leito ${t}, mantendo perfil ${profile}.`});$("move-note").value="";save();alert("Remanejamento físico registrado. O perfil assistencial do RN foi mantido.")})
+$("move-bed-form").addEventListener("submit",e=>{e.preventDefault();const o=+$("move-origin").value,t=+$("move-target").value;if(!o||!t||o===t)return alert("Selecione leitos diferentes.");const a=S.beds.find(x=>x.n===o),b=S.beds.find(x=>x.n===t);if(a.status!=="Ocupado")return alert("O leito de origem precisa estar ocupado.");if(!String(a.rn||"").trim())return alert("Identifique o RN no leito de origem antes de remanejar.");if(b.status!=="Livre")return alert("O leito de destino precisa estar livre.");const rn=a.rn,profile=a.profile;if(!window.confirm(`Confirmar remanejamento físico?\nRN: ${rn}\nOrigem: leito ${pad(o)}\nDestino: leito ${pad(t)} (Livre)\nPerfil preservado: ${profile}`))return;b.status="Ocupado";b.rn=rn;b.profile=profile;b.note=$("move-note").value.trim()||`Remanejado do leito ${o}`;a.status="Livre";a.rn="";a.note="";a.profile="Intensivo";S.bedMoves.push({when:nowBR(),origin:o,target:t,rn,profile,note:$("move-note").value.trim()});S.events.unshift({when:nowBR(),type:"Remanejamento físico de leito",bed:String(t),text:`RN remanejado fisicamente do leito ${o} para o leito ${t}, mantendo perfil ${profile}.`});$("move-note").value="";save();alert("Remanejamento físico registrado. O perfil assistencial do RN foi mantido.")})
 $("mv-type").addEventListener("change",updateMovementFields)
 $("movement-form").addEventListener("submit",e=>{e.preventDefault();S.movements.push({when:nowBR(),type:$("mv-type").value,bedtype:$("mv-bedtype").value,context:$("mv-context").disabled?"":$("mv-context").value.trim(),note:$("mv-note").value.trim()});$("mv-note").value="";save()})
 $("care-save").addEventListener("click",()=>{const bed=$("care-bed").value;if(!bed)return alert("Selecione o leito.");S.care[bed]={sae:$("care-sae").value,evol:$("care-evol").value,multi:$("care-multi").value,updated:nowBR()};save()})
