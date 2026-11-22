@@ -41,5 +41,6 @@ test('frontend preserva rascunho no HTTP 409 e expõe histórico de retificaçõ
  assert.match(html,/id="pipa-rectifications"/);
  assert.match(app,/window\.rectifyPipa=async i=>/);
  assert.match(app,/refreshPipaRectifications/);
- assert.match(app,/SIASH_CLOUD\.conflict=true;/);\n assert.match(app,/localStorage\.setItem\(STORE,JSON\.stringify\(S\)\)/);
+ assert.match(app,/SIASH_CLOUD\.conflict=true;/);
+ assert.match(app,/localStorage\.setItem\(STORE,JSON\.stringify\(S\)\)/);
 });
