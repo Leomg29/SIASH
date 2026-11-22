@@ -375,6 +375,7 @@ app.put("/api/state",auth,async(req,res)=>{
       const before=oldDaily.find(d=>d?.date===after.date);
       const verdict=validateConferenceMutation({before,after,referenceDate:after.date,now:serverNow});
       if(!verdict.ok){await client.query("ROLLBACK");return res.status(422).json({error:verdict.code,date:after.date,message:verdict.reason||"Conferência inválida."});}
+      if(verdict.changed){after.censusConference.registeredAt=serverNow.toISOString();after.censusConference.registeredBy=req.user.u;}
     }
     for(const daily of newDaily){
       if(!daily||typeof daily.date!=="string"||!/^\\d{4}-\\d{2}-\\d{2}$/.test(daily.date))continue;
