@@ -37,6 +37,10 @@ test("PR98 Chromium: post-discharge, duplicate warning, cancel/chart, correction
   assert.equal(await page.locator("#pipa-total").innerText(),"1");
   assert.match(await page.locator("#pipa-table").innerText(),/Cancelado/);
   assert.match(await page.locator("#indicator-pipa-cities").innerText(),/Ibiaí/);
+  const municipalChart=page.locator("#siash-indicator-charts article.panel").filter({has:page.locator("h3", {hasText:"PIPA por município"})});
+  assert.match(await municipalChart.innerText(),/Ibiaí/);
+  assert.match(await municipalChart.innerText(),/1/);
+  assert.doesNotMatch(await municipalChart.innerText(),/Ibiai/);
   // Retification is a separate server audit, without rewriting the PIPA row.
   await page.route("**/api/pipa/rectifications",async route=>{
    if(route.request().method()==="POST")return route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({ok:true,id:"pr98-browser-event"})});
