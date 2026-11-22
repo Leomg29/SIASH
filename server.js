@@ -1864,6 +1864,8 @@ app.post("/api/census/late-requests/:protocol/decision",auth,async(req,res)=>{
   if(!state.rows.length)return {error:"STATE_NOT_FOUND",http:409};
   const revision=Number(state.rows[0].revision);
   if(revision!==base)return {error:"STATE_REVISION_CONFLICT",http:409};
+  const supervisorRole=await client.query("SELECT role FROM siash_users WHERE username=$1",[req.user.u]);
+  if(supervisorRole.rows[0]?.role!=="owner")return {error:"SUPERVISOR_PERMISSION_REQUIRED",http:403};
   const record=await client.query("SELECT protocol,reference_date::text AS reference_date,requester FROM siash_census_late_requests WHERE protocol=$1 FOR UPDATE",[protocol]);
   if(!record.rows.length)return {error:"LATE_CENSUS_NOT_FOUND",http:404};
   const request=record.rows[0];
