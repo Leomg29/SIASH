@@ -21,7 +21,12 @@ function decideMidnightClosure({daily,referenceDate,admissionRecord,now=new Date
  const today=dateInBrazil(now);
  if(referenceDate!==previousDate(today))return {status:"skip",reason:"Somente o último dia encerrado é elegível."};
  if(!daily)return {status:"pending",reason:"Lançamento diário ausente: conferência manual necessária."};
- if(daily.censusConference)return {status:"manual",reason:"Fechamento já registrado."};
+ const conference=daily.censusConference;
+ if(conference&&conference.referenceDate===referenceDate&&Number(conference.count)===Number(daily.internados)&&
+    typeof conference.responsible==="string"&&conference.responsible.trim()&&
+    Number.isFinite(new Date(conference.registeredAt).getTime()))
+  return {status:"manual",referenceDate,registeredAt:conference.registeredAt,responsible:conference.responsible,reason:"Conferência manual válida registrada para a data de referência."};
+ if(conference)return {status:"pending",reason:"Conferência anterior não corresponde à data ou à contagem atual; revisar manualmente."};
  const admissions=Number(daily.admissoes);
  if(!Number.isSafeInteger(admissions)||admissions<0)return {status:"pending",reason:"Admissões sem contagem válida."};
  if(admissions>0)return {status:"pending",reason:"Admissão registrada: conferência manual obrigatória."};

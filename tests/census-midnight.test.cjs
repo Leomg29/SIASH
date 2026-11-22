@@ -13,7 +13,7 @@ test("00:00 com admissao exige conferencia manual",()=>{
  assert.equal(decideMidnightClosure({...base,daily:{internados:4,admissoes:1}}).status,"pending");
 });
 test("fechamento manual anterior nao pode ser sobrescrito",()=>{
- assert.equal(decideMidnightClosure({...base,daily:{internados:4,admissoes:0,censusConference:{responsible:"Enfermagem"}}}).status,"manual");
+ assert.equal(decideMidnightClosure({...base,daily:{internados:4,admissoes:0,censusConference:{referenceDate:"2026-11-21",registeredAt:"2026-11-22T11:42:33Z",responsible:"Enfermagem",count:4}}}).status,"manual");
 });
 test("sem registro diario ou com estado atualizado apos 00:00 nao fecha",()=>{
  assert.equal(decideMidnightClosure({...base,daily:null}).status,"pending");
@@ -26,6 +26,17 @@ test("alterações de PICC, SAE e leitos não invalidam carimbo próprio de admi
 test("admissão previamente registrada não pode ser ocultada por contador zerado",()=>{
  const result=decideMidnightClosure({...base,daily:{internados:4,admissoes:0},admissionRecord:{count:0,everAdmitted:true,recordedAt:"2026-11-22T02:58:00Z"}});
  assert.equal(result.status,"pending");
+});
+test("conferência manual válida da data anterior encerra pendência mesmo sem carimbo de admissão",()=>{
+ const result=decideMidnightClosure({...base,daily:{internados:4,admissoes:0,censusConference:{referenceDate:"2026-11-21",registeredAt:"2026-11-22T11:42:33Z",responsible:"Enfermagem",count:4}},admissionRecord:null});
+ assert.equal(result.status,"manual");
+ assert.equal(result.referenceDate,"2026-11-21");
+});
+test("conferência da data errada ou contagem divergente não libera o alerta",()=>{
+ for(const conference of [
+  {referenceDate:"2026-11-22",registeredAt:"2026-11-22T11:42:33Z",responsible:"Enfermagem",count:4},
+  {referenceDate:"2026-11-21",registeredAt:"2026-11-22T11:42:33Z",responsible:"Enfermagem",count:5}
+ ])assert.equal(decideMidnightClosure({...base,daily:{internados:4,admissoes:0,censusConference:conference}}).status,"pending");
 });
 test("meia-noite America/Sao_Paulo independe do fuso do processo",()=>{
  assert.equal(midnightBrazilUtc("2026-11-22").toISOString(),"2026-11-22T03:00:00.000Z");

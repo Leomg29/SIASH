@@ -152,6 +152,8 @@ async function cloudLoadAfterLogin(){
  }
  return false;
 }
+let censusConferencePending=null;
+function censusConferenceFeedback(message,error=false){const el=$("census-midnight-alert"),btn=$("census-close");if(el){el.textContent=message;el.style.color=error?"#b45309":"";}if(btn)btn.disabled=Boolean(censusConferencePending);}
 let cloudSaveTimer=null;
 let cloudRetryTimer=null;
 function retryCloudWhenOnline(){
@@ -165,12 +167,12 @@ function scheduleCloudSave({retry=false}={}){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
  if(!retry){SIASH_CLOUD.editGeneration++;preserveCloudDraft("pending")}
  else if(!cloudPending())return;
- if(SIASH_CLOUD.conflict){updateCloudBadge("CONFLITO · cópia local preservada",true);return;}
+ if(SIASH_CLOUD.conflict){if(censusConferencePending){censusConferencePending=null;censusConferenceFeedback("Conflito de sincronização. Conferência local preservada; concilie antes de repetir.",true);}updateCloudBadge("CONFLITO · cópia local preservada",true);return;}
  clearTimeout(cloudSaveTimer);
  cloudSaveTimer=setTimeout(async()=>{
    if(SIASH_CLOUD.syncing){scheduleCloudSaveRetry();return;}
    if(SIASH_CLOUD.conflict)return;
-   if(!Number.isSafeInteger(SIASH_CLOUD.revision)){preserveCloudDraft("revision-unavailable");updateCloudBadge("Sessão sem revisão · rascunho protegido",true);return;}
+   if(!Number.isSafeInteger(SIASH_CLOUD.revision)){if(censusConferencePending){censusConferencePending=null;censusConferenceFeedback("Sem revisão válida no servidor. Conferência local preservada.",true);}preserveCloudDraft("revision-unavailable");updateCloudBadge("Sessão sem revisão · rascunho protegido",true);return;}
    SIASH_CLOUD.syncing=true;updateCloudBadge("Salvando…");
    const generation=SIASH_CLOUD.editGeneration;
    const sentState=JSON.parse(JSON.stringify(S));
@@ -195,8 +197,9 @@ function scheduleCloudSave({retry=false}={}){
        if(generation!==SIASH_CLOUD.editGeneration)preserveCloudDraft("pending");
      }
      SIASH_CLOUD.lastSync=r.updated_at||new Date().toISOString();
-     if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado")}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
+     if(generation===SIASH_CLOUD.editGeneration){clearCloudDraft();SIASH_CLOUD.retryCount=0;clearTimeout(cloudRetryTimer);updateCloudBadge("Sincronizado");if(censusConferencePending&&generation>=censusConferencePending.generation){const pending=censusConferencePending;censusConferencePending=null;censusConferenceFeedback("Conferência enviada; verificando confirmação do servidor…");(typeof refreshMidnightCensusStatus==="function"?refreshMidnightCensusStatus():Promise.resolve()).then(()=>{const el=$("census-midnight-alert");if(el&&el.textContent.includes("pendente"))censusConferenceFeedback("A conferência foi sincronizada, mas o censo ainda requer revisão: "+el.textContent,true);});}else if(typeof refreshMidnightCensusStatus==="function")void refreshMidnightCensusStatus()}else{preserveCloudDraft("pending");updateCloudBadge("Alterações pendentes…",true)}
    }catch(e){
+     if(censusConferencePending){censusConferencePending=null;censusConferenceFeedback("Falha na confirmação da conferência. Registro local preservado; verifique o estado de sincronização antes de tentar novamente.",true);}
      console.error(e);
      preserveCloudDraft(e.status===401?"session-expired":e.conflict||e.status===409||e.status===428||e.status===422?"conflict":"network");
      if(e.status===401){SIASH_CLOUD.conflict=true;updateCloudBadge("Sessão expirada · rascunho protegido",true);alert("Sessão expirada. Seu rascunho foi preservado neste navegador. Entre novamente para conciliar os dados.");}
@@ -547,9 +550,22 @@ async function refreshMidnightCensusStatus(){
  const el=$("census-midnight-alert");if(!el||!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
  try{
   const data=await cloudJson("/api/census/midnight-status");
-  if(data.status==="pending"){el.textContent="ATENÇÃO — Censo de "+dateBR(data.referenceDate)+" pendente de conferência manual pelo plantão noturno. "+(data.reason||"");el.style.color="#b45309";}
-  else if(data.status==="automatic"){el.textContent="Censo de "+dateBR(data.referenceDate)+" fechado automaticamente pelo sistema às 00:00, sem admissões pendentes.";el.style.color="";}
-  else {el.textContent=data.status==="manual"?"Censo anterior com conferência manual registrada.":"";el.style.color="";}
+  const selected=$("d-date")?.value||todayISO();
+  const ref=dateBR(data.referenceDate);
+  const context=selected!==data.referenceDate?" (a data selecionada no formulário é "+dateBR(selected)+").":"";
+  if(data.status==="pending"){
+   el.textContent="ATENÇÃO — Censo de "+ref+" pendente de conferência manual pelo plantão noturno."+context+" "+(data.reason||"");
+   el.style.color="#b45309";
+  }else if(data.status==="automatic"){
+   el.textContent="Censo de "+ref+" fechado automaticamente pelo sistema às 00:00, sem admissões pendentes.";
+   el.style.color="";
+  }else if(data.status==="manual"){
+   el.textContent="Censo de "+ref+" com conferência manual registrada"+(data.responsible?" por "+data.responsible:"")+". O registro não certifica que a contagem ocorreu exatamente à meia-noite.";
+   el.style.color="";
+  }else{
+   el.textContent="Não foi possível determinar o status do censo de "+ref+". Verifique a conferência.";
+   el.style.color="#b45309";
+  }
  }catch(err){el.textContent="Não foi possível consultar o fechamento da meia-noite. Conferir manualmente.";el.style.color="#b45309";}
 }
 function renderCensusConference(date){
@@ -1208,12 +1224,13 @@ $("reset-shift").addEventListener("click",()=>{if(confirm("Iniciar novo plantão
 $("event-form").addEventListener("submit",e=>{e.preventDefault();if(!$("ev-text").value.trim())return;S.events.unshift({when:nowBR(),type:$("ev-type").value,bed:$("ev-bed").value,text:$("ev-text").value.trim()});$("ev-text").value="";save()})
 $("daily-form").addEventListener("submit",e=>{e.preventDefault();const date=$("d-date").value;const r={date,internados:+$("d-internados").value||0,admissoes:+$("d-admissoes").value||0,altas:+$("d-altas").value||0,transferencias:+$("d-transferencias").value||0,obitos:+$("d-obitos").value||0,pipa:(S.daily.find(x=>x.date===date)?.pipa||0),altaPediatria:(S.daily.find(x=>x.date===date)?.altaPediatria||0),altaCanguru:+$("d-alta-canguru").value||0,picc:piccInsertedOn(date),pezinho:+$("d-pezinho").value||0,intub:+$("d-intub").value||0,vm:+$("d-vm").value||0,extubProg:+$("d-extub-prog").value||0,extub:+$("d-extub").value||0,lpp:+$("d-lpp").value||0,hypothermia:thermalCount(date,"Hipotermia"),hyperthermia:thermalCount(date,"Hipertermia"),obs:$("d-obs").value.trim()};const previous=S.daily.find(x=>x.date===date);if(previous?.censusConferenceHistory)r.censusConferenceHistory=previous.censusConferenceHistory;if(previous?.censusConference){if(Number(previous.internados)===r.internados)r.censusConference=previous.censusConference;else r.censusConferenceHistory=[...(r.censusConferenceHistory||[]),previous.censusConference];}S.daily=S.daily.filter(x=>x.date!==r.date);S.daily.push(r);S.daily.sort((a,b)=>a.date.localeCompare(b.date));save();showToast("Dados salvos",1000)})
 $("census-close").addEventListener("click",()=>{
+ if(censusConferencePending)return;
  const date=$("d-date").value||todayISO();
  const responsible=$("census-closer").value;
  if(!window.confirm("Confirmar conferência manual do plantão noturno? A data e hora reais serão registradas; isso não certifica automaticamente o fechamento à meia-noite."))return;
  const result=registerCensusConference(date,responsible);
  if(!result.ok)return alert(result.reason);
- save();refreshMidnightCensusStatus();showToast("Conferência registrada; verifique a referência de meia-noite",2200);
+ save();if(SIASH_CLOUD.enabled&&SIASH_CLOUD.token){censusConferencePending={date,generation:SIASH_CLOUD.editGeneration};censusConferenceFeedback("Salvando conferência… aguardando confirmação do servidor.");}else{censusConferenceFeedback("Conferência salva somente neste navegador. Sem confirmação do servidor.",true);}showToast("Conferência registrada localmente; aguardando sincronização",2200);
 });
 $("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):0);$("d-obs").value=""})
 $("d-date").addEventListener("change",()=>{const date=$("d-date").value;loadDailyForm(date);renderDaily()})
