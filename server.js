@@ -237,34 +237,22 @@ app.get("/api/pending/:id/history",auth,async(req,res)=>{
 });
 
 // Idempotent midnight reconciliation: called on startup and authenticated requests.
+// Read-only clinical decision: no new automatic closure or clinical-state mutation.
 async function reconcileMidnightCensus(){
- const today=dateInBrazil(new Date()),referenceDate=previousDate(today);
- const client=await pool.connect();
- try{
-  await client.query("BEGIN");
-  const row=await client.query("SELECT payload,revision,updated_at FROM siash_state WHERE id=1 FOR UPDATE");
-  if(!row.rows.length){await client.query("ROLLBACK");return {status:"pending",reason:"Estado central não inicializado."};}
-  const state=row.rows[0],daily=state.payload?.state?.daily?.find?.(r=>r.date===referenceDate);
-  const admissionQuery=await client.query("SELECT admission_count,ever_admitted,recorded_at FROM siash_daily_admission_records WHERE reference_date=$1",[referenceDate]);
-  const record=admissionQuery.rows[0];
-  const decision=decideMidnightClosure({daily,referenceDate,admissionRecord:record?{count:record.admission_count,everAdmitted:record.ever_admitted,recordedAt:record.recorded_at}:null});
-  if(decision.status!=="automatic"){await client.query("ROLLBACK");return decision;}
-  const existing=await client.query("SELECT reference_date FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
-  if(existing.rows.length){await client.query("ROLLBACK");return {status:"automatic",alreadyRecorded:true,referenceDate};}
-  // Never rewrite the clinical payload or overwrite a manual census conference.
-  const inserted=await client.query("INSERT INTO siash_census_auto_closures(reference_date,midnight_at,census_count,note,state_revision) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING reference_date",[referenceDate,decision.registeredAt,decision.count,NOTE,state.revision]);
-  if(inserted.rows.length)await client.query("INSERT INTO siash_cloud_audit(username,action,details) VALUES($1,$2,$3)",["system",NOTE,JSON.stringify({referenceDate,count:decision.count,midnightAt:decision.registeredAt})]);
-  await client.query("COMMIT");
-  return {status:"automatic",referenceDate,alreadyRecorded:!inserted.rows.length};
- }catch(err){try{await client.query("ROLLBACK")}catch(_){}throw err}finally{client.release()}
+ const referenceDate=previousDate(dateInBrazil(new Date()));
+ const row=await pool.query("SELECT payload FROM siash_state WHERE id=1");
+ if(!row.rows.length)return {status:"pending",referenceDate,reason:"Estado central não inicializado."};
+ const daily=row.rows[0].payload?.state?.daily?.find?.(r=>r.date===referenceDate);
+ const decision=decideMidnightClosure({daily,referenceDate});
+ return decision;
 }
 app.get("/api/census/midnight-status",auth,async(req,res)=>{
  try{
   const referenceDate=previousDate(dateInBrazil(new Date()));
-  const closure=await pool.query("SELECT reference_date,midnight_at,census_count,note FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
-  if(closure.rows.length)return res.json({status:"automatic",referenceDate,count:closure.rows[0].census_count,note:NOTE});
   const result=await reconcileMidnightCensus();
-  res.json({status:result.status,referenceDate,reason:result.reason||null,...(result.status==="manual"?{responsible:result.responsible,registeredAt:result.registeredAt}:{})});
+  // Legacy auto closures remain in the database but never count as a manual conference.
+  const legacy=await pool.query("SELECT reference_date FROM siash_census_auto_closures WHERE reference_date=$1",[referenceDate]);
+  res.json({status:result.status,referenceDate,reason:result.reason||null,legacyAutomaticRecordExists:legacy.rows.length>0,...(result.status==="manual"?{responsible:result.responsible,registeredAt:result.registeredAt}:{})});
  }catch(err){res.status(503).json({status:"unavailable",error:"Não foi possível verificar o fechamento do censo."})}
 });
 app.get("/api/state",auth,async(req,res)=>{
@@ -324,6 +312,22 @@ function reconcilePipaAudit(previous,incoming,actor){
  }
  return {payload:incoming,events};
 }
+// Preserve each existing daily record occurrence; duplicates are never silently collapsed.
+function detectDailyRecordRemoval(previousDaily,incomingDaily){
+ if(!Array.isArray(previousDaily)||!Array.isArray(incomingDaily))return {blocked:true,reason:"Estrutura de lançamentos diários inválida."};
+ const counts=new Map();
+ for(const record of incomingDaily){
+  if(!record||typeof record!=="object"||Array.isArray(record)||typeof record.date!=="string"||!record.date)return {blocked:true,reason:"Registro diário sem data válida."};
+  counts.set(record.date,(counts.get(record.date)||0)+1);
+ }
+ for(const record of previousDaily){
+  if(!record||typeof record!=="object"||Array.isArray(record)||typeof record.date!=="string"||!record.date)return {blocked:true,reason:"Registro histórico diário inválido: revisão manual necessária."};
+  const remaining=counts.get(record.date)||0;
+  if(remaining<1)return {blocked:true,reason:"Lançamento clínico anterior ausente ou ocorrência histórica removida.",date:record.date};
+  counts.set(record.date,remaining-1);
+ }
+ return {blocked:false};
+}
 app.put("/api/state",auth,async(req,res)=>{
   const payload=req.body?.payload,base=Number(req.body?.base_revision);
   if(!payload||typeof payload!=="object"||Array.isArray(payload))return res.status(400).json({error:"Estado inválido."});
@@ -338,7 +342,9 @@ app.put("/api/state",auth,async(req,res)=>{
     // Authoritative admission-specific timestamp, independent of PICC/SAE/bed edits.
     // A historical positive admission can never be erased by later setting the counter to zero.
     const oldDaily=cur.rows[0].payload?.state?.daily||[];
-    const newDaily=payload?.state?.daily||[];
+    const newDaily=payload?.state?.daily;
+    const removalAudit=detectDailyRecordRemoval(oldDaily,newDaily);
+    if(removalAudit.blocked){await client.query("ROLLBACK");return res.status(422).json({error:"CLINICAL_RECORD_REMOVAL_BLOCKED",message:removalAudit.reason,date:removalAudit.date||null});}
     if(!Array.isArray(newDaily)){await client.query("ROLLBACK");return res.status(422).json({error:"Lançamentos diários inválidos."});}
     for(const daily of newDaily){
       if(!daily||typeof daily.date!=="string"||!/^\\d{4}-\\d{2}-\\d{2}$/.test(daily.date))continue;
