@@ -810,24 +810,32 @@ function renderPicc(){
  $("picc-active-table").innerHTML=active.map(({x,i})=>`<tr>
  <td><strong>Leito ${pad(x.bed)}</strong></td><td>${dateBR(piccInsertDate(x))}</td><td><strong>D${piccDays(x)}</strong> (${piccDays(x)} dia${piccDays(x)===1?"":"s"})</td><td>${safe(x.vein)} / ${safe(x.side)}</td>
  <td>${x.punctures}</td><td>${safe(x.position)}</td><td class="${x.bundle?"status-ok":"status-bad"}">${x.bundle?"Conforme":"Não conforme"}</td><td><span class="device-status active">Ativo</span></td>
- <td><button class="ghost" onclick="editPicc(${i})">Editar</button> <button class="secondary compact-btn" onclick="startPiccRemoval(${i})">Registrar retirada</button> <button class="ghost danger-text" onclick="deletePicc(${i})">Excluir</button></td>
+ <td><button class="ghost" onclick="editPicc(${i})">Retificar</button> <button class="secondary compact-btn" onclick="startPiccRemoval(${i})">Registrar retirada</button> <button class="ghost danger-text" onclick="editPicc(${i})">Retificar</button></td>
  </tr>`).join("")||'<tr><td colspan="9">Nenhum PICC ativo.</td></tr>';
- $("picc-history-table").innerHTML=removed.map(({x,i})=>`<tr><td>Leito ${pad(x.bed)}</td><td>${dateBR(piccInsertDate(x))}</td><td>${dateBR(x.removalDate)}</td><td>${piccDays(x)}</td><td>${safe(x.removalReason||"—")}</td><td>${safe(x.vein)} / ${safe(x.side)}</td><td><button class="ghost" onclick="editPicc(${i})">Ver/editar</button> <button class="ghost danger-text" onclick="deletePicc(${i})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="7">Nenhum PICC retirado registrado.</td></tr>';
+ $("picc-history-table").innerHTML=removed.map(({x,i})=>`<tr><td>Leito ${pad(x.bed)}</td><td>${dateBR(piccInsertDate(x))}</td><td>${dateBR(x.removalDate)}</td><td>${piccDays(x)}</td><td>${safe(x.removalReason||"—")}</td><td>${safe(x.vein)} / ${safe(x.side)}</td><td><button class="ghost" onclick="editPicc(${i})">Retificar</button> <button class="ghost danger-text" onclick="editPicc(${i})">Retificar</button></td></tr>`).join("")||'<tr><td colspan="7">Nenhum PICC retirado registrado.</td></tr>';
 }
 
 function clearPiccForm(){
  $("picc-edit-index").value="";$("picc-date").value=todayISO();$("picc-bed").value="";$("picc-vein").value="";$("picc-side").value="Direita";$("picc-punctures").value=1;$("picc-length").value="";$("picc-external").value="";$("picc-position").value="Sim";$("picc-b1").value="Sim";$("picc-b2").value="Sim";$("picc-b3").value="Sim";$("picc-save-btn").textContent="Registrar PICC";$("picc-cancel-edit").classList.add("hidden");$("picc-edit-note").classList.add("hidden");
 }
 window.editPicc=i=>{
- const x=S.picc[i];if(!x)return;$("picc-edit-index").value=String(i);$("picc-date").value=piccInsertDate(x);$("picc-bed").value=String(x.bed);$("picc-vein").value=x.vein;$("picc-side").value=x.side;$("picc-punctures").value=x.punctures;$("picc-length").value=x.length||"";$("picc-external").value=x.external||"";$("picc-position").value=x.position;$("picc-b1").value=x.b1||"Sim";$("picc-b2").value=x.b2||"Sim";$("picc-b3").value=x.b3||"Sim";$("picc-save-btn").textContent="Salvar alteração";$("picc-cancel-edit").classList.remove("hidden");$("picc-edit-note").classList.remove("hidden");document.querySelector('[data-view="picc"]').click();window.scrollTo({top:0,behavior:"smooth"});
-}
+ const x=S.picc[i];if(!x)return;
+ const justification=window.prompt("Retificação complementar de PICC (sem alterar o registro original). Informe a justificativa obrigatória:");
+ if(justification===null)return;
+ if(!justification.trim())return alert("A justificativa é obrigatória.");
+ const correctionText=window.prompt("Descreva a informação correta e o campo retificado (o histórico original será preservado):");
+ if(correctionText===null)return;
+ if(!correctionText.trim())return alert("Descreva a retificação.");
+ if(!window.confirm(`Confirmar retificação complementar do PICC do leito ${pad(x.bed)}?\\nRegistro original preservado.\\nJustificativa: ${justification}\\nRetificação: ${correctionText}`))return;
+ if(!Array.isArray(S.piccEvents))S.piccEvents=[];
+ S.piccEvents.push({type:"Retificação",recordIndex:i,justification:justification.trim(),correctionText:correctionText.trim()});
+ save();
+};
 window.startPiccRemoval=i=>{
  const x=S.picc[i];if(!x||(x.status&&x.status!=="Ativo"))return;$("picc-removal-index").value=String(i);$("picc-removal-date").value=todayISO();$("picc-removal-reason").value="";$("picc-removal-note").value="";$("picc-removal-target").textContent=`Leito ${pad(x.bed)} • inserido em ${dateBR(piccInsertDate(x))} • D${piccDays(x)}`;$("picc-removal-panel").classList.remove("hidden");$("picc-removal-panel").scrollIntoView({behavior:"smooth",block:"center"});
 }
 function cancelPiccRemoval(){$("picc-removal-index").value="";$("picc-removal-reason").value="";$("picc-removal-note").value="";$("picc-removal-panel").classList.add("hidden")}
-window.deletePicc=i=>{
- const x=S.picc[i];if(!x)return;if(confirm(`Excluir definitivamente o registro de PICC do Leito ${pad(x.bed)}?\n\nUse esta opção apenas para corrigir um lançamento indevido. Para retirada clínica, use Registrar retirada.`)){S.picc.splice(i,1);clearPiccForm();cancelPiccRemoval();save();showToast("Registro de PICC excluído",1200)}
-}
+
 
 function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();const m=$("pipa-month").value||monthOf($("pipa-date").value);if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};const audit=pipaReconciliationSummary(m),auditEl=$("pipa-reconciliation");if(auditEl)auditEl.textContent=`Conferência: ${audit.dated} encaminhamento(s) datado(s); ${audit.monthlyOnly} registro(s) histórico(s) sem data; ${audit.legacyDaily} no censo diário legado; ${audit.overlapDays} dia(s) com possível sobreposição. Não somar as fontes sem conciliação.`;rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>{
  const i=S.pipa.length-1-idx;
@@ -1484,17 +1492,17 @@ $("movement-form").addEventListener("submit",e=>{e.preventDefault();S.movements.
 $("care-save").addEventListener("click",()=>{const bed=$("care-bed").value;if(!bed)return alert("Selecione o leito.");S.care[bed]={sae:$("care-sae").value,evol:$("care-evol").value,multi:$("care-multi").value,updated:nowBR()};save()})
 $("picc-form").addEventListener("submit",e=>{
  e.preventDefault();if(!$("picc-date").value||!$("picc-bed").value||!$("picc-vein").value)return alert("Informe a data da inserção, o leito e a veia/sítio.");
- const b1=$("picc-b1").value,b2=$("picc-b2").value,b3=$("picc-b3").value,bundle=[b1,b2,b3].every(x=>x==="Sim"),editIndex=$("picc-edit-index").value===""?null:+$("picc-edit-index").value,old=editIndex===null?null:S.picc[editIndex];
+ const b1=$("picc-b1").value,b2=$("picc-b2").value,b3=$("picc-b3").value,bundle=[b1,b2,b3].every(x=>x==="Sim"),editIndex=null,old=null;
  const record={id:old?.id||crypto.randomUUID(),when:old?old.when:nowBR(),updated:nowBR(),insertDate:$("picc-date").value,bed:$("picc-bed").value,vein:$("picc-vein").value,side:$("picc-side").value,punctures:+$("picc-punctures").value||1,length:$("picc-length").value,external:$("picc-external").value,position:$("picc-position").value,b1,b2,b3,bundle,status:old?old.status:"Ativo",removalDate:old?old.removalDate:null,removalReason:old?old.removalReason:null,removalNote:old?old.removalNote:null,removedAt:old?old.removedAt:null};
  if(record.removalDate&&record.removalDate<record.insertDate)return alert("A data de inserção não pode ser posterior à data de retirada.");
- if(editIndex!==null){S.picc[editIndex]=record;clearPiccForm();save();showToast("Registro de PICC atualizado",1200);return}
+
  const activeSameBed=S.picc.filter(x=>String(x.bed)===String(record.bed)&&(!x.status||x.status==="Ativo"));if(activeSameBed.length){const proceed=confirm(`Já existe ${activeSameBed.length} PICC ativo no Leito ${pad(record.bed)}.\n\nSe for apenas correção, cancele e edite o registro existente.\n\nDeseja registrar outro PICC ativo neste leito?`);if(!proceed)return}
  S.picc.push(record);clearPiccForm();save();showToast("PICC registrado e indicadores atualizados",1400)
 })
 $("picc-cancel-edit").addEventListener("click",clearPiccForm)
 $("picc-removal-cancel").addEventListener("click",cancelPiccRemoval)
 $("picc-removal-form").addEventListener("submit",e=>{
- e.preventDefault();const i=+$("picc-removal-index").value,x=S.picc[i],date=$("picc-removal-date").value,reason=$("picc-removal-reason").value;if(!x||(x.status&&x.status!=="Ativo"))return alert("PICC ativo não localizado.");if(!date||!reason)return alert("Informe a data e o motivo da retirada.");if(date<piccInsertDate(x))return alert("A retirada não pode ser anterior à inserção.");x.status="Retirado";x.removalDate=date;x.removalReason=reason;x.removalNote=$("picc-removal-note").value.trim();x.removedAt=nowBR();x.updated=nowBR();cancelPiccRemoval();save();showToast(`PICC do Leito ${pad(x.bed)} retirado`,1600)
+ e.preventDefault();const i=+$("picc-removal-index").value,x=S.picc[i],date=$("picc-removal-date").value,reason=$("picc-removal-reason").value;if(!x||(x.status&&x.status!=="Ativo"))return alert("PICC ativo não localizado.");if(!date||!reason)return alert("Informe a data e o motivo da retirada.");if(date<piccInsertDate(x))return alert("A retirada não pode ser anterior à inserção.");if(!window.confirm(`Confirmar retirada do PICC?\\nLeito: ${pad(x.bed)}\\nRN: ${S.beds.find(b=>String(b.n)===String(x.bed))?.rn||"Não identificado"}\\nInserção: ${piccInsertDate(x)||"Data legada não identificada"}\\nDias: ${piccDays(x)??"Não calculável"}\\nMotivo: ${reason}`))return;x.status="Retirado";x.removalDate=date;x.removalReason=reason;x.removalNote=$("picc-removal-note").value.trim();x.removedAt=nowBR();x.updated=nowBR();cancelPiccRemoval();save();showToast(`PICC do Leito ${pad(x.bed)} retirado`,1600)
 })
 
 $("pipa-form").addEventListener("submit",e=>{e.preventDefault();const qty=Number($("pipa-qty").value);if(!$("pipa-date").value||!$("pipa-city").value)return alert("Informe data do encaminhamento e município de origem.");$("pipa-month").value=monthOf($("pipa-date").value);if(!Number.isSafeInteger(qty)||qty<1)return alert("Informe quantidade inteira e maior que zero.");if(!$("pipa-post-discharge").checked)return alert("Confirme que os RNs foram encaminhados após a alta da UTIN.");S.pipa.push({id:crypto.randomUUID(),date:$("pipa-date").value,month:$("pipa-month").value,city:$("pipa-city").value,qty,note:$("pipa-note").value.trim(),postDischargeConfirmed:true,updated:nowBR()});$("pipa-qty").value=1;$("pipa-post-discharge").checked=false;$("pipa-note").value="";save()})
