@@ -10,7 +10,7 @@ function censusWindow(now=new Date()){
   const referenceDate=previousDate(today);
   return minute===10?{phase:"expired",referenceDate,canPrepare:false,canConfirm:false,requiresJustification:true}:{phase:"confirmation",referenceDate,canPrepare:false,canConfirm:true};
  }
- return {phase:"outside",referenceDate:previousDate(today),canPrepare:false,canConfirm:false};
+ return {phase:"expired",referenceDate:previousDate(today),canPrepare:false,canConfirm:false,requiresJustification:true};
 }
 function censusAttention({now=new Date(),officiallyClosed=false}={}){
  const window=censusWindow(now);
