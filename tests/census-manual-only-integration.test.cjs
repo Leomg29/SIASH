@@ -1,0 +1,10 @@
+"use strict";
+const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs");
+const server=fs.readFileSync("server.js","utf8");
+const census=fs.readFileSync("census-midnight.cjs","utf8");
+const start=server.indexOf("async function reconcileMidnightCensus()"),end=server.indexOf('app.get("/api/state"',start);
+assert.ok(start>=0&&end>start);
+const route=server.slice(start,end);
+test("reconciliacao nao grava fechamento automatico",()=>{assert.doesNotMatch(route,/INSERT INTO siash_census_auto_closures/);assert.doesNotMatch(route,/status:"automatic"/);assert.doesNotMatch(census,/return \{status:"automatic"/)});
+test("legado automatico consultado sem promover a conferencia manual",()=>{assert.match(route,/SELECT reference_date FROM siash_census_auto_closures/);assert.match(route,/legacyAutomaticRecordExists/);assert.match(route,/const result=await reconcileMidnightCensus\(\)/)});
+test("GET state nao cria fechamentos automaticos",()=>{assert.match(server,/app\.get\("\/api\/state",auth,async\(req,res\)=>\{\s*await reconcileMidnightCensus\(\)/);assert.doesNotMatch(route,/INSERT INTO siash_cloud_audit/)});
