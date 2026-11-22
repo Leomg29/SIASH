@@ -36,7 +36,7 @@ test("month boundary, leap year, historical month, multiple devices",()=>{
 });
 test("retification event requires justification, existing event immutable",()=>{
  const before=payload([active()],[{id:"event1",type:"Inserção",recordIndex:0}]);
- const after=payload([active()],[...before.state.piccEvents,{type:"Retificação",recordIndex:0,justification:"Revisão",correctionText:"Sítio correto"}]);
+ const after=payload([active()],[...structuredClone(before.state.piccEvents),{type:"Retificação",recordIndex:0,justification:"Revisão",correctionText:"Sítio correto"}]);
  assert.equal(validatePiccMutation(before,after).ok,true);
  const stamp=stampPiccEvents(before,after,"supervisor");
  assert.equal(stamp.length,1);assert.equal(stamp[0].recordedBy,"supervisor");
