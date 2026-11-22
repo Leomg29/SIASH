@@ -36,7 +36,7 @@ test("PR97 isolated PostgreSQL: legacy, immutable PICC, rollback, 409",{skip:pro
   const tamper=clone(final.rows[0].payload);tamper.state.picc[0].removalReason="Alterado";
   assert.equal((await put(tamper,2)).status,422);
   assert.equal((await db.query("SELECT COUNT(*)::int n FROM siash_state_history")).rows[0].n,history+1);
-  assert.equal((await db.query("SELECT revision FROM siash_state WHERE id=1")).rows[0].revision,2);
+  assert.equal(Number((await db.query("SELECT revision FROM siash_state WHERE id=1")).rows[0].revision),2);
   assert.deepEqual(before.rows[0].payload,payload);
  }finally{child.kill("SIGTERM");await db.end()}
 });
