@@ -100,6 +100,11 @@ async function initDb(){
       reason TEXT NOT NULL,
       state_revision BIGINT NOT NULL
     );
+    CREATE OR REPLACE FUNCTION siash_pipa_rectification_no_mutation() RETURNS trigger LANGUAGE plpgsql AS $pipa_immutable$
+    BEGIN RAISE EXCEPTION 'PIPA rectification audit is append-only'; END $pipa_immutable$;
+    DROP TRIGGER IF EXISTS siash_pipa_rectification_immutable ON siash_pipa_rectification_audit;
+    CREATE TRIGGER siash_pipa_rectification_immutable BEFORE UPDATE OR DELETE ON siash_pipa_rectification_audit
+      FOR EACH ROW EXECUTE FUNCTION siash_pipa_rectification_no_mutation();
     CREATE TABLE IF NOT EXISTS siash_daily_admission_records(
       reference_date DATE PRIMARY KEY,
       admission_count INTEGER NOT NULL CHECK(admission_count>=0),
