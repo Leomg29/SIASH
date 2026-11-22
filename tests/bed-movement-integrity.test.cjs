@@ -52,3 +52,42 @@ test("legacy 10-bed records without canonical status are not rewritten or reject
  const after=structuredClone(before);after.state.beds[0].patient="LEGACY-UPDATED";
  assert.equal(check(before,after).ok,true);
 });
+
+test("occupied destination, profile without audit and wrong isolation rejected",()=>{
+ const before=wrap({beds:beds(),bedMoves:[],profileHistory:[]});
+ before.state.beds[0]={...before.state.beds[0],status:"Ocupado",rn:"RN-A"};
+ before.state.beds[1]={...before.state.beds[1],status:"Ocupado",rn:"RN-B"};
+ const wrong=structuredClone(before);wrong.state.beds[0].rn="RN-B";
+ assert.equal(check(before,wrong).code,"BED_OCCUPANT_REPLACEMENT_BLOCKED");
+ const profile=structuredClone(before);profile.state.beds[0].profile="Intermediário";
+ assert.equal(check(before,profile).code,"BED_PROFILE_AUDIT_REQUIRED");
+ profile.state.profileHistory.push({bed:1,rn:"RN-A",from:"Intensivo",to:"Intermediário"});
+ assert.equal(check(before,profile).ok,true);
+ const isolation=structuredClone(before);isolation.state.beds[8].isolation=false;
+ assert.equal(check(before,isolation).code,"BED_ISOLATION_INVALID");
+ const occupied=structuredClone(before);
+ occupied.state.beds[0].status="Livre";occupied.state.beds[0].rn="";
+ occupied.state.beds[1].rn="RN-A";
+ occupied.state.bedMoves.push({origin:1,target:2,rn:"RN-A",profile:"Intensivo"});
+ assert.equal(check(before,occupied).code,"BED_MOVE_INVALID");
+});
+test("physical move into free bed retains RN profile and preserves historical event",()=>{
+ const before=wrap({beds:beds(),bedMoves:[]});
+ before.state.beds[0]={...before.state.beds[0],status:"Ocupado",rn:"RN-A",profile:"Intermediário"};
+ const after=structuredClone(before);
+ after.state.beds[0]={...after.state.beds[0],status:"Livre",rn:"",profile:"Intensivo"};
+ after.state.beds[8]={...after.state.beds[8],status:"Ocupado",rn:"RN-A",profile:"Intermediário"};
+ after.state.bedMoves.push({origin:1,target:9,rn:"RN-A",profile:"Intermediário"});
+ assert.equal(check(before,after).ok,true);
+});
+test("server stamps are authoritative and do not alter legacy events",()=>{
+ const {stampNewEvents}=require("../bed-movement-integrity.cjs");
+ const before=wrap({movements:[{when:"old"}]});
+ const after=wrap({movements:[{when:"old"},{when:"new",recordedBy:"forged",id:"forged"}]});
+ const result=stampNewEvents(before,after,"nurse-ci",new Date("2026-11-22T12:00:00Z"));
+ assert.equal(result.ok,true);
+ assert.deepEqual(after.state.movements[0],{when:"old"});
+ assert.equal(after.state.movements[1].recordedBy,"nurse-ci");
+ assert.notEqual(after.state.movements[1].id,"forged");
+ assert.equal(after.state.movements[1].timeZone,"America/Sao_Paulo");
+});
