@@ -12,7 +12,8 @@ test('daily edit merges previous record before explicit form fields',()=>{
  assert.match(handler,/altaCanguru:\+\$\("d-alta-canguru"\)\.value\|\|0/);
 });
 test('census conference invalidation remains in place on count change',()=>{
- assert.match(handler,/if\(Number\(previous\.internados\)===r\.internados\)r\.censusConference=previous\.censusConference;else r\.censusConferenceHistory=/);
+ assert.match(handler,/if\(Number\(previous\.internados\)===r\.internados\)r\.censusConference=previous\.censusConference;else\{r\.censusConferenceHistory=/);
+ assert.match(handler,/delete r\.censusConference/);
 });
 test('save replaces only selected day and retains historical extra keys',()=>{
  assert.match(handler,/S\.daily=S\.daily\.filter\(x=>x\.date!==r\.date\);S\.daily\.push\(r\)/);
