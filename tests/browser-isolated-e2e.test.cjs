@@ -58,12 +58,12 @@ test('Chromium real: dois plantoes, 409, resolucao e persistencia apos reload',{
     censusConferenceFeedback('Conferência salva e sincronizada.');
     const saved=!button.disabled&&alert.textContent.includes('sincronizada');
     date.value='2026-11-22';
-    cloudJson=async()=>({status:'pending',referenceDate:'2026-11-21',reason:'Conferência manual necessária.'});
+    cloudJson=async()=>({attention:'overdue',phase:'expired',referenceDate:'2026-11-21',clinicalStatus:'pending'});
     await refreshMidnightCensusStatus();
     const pending=alert.textContent.includes('21/11/2026')&&alert.textContent.includes('22/11/2026')&&alert.textContent.includes('pendente');
-    cloudJson=async()=>({status:'manual',referenceDate:'2026-11-21',responsible:'Enfermagem',registeredAt:'2026-11-22T11:42:33Z'});
+    cloudJson=async()=>({attention:'closed',phase:'expired',referenceDate:'2026-11-21',clinicalStatus:'manual'});
     await refreshMidnightCensusStatus();
-    const manual=alert.textContent.includes('conferência manual registrada')&&!alert.textContent.includes('pendente');
+    const manual=alert.textContent.includes('Conferência manual')&&!alert.textContent.includes('pendente');
     return {saving,saved,pending,manual};
    }finally{cloudJson=originalCloudJson;date.value=originalDate;censusConferencePending=null;button.disabled=initialDisabled;}
   });
