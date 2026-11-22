@@ -19,7 +19,7 @@ function validateBedMovementMutation(previousPayload, nextPayload) {
   }
   const beforeBeds = oldState.beds;
   const afterBeds = nextState.beds;
-  if (beforeBeds !== undefined && !same(beforeBeds,afterBeds)) {
+  if (Array.isArray(beforeBeds) && beforeBeds.length === 10 && !same(beforeBeds,afterBeds)) {
     if (!Array.isArray(afterBeds) || afterBeds.length !== 10)
       return {ok:false,code:"BED_STATE_INVALID",path:"beds"};
     const nums = new Set();
