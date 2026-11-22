@@ -142,9 +142,15 @@ async function initDb(){
     );
   `);
   await pool.query(`DO $role$ DECLARE item record; BEGIN
-    FOR item IN SELECT conname FROM pg_constraint WHERE conrelid='siash_users'::regclass AND contype='c' AND pg_get_constraintdef(oid) LIKE '%role%'
-    LOOP EXECUTE format('ALTER TABLE siash_users DROP CONSTRAINT %I',item.conname); END LOOP;
-    ALTER TABLE siash_users ADD CONSTRAINT siash_users_role_check CHECK(role IN ('owner','operational','clinical_supervisor'));
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='siash_users'::regclass
+      AND conname='siash_users_role_check'
+      AND pg_get_constraintdef(oid) LIKE '%clinical_supervisor%') THEN
+      FOR item IN SELECT conname FROM pg_constraint WHERE conrelid='siash_users'::regclass
+        AND contype='c' AND pg_get_constraintdef(oid) LIKE '%role%' AND pg_get_constraintdef(oid) LIKE '%operational%'
+      LOOP EXECUTE format('ALTER TABLE siash_users DROP CONSTRAINT %I',item.conname); END LOOP;
+      ALTER TABLE siash_users ADD CONSTRAINT siash_users_role_check
+        CHECK(role IN ('owner','operational','clinical_supervisor'));
+    END IF;
   END $role$;`);
 }
 const STRONG_PASSWORD=/[!@#$%^&*._-]/;
@@ -156,10 +162,17 @@ async function databaseRole(username,client=pool){
 }
 function canDecideClinical(role){return CLINICAL_DECISION_ROLES.has(role)}
 function tokenFor(user){ return jwt.sign({u:user.username,r:user.role}, JWT_SECRET,{expiresIn:"12h"}); }
-function auth(req,res,next){
+async function auth(req,res,next){
   const h=req.headers.authorization||"";
   const token=h.startsWith("Bearer ")?h.slice(7):"";
-  try{req.user=jwt.verify(token,JWT_SECRET);next()}catch(e){res.status(401).json({error:"Sessão inválida ou expirada."})}
+  let identity;
+  try{identity=jwt.verify(token,JWT_SECRET)}
+  catch(e){return res.status(401).json({error:"Sessão inválida ou expirada."})}
+  try{
+    const role=await databaseRole(identity.u);
+    if(!role)return res.status(401).json({error:"Conta não encontrada."});
+    req.user={...identity,r:role};next();
+  }catch(e){next(e)}
 }
 async function audit(username,action,details=null){
   try{await pool.query("INSERT INTO siash_cloud_audit(username,action,details) VALUES($1,$2,$3)",[username,action,details])}catch(e){}
@@ -1819,7 +1832,7 @@ app.post("/api/users",auth,async(req,res)=>{
 
 
 app.patch("/api/users/:username/role",auth,async(req,res)=>{
- if(await databaseRole(req.user.u)!=="owner")return res.status(403).json({error:"OWNER_REQUIRED"});
+ if(req.user.r!=="owner")return res.status(403).json({error:"OWNER_REQUIRED"});
  const username=req.params.username,role=req.body?.role;
  if(!["operational","clinical_supervisor"].includes(role))return res.status(400).json({error:"INVALID_USER_ROLE"});
  const client=await pool.connect();
@@ -1897,7 +1910,7 @@ app.post("/api/census/late-requests/:protocol/decision",auth,async(req,res)=>{
   if(!record.rows.length)return {error:"LATE_CENSUS_NOT_FOUND",http:404};
   const request=record.rows[0];
   if(request.requester===req.user.u)return {error:"SELF_APPROVAL_FORBIDDEN",http:403};
-  const supervisorRole=await client.query("SELECT role FROM siash_users WHERE username=$1",[req.user.u]);
+  const supervisorRole=await client.query("SELECT role FROM siash_users WHERE username=$1 FOR SHARE",[req.user.u]);
   if(!canDecideClinical(supervisorRole.rows[0]?.role))return {error:"SUPERVISOR_PERMISSION_REQUIRED",http:403};
   const events=await client.query("SELECT event_type FROM siash_census_late_events WHERE protocol=$1 ORDER BY id DESC LIMIT 1",[protocol]);
   const status=events.rows[0]?.event_type;
