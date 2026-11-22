@@ -515,7 +515,7 @@ function canguruConsistencyAudit(m){
 }
 // Advisory only: never mutate daily records or infer missing census values.
 function auditDailyBalance(records,month){
- const rows=(Array.isArray(records)?records:[]).filter(r=>r&&typeof r.date==="string"&&r.date.slice(0,7)===month);
+ const rows=(Array.isArray(records)?records:[]).filter(r=>r&&typeof r.date==="string");
  const counts=new Map(),warnings=[];
  for(const r of rows)counts.set(r.date,(counts.get(r.date)||0)+1);
  const unique=[...new Map(rows.map(r=>[r.date,r])).entries()].sort(([a],[b])=>a.localeCompare(b));
@@ -535,7 +535,7 @@ function auditDailyBalance(records,month){
   const expected=nums[0]+nums[2]-nums[3]-nums[4]-nums[5];
   if(!Number.isSafeInteger(expected)||nums[1]!==expected)warnings.push({date,type:"balance",expected,actual:nums[1],difference:nums[1]-expected});
  }
- return warnings;
+ return warnings.filter(w=>w.date.slice(0,7)===month);
 }
 function monthStats(m){
  const rows=S.daily.filter(r=>monthOf(r.date)===m).sort((a,b)=>a.date.localeCompare(b.date));
