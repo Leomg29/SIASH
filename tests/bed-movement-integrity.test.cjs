@@ -40,3 +40,9 @@ test("does not rewrite unchanged legacy bed data",()=>{
  const next=structuredClone(legacy);next.state.movements=[{when:"new"}];
  assert.equal(check(legacy,next).ok,true);
 });
+
+test("JSONB reordered object keys do not falsely trigger historical mutation",()=>{
+ const before=wrap({bedMoves:[{when:"old",origin:1,target:2,note:"ok"}]});
+ const after=wrap({bedMoves:[{note:"ok",target:2,origin:1,when:"old"}]});
+ assert.equal(check(before,after).ok,true);
+});
