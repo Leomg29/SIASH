@@ -363,7 +363,7 @@ async function showCloudConflictPanel(){
  await loadRemote();
 }
 function updateCloudBadge(text,bad=false){
- const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad)
+ const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);if(document.getElementById("bed-sync-status"))renderBedReconciliation();
 }
 async function uploadDocCloud(key,file){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token||!file)return;
