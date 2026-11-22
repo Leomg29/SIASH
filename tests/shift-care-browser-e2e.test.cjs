@@ -15,7 +15,7 @@ test("PR99 Chromium: shift warning, closure, immutable history, care and HTTP409
   assert.match(warning,/Checklist pendente:/);assert.match(warning,/Nenhuma tarefa será concluída automaticamente/);
   assert.equal(await page.evaluate(()=>S.shiftHistory.length),1);
   assert.equal(await page.evaluate(()=>S.shiftClosed),true);
-  assert.match(await page.locator("#shift-history").innerText(),/Aguardando carimbo do servidor/);
+  assert.match(await page.locator("#shift-history").innerText(),/Aguardando servidor/);
   page.once("dialog",d=>d.accept());await page.locator("#reset-shift").click();
   assert.equal(await page.evaluate(()=>S.shiftHistory.length),1);
   assert.equal(await page.evaluate(()=>S.shiftClosed),false);
