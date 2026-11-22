@@ -29,6 +29,8 @@ jobs:
         run: node --test tests/clinical-supervisor-contract.test.cjs
       - name: Bed movement integrity unit tests
         run: node --test tests/bed-movement-integrity.test.cjs
+      - name: PR97 PICC lifecycle unit tests
+        run: node --test tests/picc-lifecycle-integrity.test.cjs
       - name: Regression suite
         shell: bash
         run: |
