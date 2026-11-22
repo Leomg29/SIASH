@@ -18,3 +18,12 @@ test("autoaprovação bloqueada e revisão só a partir do estado correto",()=>{
  const rejected=decideReview({request,supervisor:"supervisor2",approved:false,reason:"Evidências clínicas insuficientes",now});
  assert.equal(rejected.status,"regularizacao_rejeitada");
 });
+
+test("evidência insuficiente mantém pendência clínica sem aprovação",()=>{
+ const result=decideReview({request:{requester:"enfermeiro1",status:"aguardando_supervisor"},supervisor:"supervisor2",approved:null,reason:"Evidências insuficientes para confirmar ocupação",now});
+ assert.equal(result.status,"pendente_validacao_clinica");
+});
+test("janela pontual ainda aberta impede regularização tardia",()=>{
+ const value=validateRequest({...sample,referenceDate:"2026-11-22",now:new Date("2026-11-23T03:05:00Z")});
+ assert.equal(value.code,"OFFICIAL_WINDOW_STILL_OPEN");
+});
