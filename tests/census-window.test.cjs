@@ -3,7 +3,7 @@ const assert=require("node:assert/strict");
 const {censusWindow,censusAttention,effectiveAdmissionDate}=require("../census-window.cjs");
 const at=(day,time)=>new Date(day+"T"+time+"-03:00");
 test("23h54 bloqueia; 23h55 permite apenas preparar; 23h59 não fecha",()=>{
- assert.equal(censusWindow(at("2026-11-22","23:54:59")).phase,"outside");
+ assert.equal(censusWindow(at("2026-11-22","23:54:59")).phase,"expired");
  for(const time of ["23:55:00","23:59:59"]){
   const w=censusWindow(at("2026-11-22",time));
   assert.equal(w.phase,"preparation");assert.equal(w.canPrepare,true);assert.equal(w.canConfirm,false);
