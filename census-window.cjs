@@ -30,4 +30,14 @@ function effectiveAdmissionDate({effectiveAt,recordedAt}){
  }
  return dateInBrazil(effective);
 }
-module.exports={censusWindow,censusAttention,effectiveAdmissionDate};
+function validateConferenceMutation({before,after,referenceDate,now=new Date()}){
+ const oldRecord=before?.censusConference,newRecord=after?.censusConference;
+ if(JSON.stringify(oldRecord??null)===JSON.stringify(newRecord??null))return {ok:true,changed:false};
+ if(oldRecord)return {ok:false,code:"CENSUS_CONFERENCE_IMMUTABLE",reason:"Conferência anterior não pode ser substituída nem removida."};
+ if(!newRecord||typeof newRecord!=="object")return {ok:false,code:"CENSUS_CONFERENCE_INVALID"};
+ const window=censusWindow(now);
+ if(!window.canConfirm||window.referenceDate!==referenceDate)return {ok:false,code:"CENSUS_OUTSIDE_WINDOW",reason:"Confirmação oficial permitida somente entre 00h00 e 00h09min59s do dia seguinte."};
+ if(newRecord.referenceDate!==referenceDate||!Number.isSafeInteger(Number(newRecord.count))||Number(newRecord.count)!==Number(after.internados)||!String(newRecord.responsible||"").trim())return {ok:false,code:"CENSUS_CONFERENCE_INVALID",reason:"Data, contagem ou responsável inválidos."};
+ return {ok:true,changed:true};
+}
+module.exports={censusWindow,censusAttention,effectiveAdmissionDate,validateConferenceMutation};
