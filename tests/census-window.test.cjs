@@ -1,6 +1,6 @@
 const test=require("node:test");
 const assert=require("node:assert/strict");
-const {censusWindow,censusAttention,effectiveAdmissionDate}=require("../census-window.cjs");
+const {censusWindow,censusAttention,effectiveAdmissionDate,validateConferenceMutation}=require("../census-window.cjs");
 const at=(day,time)=>new Date(day+"T"+time+"-03:00");
 test("23h54 bloqueia; 23h55 permite apenas preparar; 23h59 não fecha",()=>{
  assert.equal(censusWindow(at("2026-11-22","23:54:59")).phase,"expired");
@@ -51,4 +51,20 @@ test("API de janela apenas consulta o estado e usa relógio do servidor",()=>{
  assert.match(route,/const now=new Date\(\)/);
  assert.match(route,/SELECT payload FROM siash_state/);
  assert.doesNotMatch(route,/INSERT INTO|UPDATE siash_|DELETE FROM|pool\.query\("INSERT/i);
+});
+
+test("servidor bloqueia conferência antes e depois da janela",()=>{
+ const after={internados:4,censusConference:{referenceDate:"2026-11-22",count:4,responsible:"Enfermeiro"}};
+ for(const time of ["23:59:59","00:10:00","08:00:00"]){
+  const day=time.startsWith("23")?"2026-11-22":"2026-11-23";
+  const result=validateConferenceMutation({before:{internados:4},after,referenceDate:"2026-11-22",now:at(day,time)});
+  assert.equal(result.ok,false);assert.equal(result.code,"CENSUS_OUTSIDE_WINDOW");
+ }
+ assert.equal(validateConferenceMutation({before:{internados:4},after,referenceDate:"2026-11-22",now:at("2026-11-23","00:05:00")}).ok,true);
+});
+test("conferência já existente é imutável, inclusive exclusão",()=>{
+ const original={referenceDate:"2026-11-22",count:4,responsible:"Equipe",registeredAt:"2026-11-23T03:01:00Z"};
+ const before={internados:4,censusConference:original};
+ assert.equal(validateConferenceMutation({before,after:{internados:4},referenceDate:"2026-11-22",now:at("2026-11-23","00:05:00")}).code,"CENSUS_CONFERENCE_IMMUTABLE");
+ assert.equal(validateConferenceMutation({before,after:{internados:4,censusConference:{...original,count:5}},referenceDate:"2026-11-22",now:at("2026-11-23","00:05:00")}).code,"CENSUS_CONFERENCE_IMMUTABLE");
 });
