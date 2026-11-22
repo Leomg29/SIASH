@@ -22,3 +22,13 @@ test('save replaces only selected day and retains historical extra keys',()=>{
  assert.deepEqual(next.legacyAudit,{source:'import'});
  assert.equal(next.futureClinicalField,7);
 });
+
+test('conferencia ativa e invalidada quando censo muda sem perder historico',()=>{
+ const prev={internados:2,censusConference:{count:2},censusConferenceHistory:[{count:1}],extra:'preserve'};
+ const r={...prev,internados:3};
+ if(Number(prev.internados)===r.internados)r.censusConference=prev.censusConference;
+ else{r.censusConferenceHistory=[...(r.censusConferenceHistory||[]),prev.censusConference];delete r.censusConference;}
+ assert.equal(Object.hasOwn(r,'censusConference'),false);
+ assert.deepEqual(r.censusConferenceHistory,[{count:1},{count:2}]);
+ assert.equal(r.extra,'preserve');
+});
