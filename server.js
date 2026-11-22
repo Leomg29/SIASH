@@ -246,6 +246,19 @@ async function reconcileMidnightCensus(){
  const decision=decideMidnightClosure({daily,referenceDate});
  return decision;
 }
+// Prévia de janela calculada exclusivamente com o relógio do servidor; sem mutações clínicas.
+app.get("/api/census/window-status",auth,async(req,res)=>{
+ try{
+  const {censusAttention}=require("./census-window.cjs");
+  const now=new Date(),window=censusAttention({now});
+  const row=await pool.query("SELECT payload FROM siash_state WHERE id=1");
+  const daily=row.rows[0]?.payload?.state?.daily?.find?.(r=>r.date===window.referenceDate);
+  const decision=decideMidnightClosure({daily,referenceDate:window.referenceDate,now});
+  const officiallyClosed=decision.status==="manual";
+  const attention=censusAttention({now,officiallyClosed});
+  res.json({...attention,serverTime:now.toISOString(),clinicalStatus:decision.status,informationalOnly:true});
+ }catch(err){res.status(503).json({status:"unavailable",error:"Não foi possível verificar a janela do censo."})}
+});
 app.get("/api/census/midnight-status",auth,async(req,res)=>{
  try{
   const referenceDate=previousDate(dateInBrazil(new Date()));
