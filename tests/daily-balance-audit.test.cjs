@@ -1,0 +1,12 @@
+"use strict";
+const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("node:vm");
+const src=fs.readFileSync("app.js","utf8");
+const start=src.indexOf("function auditDailyBalance("),end=src.indexOf("function monthStats(",start);
+assert.ok(start>=0&&end>start);
+const audit=vm.runInNewContext(src.slice(start,end)+";auditDailyBalance");
+const row=(date,internados,admissoes=0,altas=0,transferencias=0,obitos=0)=>({date,internados,admissoes,altas,transferencias,obitos});
+test("saldo correto nao gera divergencia",()=>{assert.equal(audit([row("2026-11-20",4),row("2026-11-21",5,2,1)],"2026-11").length,0)});
+test("saldo divergente e apenas informativo",()=>{const data=[row("2026-11-20",4),row("2026-11-21",4,2,1)];const original=JSON.stringify(data);const warnings=audit(data,"2026-11");assert.equal(warnings[0].type,"balance");assert.equal(warnings[0].expected,5);assert.equal(JSON.stringify(data),original)});
+test("datas duplicadas sao sinalizadas e impedem reconciliacao",()=>{const warnings=audit([row("2026-11-20",4),row("2026-11-20",4),row("2026-11-21",4)],"2026-11");assert.equal(warnings[0].type,"duplicate");assert.equal(warnings[1].type,"not-comparable")});
+test("lacunas e contagens invalidas nao sao preenchidas",()=>{assert.equal(audit([row("2026-11-20",4),row("2026-11-22",4)],"2026-11")[0].type,"gap");assert.equal(audit([row("2026-11-20",4),row("2026-11-21",4,"x")],"2026-11")[0].type,"invalid-count")});
+test("monthStats permanece independente dos avisos",()=>{assert.match(src,/function monthStats\(m\)\{/);assert.match(src,/const balanceWarnings=auditDailyBalance\(S\.daily,m\)/)});
