@@ -404,6 +404,10 @@ app.put("/api/state",auth,async(req,res)=>{
     if(!cur.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"Estado central não encontrado. Recarregue os dados.",conflict:true});}
     const current=Number(cur.rows[0].revision);
     if(current!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Outro profissional salvou alterações antes de você. Seus dados locais foram preservados; não atualize a página antes de exportar ou conferir seus lançamentos.",conflict:true,current_revision:current});}
+    // PR #96: validate bed-state changes and immutable movement histories before any writes.
+    const {validateBedMovementMutation}=require("./bed-movement-integrity.cjs");
+    const bedAudit=validateBedMovementMutation(cur.rows[0].payload,payload);
+    if(!bedAudit.ok){await client.query("ROLLBACK");return res.status(422).json({error:bedAudit.code,path:bedAudit.path,message:"Integridade de leitos e movimentações: operação rejeitada; confira os dados sem modificar históricos."});}
     // Authoritative admission-specific timestamp, independent of PICC/SAE/bed edits.
     // A historical positive admission can never be erased by later setting the counter to zero.
     const oldDaily=cur.rows[0].payload?.state?.daily||[];
