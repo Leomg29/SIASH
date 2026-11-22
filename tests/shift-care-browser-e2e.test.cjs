@@ -4,7 +4,7 @@ const {spawn}=require("node:child_process"),{setTimeout:delay}=require("node:tim
 test("PR99 Chromium: shift warning, closure, immutable history, care and HTTP409 draft",{skip:process.env.SIASH_ISOLATED_CI!=="1",timeout:120000},async()=>{
  assert.match(process.env.DATABASE_URL||"",/siash_ci/);
  const {chromium}=require("playwright"),port=18919,url="http://127.0.0.1:"+port;
- const child=spawn(process.execPath,["server.js"],{env:{...process.env,PORT:String(port),PGSSLMODE:"disable",JWT_SECRET:"pr99-browser-isolated-secret-2026"},stdio:["ignore","pipe","pipe"]});
+ const child=spawn(process.execPath,["server.js"],{env:{...process.env,PORT:String(port),PGSSLMODE:"disable",JWT_SECRET:"pr99-browser-isolated-secret-2026-longer-than-32"},stdio:["ignore","pipe","pipe"]});
  let logs="";child.stdout.on("data",d=>logs+=d);child.stderr.on("data",d=>logs+=d);let browser;
  try{
   for(let i=0;i<150;i++){try{if((await fetch(url+"/api/health")).ok)break}catch{}if(child.exitCode!==null)throw Error(logs);if(i===149)throw Error(logs);await delay(100)}
