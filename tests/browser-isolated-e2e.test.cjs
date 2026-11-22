@@ -41,6 +41,33 @@ test('Chromium real: dois plantoes, 409, resolucao e persistencia apos reload',{
    return page;
   }
   const day=await prepare(a,'plantao-diurno'),night=await prepare(b,'plantao-noturno');
+  // Conferência: evidência real de DOM/Chromium sem gravar dados clínicos.
+  const censusUI=await day.evaluate(async()=>{
+   const alert=document.getElementById('census-midnight-alert');
+   const button=document.getElementById('census-close');
+   const date=document.getElementById('d-date');
+   if(!alert||!button||!date)throw Error('Controles do censo ausentes');
+   const originalCloudJson=cloudJson;
+   const originalDate=date.value;
+   const initialDisabled=button.disabled;
+   try{
+    censusConferencePending={date:'2026-11-21',generation:1};
+    censusConferenceFeedback('Salvando conferência… aguardando confirmação do servidor.');
+    const saving=button.disabled&&alert.textContent.includes('Salvando conferência');
+    censusConferencePending=null;
+    censusConferenceFeedback('Conferência salva e sincronizada.');
+    const saved=!button.disabled&&alert.textContent.includes('sincronizada');
+    date.value='2026-11-22';
+    cloudJson=async()=>({status:'pending',referenceDate:'2026-11-21',reason:'Conferência manual necessária.'});
+    await refreshMidnightCensusStatus();
+    const pending=alert.textContent.includes('21/11/2026')&&alert.textContent.includes('22/11/2026')&&alert.textContent.includes('pendente');
+    cloudJson=async()=>({status:'manual',referenceDate:'2026-11-21',responsible:'Enfermagem',registeredAt:'2026-11-22T11:42:33Z'});
+    await refreshMidnightCensusStatus();
+    const manual=alert.textContent.includes('conferência manual registrada')&&!alert.textContent.includes('pendente');
+    return {saving,saved,pending,manual};
+   }finally{cloudJson=originalCloudJson;date.value=originalDate;censusConferencePending=null;button.disabled=initialDisabled;}
+  });
+  assert.deepEqual(censusUI,{saving:true,saved:true,pending:true,manual:true});
   await night.evaluate(()=>{S.beds[0].patient='RN-NOTURNO';scheduleCloudSave()});
   await night.waitForFunction(()=>SIASH_CLOUD.revision===2,null,{timeout:10000});
   await day.evaluate(()=>{S.beds[0].patient='RN-DIURNO';scheduleCloudSave()});
