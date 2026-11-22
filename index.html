@@ -612,9 +612,10 @@
     <p class="muted">Crie um acesso independente para cada enfermeiro. As senhas não são exibidas nem armazenadas no navegador após o cadastro.</p>
     <form id="admin-user-form" class="form-grid three" autocomplete="off">
       <label>Login do enfermeiro<input id="admin-new-user" maxlength="64" required autocomplete="off" placeholder="ex.: enfermeiro02"></label>
+      <label>Perfil<select id="admin-new-role"><option value="operational">Operacional</option><option value="clinical_supervisor">Supervisor Clínico</option></select></label>
       <label>Senha inicial (10 caracteres e um especial)<input id="admin-new-pass" type="password" minlength="10" required autocomplete="new-password"></label>
       <label>Confirmar senha<input id="admin-new-pass-confirm" type="password" minlength="10" required autocomplete="new-password"></label>
-      <button class="primary" type="submit">Criar acesso operacional</button>
+      <button class="primary" type="submit">Criar usuário</button>
     </form>
     <p id="admin-user-feedback" role="status" class="muted"></p>
     <div id="admin-user-list" class="table-wrap"><p class="muted">Carregando usuários...</p></div>
