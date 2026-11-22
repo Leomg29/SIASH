@@ -23,6 +23,7 @@ test("Chromium: enfermeiro solicita, preserva formulário em 409, supervisor ind
    const page=await browser.newPage();
    await page.goto(url,{waitUntil:"domcontentloaded"});
    await page.evaluate(({user,role,authToken,revision,referenceDate})=>{
+    document.querySelector("#app-view")?.classList.remove("hidden");
     SESSION={authenticated:true,user,role};
     SIASH_CLOUD.token=authToken;SIASH_CLOUD.revision=revision;
     lateCensusSetStatus({attention:"overdue",referenceDate});
