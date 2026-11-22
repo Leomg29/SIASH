@@ -443,6 +443,7 @@ async function sha256(text){const data=new TextEncoder().encode(text);const hash
 function securityState(){try{return JSON.parse(localStorage.getItem(SECURITY_STORE)||"null")}catch(e){return null}}
 function setSecurityState(x){localStorage.setItem(SECURITY_STORE,JSON.stringify(x));if(typeof scheduleCloudSave==="function")scheduleCloudSave()}
 function isOwner(){return SESSION.authenticated&&SESSION.role==="owner"}
+function canReviewLateCensus(){return SESSION.authenticated&&["owner","clinical_supervisor"].includes(SESSION.role)}
 function docAccessState(){const sec=securityState()||{};return sec.docAccess||{}}
 function currentDocAccess(){if(isOwner())return {sector:"*",level:"owner"};return docAccessState()[SESSION.user]||{sector:"UTIN",level:"reader"}}
 function docLevelRank(level){return {reader:1,editor:2,validator:3,owner:4}[level]||0}
@@ -457,7 +458,7 @@ function applyPermissions(){
  document.querySelectorAll(".owner-only").forEach(el=>el.classList.toggle("hidden",!owner));
  document.querySelectorAll(".doc-editor-only").forEach(el=>el.classList.toggle("hidden",!canEdit));
  if(!canEdit){if($("doc-new-panel"))$("doc-new-panel").classList.add("hidden");if($("doc-revision-panel"))$("doc-revision-panel").classList.add("hidden")}
- if($("logged-role"))$("logged-role").textContent=owner?"Administrador Proprietário":"Usuário Operacional";
+ if($("logged-role"))$("logged-role").textContent=owner?"Administrador Proprietário":SESSION.role==="clinical_supervisor"?"Supervisor Clínico":"Usuário Operacional";
  if(owner&&$("admin-owner-name"))$("admin-owner-name").textContent=SESSION.user||"Proprietário";
  if($("doc-access-badge"))$("doc-access-badge").textContent=owner?"Super Admin · todos os setores":`${a.sector} · ${a.level==="validator"?"Validador":a.level==="editor"?"Editor/Revisor":"Leitor"}`;
 }
@@ -649,7 +650,7 @@ async function lateCensusLoadRequests(){
    const history=document.createElement("button");history.type="button";history.textContent="Ver trilha de auditoria";
    history.addEventListener("click",()=>lateCensusShowEvents(request.protocol));card.append(history);
    const same=String(request.requester)===String(SESSION.user);
-   const canReview=SESSION.role==="owner"&&!same&&request.status==="aguardando_supervisor";
+   const canReview=canReviewLateCensus()&&!same&&request.status==="aguardando_supervisor";
    if(canReview){const btn=document.createElement("button");btn.type="button";btn.textContent="Analisar solicitação";btn.addEventListener("click",()=>{
     LATE_CENSUS_SELECTED=request;
     $("census-late-review").classList.remove("hidden");
@@ -694,6 +695,7 @@ async function lateCensusSubmit(event){
 async function lateCensusDecide(approved){
  const selected=LATE_CENSUS_SELECTED;
  if(!selected)return;
+ if(!canReviewLateCensus()){lateCensusMessage("census-late-review-status","Permissão clínica necessária.");return;}
  if(String(selected.requester)===String(SESSION.user)){lateCensusMessage("census-late-review-status","Autoaprovação proibida.");return;}
  const reason=lateText("census-late-review-reason");
  if(reason.trim().length<15){lateCensusMessage("census-late-review-status","Informe uma justificativa com pelo menos 15 caracteres.");return;}
@@ -1292,7 +1294,31 @@ async function loadAdminUsers(){
   const users=await cloudJson("/api/users");
   const count=$("admin-operational-count");if(count)count.textContent=users.filter(u=>u.role==="operational").length;
   const list=$("admin-user-list");
-  if(list)list.innerHTML='<table><thead><tr><th>Login</th><th>Perfil</th><th>Cadastro</th></tr></thead><tbody>'+users.map(u=>'<tr><td>'+safe(u.username)+'</td><td>'+(u.role==="owner"?"Administrador Proprietário":"Operacional")+'</td><td>'+safe(new Date(u.created_at).toLocaleDateString("pt-BR"))+'</td></tr>').join("")+'</tbody></table>';
+  if(list){
+   list.replaceChildren();
+   const table=document.createElement("table"),head=document.createElement("thead"),body=document.createElement("tbody");
+   head.innerHTML="<tr><th>Login</th><th>Perfil</th><th>Cadastro</th><th>Ação</th></tr>";
+   for(const u of users){
+    const tr=document.createElement("tr");
+    for(const value of [u.username,u.role==="owner"?"Administrador Proprietário":u.role==="clinical_supervisor"?"Supervisor Clínico":"Operacional",new Date(u.created_at).toLocaleDateString("pt-BR")]){
+     const td=document.createElement("td");td.textContent=value;tr.append(td);
+    }
+    const action=document.createElement("td");
+    if(u.role!=="owner"){
+     const button=document.createElement("button");button.type="button";button.className="secondary compact-btn";
+     const next=u.role==="clinical_supervisor"?"operational":"clinical_supervisor";
+     button.textContent=next==="clinical_supervisor"?"Promover a Supervisor Clínico":"Revogar supervisão";
+     button.addEventListener("click",async()=>{
+      if(!isOwner()||!confirm("Confirma alteração auditável do perfil de "+u.username+"?"))return;
+      button.disabled=true;
+      try{await cloudJson("/api/users/"+encodeURIComponent(u.username)+"/role",{method:"PATCH",body:JSON.stringify({role:next})});await loadAdminUsers();}
+      catch(e){$("admin-user-feedback").textContent="Alteração não realizada: "+e.message;button.disabled=false}
+     });action.append(button);
+    }
+    tr.append(action);body.append(tr);
+   }
+   table.append(head,body);list.append(table);
+  }
  }catch(e){const el=$("admin-user-feedback");if(el)el.textContent="Falha ao consultar usuários: "+e.message}
  finally{adminUsersLoading=false}
 }
@@ -1332,9 +1358,9 @@ $("admin-user-form").addEventListener("submit",async e=>{
  if(password!==confirmPass)return feedback.textContent="As senhas não coincidem.";
  const button=e.currentTarget.querySelector('button[type="submit"]');button.disabled=true;feedback.textContent="Cadastrando...";
  try{
-  await cloudJson("/api/users",{method:"POST",body:JSON.stringify({username,password})});
+  await cloudJson("/api/users",{method:"POST",body:JSON.stringify({username,password,role:$("admin-new-role").value})});
   $("admin-new-pass").value="";$("admin-new-pass-confirm").value="";$("admin-new-user").value="";
-  feedback.textContent="Usuário operacional cadastrado com sucesso.";await loadAdminUsers();
+  feedback.textContent="Usuário cadastrado com sucesso.";await loadAdminUsers();
  }catch(err){feedback.textContent="Cadastro não realizado: "+err.message}
  finally{button.disabled=false}
 });
