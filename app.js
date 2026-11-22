@@ -520,7 +520,7 @@ if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.move
 normalize();localStorage.setItem(STORE,JSON.stringify(S));
 function save(){localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
 function currentMonth(){return monthOf(todayISO())}
-function pipaMunicipalityKey(value){return String(value||"").normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").toLocaleLowerCase("pt-BR").replace(/[^a-z0-9]+/g," ").trim().replace(/\\s+/g," ")}
+function pipaMunicipalityKey(value){return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLocaleLowerCase("pt-BR").replace(/[^a-z0-9]+/g," ").trim().replace(/\s+/g," ")}
 function pipaPossibleDuplicates(candidate){return S.pipa.filter(x=>!x.cancelledAt&&(x.date||"")===candidate.date&&(x.date?monthOf(x.date):x.month)===candidate.month&&pipaMunicipalityKey(x.city)===pipaMunicipalityKey(candidate.city)&&Number(x.qty)===Number(candidate.qty))}
 function pipaCountOn(date){return S.pipa.filter(x=>!x.cancelledAt&&x.date===date).reduce((n,x)=>n+(Number(x.qty)||0),0)}
 function pipaDailyAudit(date){
