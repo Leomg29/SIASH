@@ -59,7 +59,7 @@ WITH daily AS (
 SELECT item->>'date' AS data,count(*) AS ocorrencias FROM daily
 GROUP BY item->>'date'
 HAVING count(*)>1 OR item->>'date' IS NULL
- OR item->>'date' !~ '^\\d{4}-\\d{2}-\\d{2}$';
+ OR item->>'date' !~ '^\d{4}-\d{2}-\d{2}$';
 
 -- 12. Contagens clinicas invalidas, sem coagir strings arbitrarias a numeros.
 WITH daily AS (
@@ -88,7 +88,7 @@ SELECT left(data,7) AS competencia,count(*) AS registros,
  count(*)-count(DISTINCT data) AS duplicidades,
  10*count(*) AS leitos_dia_formula_atual,
  10*count(DISTINCT data) AS leitos_dia_datas_distintas
-FROM daily WHERE data ~ '^\\d{4}-\\d{2}-\\d{2}$'
+FROM daily WHERE data ~ '^\d{4}-\d{2}-\d{2}$'
 GROUP BY left(data,7) ORDER BY competencia;
 
 -- 14. Reconciliação I(d) = I(d-1) + A(d) - H(d) - T(d) - O(d).
@@ -101,7 +101,7 @@ WITH raw AS (
  THEN s.payload->'state'->'daily' ELSE '[]'::jsonb END) d WHERE s.id=1
 ), prepared AS (
  SELECT item,item->>'date' AS date_text,
- CASE WHEN item->>'date' ~ '^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'
+ CASE WHEN item->>'date' ~ '^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'
  THEN to_date(item->>'date','YYYY-MM-DD') END AS parsed_date
  FROM raw
 ), validated AS (
