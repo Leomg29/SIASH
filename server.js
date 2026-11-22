@@ -408,6 +408,10 @@ app.put("/api/state",auth,async(req,res)=>{
     const {validateBedMovementMutation}=require("./bed-movement-integrity.cjs");
     const bedAudit=validateBedMovementMutation(cur.rows[0].payload,payload);
     if(!bedAudit.ok){await client.query("ROLLBACK");return res.status(422).json({error:bedAudit.code,path:bedAudit.path,message:"Integridade de leitos e movimentações: operação rejeitada; confira os dados sem modificar históricos."});}
+    // Authoritative event identity and provenance are assigned only after integrity validation.
+    const {stampNewEvents}=require("./bed-movement-integrity.cjs");
+    const stamped=stampNewEvents(cur.rows[0].payload,payload,req.user.u);
+    if(!stamped.ok){await client.query("ROLLBACK");return res.status(422).json({error:stamped.code,path:stamped.path});}
     // Authoritative admission-specific timestamp, independent of PICC/SAE/bed edits.
     // A historical positive admission can never be erased by later setting the counter to zero.
     const oldDaily=cur.rows[0].payload?.state?.daily||[];
