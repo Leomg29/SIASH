@@ -733,7 +733,7 @@ $("census-late-clinical")?.addEventListener("click",()=>lateCensusDecide(null));
 
 function renderCensusConference(date){
  const daily=S.daily.find(r=>r.date===date);
- const occupied=S.beds.filter(b=>b.status==="Ocupado").length;
+ const occupied=(Array.isArray(S.beds)?S.beds:[]).filter(b=>b.status==="Ocupado").length;
  const count=$("census-daily-count"),beds=$("census-beds-occupied"),difference=$("census-difference"),status=$("census-status");
  if(!count||!beds||!difference||!status)return;
  beds.textContent=occupied;
@@ -778,14 +778,14 @@ function renderBedReconciliation(){
  const status=$("bed-sync-status"),alert=$("bed-reconciliation-alert");
  if(status)status.textContent="Persistência: "+bedSyncStatus();
  if(!alert)return;
- const today=todayISO(),day=S.daily.find(d=>d.date===today);
+ const today=todayISO(),day=(Array.isArray(S.daily)?S.daily:[]).find(d=>d.date===today);
  const occupied=S.beds.filter(b=>b.status==="Ocupado").length;
  const issues=[];
  if(day&&Number.isFinite(Number(day.internados))&&occupied!==Number(day.internados))
    issues.push("Mapa atual: "+occupied+" RN(s); lançamento de "+today+": "+Number(day.internados)+". Horários de referência podem diferir.");
- const recent=S.bedMoves.filter(m=>String(m.recordedAtSaoPaulo||m.when||"").startsWith(today));
+ const recent=(Array.isArray(S.bedMoves)?S.bedMoves:[]).filter(m=>String(m.recordedAtSaoPaulo||m.when||"").startsWith(today));
  if(recent.length){
-   const last=recent[recent.length-1],target=S.beds.find(b=>b.n===Number(last.target));
+   const last=recent[recent.length-1],target=(S.beds||[]).find(b=>b.n===Number(last.target));
    if(target?.rn!==last.rn)issues.push("Último remanejamento do dia difere do mapa atual no leito "+pad(last.target)+". Conferir eventos posteriores.");
  }
  alert.textContent=issues.length?"Conferência humana necessária: "+issues.join(" ")+" Nenhum dado foi ajustado automaticamente.":"Sem divergência numérica identificada para hoje; conferir horários de referência.";
