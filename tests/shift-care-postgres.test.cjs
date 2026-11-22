@@ -36,7 +36,7 @@ test("PR99 PostgreSQL: immutable shift/checklist/SAE, 409, 422, official stamps 
   const forged=clone(persisted.payload);forged.state.shiftHistory[0].recordedBy="intruso";assert.equal((await put(forged,2)).status,422);
   const next=clone(persisted.payload);next.state.shiftId="73f2c4b0-fc75-4bca-9b68-216e2fd9457c";next.state.shiftClosed=false;next.state.events=[];next.state.checklist=[{text:"Receber plantão",status:"Pendente"}];
   assert.equal((await put(next,2)).status,200);
-  const row=(await db.query("SELECT payload,revision FROM siash_state WHERE id=1")).rows[0];assert.equal(row.revision,3);assert.deepEqual(row.payload.state.shiftHistory[0],persisted.payload.state.shiftHistory[0]);
+  const row=(await db.query("SELECT payload,revision FROM siash_state WHERE id=1")).rows[0];assert.equal(Number(row.revision),3);assert.deepEqual(row.payload.state.shiftHistory[0],persisted.payload.state.shiftHistory[0]);
   assert.equal(Number((await db.query("SELECT COUNT(*) n FROM siash_state_history")).rows[0].n),historyBefore+2);
   await request("/api/pending","GET");await request("/api/pending","GET");
   const legacy=await db.query("SELECT COUNT(*)::int AS n FROM siash_pending_tasks WHERE legacy_key='siash-state-pending-0'");
