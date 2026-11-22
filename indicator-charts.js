@@ -27,7 +27,7 @@
   }
   const GROUPS=[
     {title:"Gestão assistencial",items:[["Pacientes-dia","pd"],["Leitos-dia","ld"],["Dias lançados","days"],["Taxa de ocupação (%)","occ"],["Média de permanência (dias)","los"]]},
-    {title:"Movimentação e desfechos",items:[["Admissões","adm"],["Saídas","outs"],["Altas","altas"],["Transferências","transf"],["Óbitos","deaths"],["Altas para Pediatria","altaPediatria"],["Altas para Canguru","altaCanguru"],["Altas Pediatria/Canguru (total)","canguru"]]},
+    {title:"Movimentação e desfechos",items:[["Admissões","adm"],["Saídas","outs"],["Altas","altas"],["Transferências","transf"],["Óbitos","deaths"],["Altas para Leito Canguru","canguru"]]},
     {title:"PIPA e procedimentos",items:[["PIPA","pipa"],["PICCs inseridos","picc"],["PICCs retirados","piccRemoved"],["PICC-dia","piccDays"],["Testes do pezinho","pezinho"]]},
     {title:"Ventilação mecânica",items:[["VM-dia","vmDays"],["Intubações","intub"],["Extubações programadas","extubProg"],["Extubações acidentais","extub"]]},
     {title:"Segurança do paciente",items:[["Lesões por pressão","lpp"],["Hipotermia","hypothermia"],["Hipertermia","hyperthermia"]]}
