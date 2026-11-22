@@ -860,8 +860,22 @@ function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();c
  const origin=r.date?"Datado — "+dateBR(r.date):"Histórico sem data";
  const status=r.cancelledAt?"Cancelado":"Ativo";
  const audit=r.cancelledAt?`<div class="muted">Cancelado em ${safe(new Date(r.cancelledAt).toLocaleString("pt-BR"))} por ${safe(r.cancelledBy||"—")}. Motivo: ${safe(r.cancelReason||"—")}</div>`:"";
- return `<tr><td>${safe((r.month||monthOf(r.date)||"").split("-").reverse().join("/"))}</td><td>${safe(r.city)}</td><td>${safe(r.qty)}</td><td>${safe(r.note||"")}</td><td>${safe(origin)}</td><td>${status}${audit}</td><td>${r.cancelledAt?"—":`<button class="ghost" onclick="deletePipa(${i})">Cancelar</button>`}</td></tr>`;
+ return `<tr><td>${safe((r.month||monthOf(r.date)||"").split("-").reverse().join("/"))}</td><td>${safe(r.city)}</td><td>${safe(r.qty)}</td><td>${safe(r.note||"")}</td><td>${safe(origin)}</td><td>${status}${audit}</td><td>${r.cancelledAt?"—":`<button class="ghost" onclick="deletePipa(${i})">Cancelar</button> <button class="ghost" onclick="rectifyPipa(${i})">Retificar</button>`}</td></tr>`;
  }).join("")||'<tr><td colspan="7">Nenhum encaminhamento registrado.</td></tr>'}
+window.rectifyPipa=async i=>{
+ const record=S.pipa[i];if(!record)return;
+ if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return alert("Retificação auditável requer conexão autenticada com o servidor.");
+ const reason=window.prompt("Justificativa obrigatória (10 a 1000 caracteres):");if(reason===null)return;
+ const correction=window.prompt("Descreva a correção complementar, sem modificar o registro original:");if(correction===null)return;
+ if(reason.trim().length<10||reason.trim().length>1000||correction.trim().length<3||correction.trim().length>2000)return alert("Confira a justificativa e a descrição da retificação.");
+ if(!window.confirm("Registrar retificação complementar auditável? O registro original será preservado."))return;
+ try{await cloudJson("/api/pipa/rectifications",{method:"POST",body:JSON.stringify({base_revision:SIASH_CLOUD.revision,record_index:i,reason:reason.trim(),correction:correction.trim()})});showToast("Retificação complementar auditada no PostgreSQL.",2600);await refreshPipaRectifications();}
+ catch(err){alert("Retificação não confirmada no servidor. Preserve a justificativa e confira a sessão antes de tentar novamente. "+err.message);}
+};
+async function refreshPipaRectifications(){
+ const target=$("pipa-rectifications");if(!target||!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
+ try{const result=await cloudJson("/api/pipa/rectifications");target.textContent=(result.events||[]).map(x=>x.record_index+" · "+x.username+" · "+new Date(x.created_at).toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"})+" · "+x.reason+" · "+x.correction).join("\\n")||"Nenhuma retificação complementar registrada.";}catch(_){target.textContent="Histórico de retificações indisponível. Não presumir ausência de registros.";}
+}
 window.deletePipa=i=>{
  const r=S.pipa[i];if(!r||r.cancelledAt)return;
  const ref=`${r.city} — ${r.qty} RN(s) — ${r.date?dateBR(r.date):"histórico sem data, competência "+r.month}`;
