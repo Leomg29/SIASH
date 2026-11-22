@@ -1854,7 +1854,6 @@ app.post("/api/census/late-requests",auth,async(req,res)=>{
 });
 app.post("/api/census/late-requests/:protocol/decision",auth,async(req,res)=>{
  // Perfil owner é o único perfil de supervisão já existente na base; não ampliar permissões por payload.
- if(req.user.r!=="owner")return lateError(res,"SUPERVISOR_PERMISSION_REQUIRED",403);
  const base=req.body?.base_revision;
  if(!Number.isSafeInteger(base)||base<1)return lateError(res,"BASE_REVISION_REQUIRED",428);
  const protocol=req.params.protocol;
@@ -1864,12 +1863,12 @@ app.post("/api/census/late-requests/:protocol/decision",auth,async(req,res)=>{
   if(!state.rows.length)return {error:"STATE_NOT_FOUND",http:409};
   const revision=Number(state.rows[0].revision);
   if(revision!==base)return {error:"STATE_REVISION_CONFLICT",http:409};
-  const supervisorRole=await client.query("SELECT role FROM siash_users WHERE username=$1",[req.user.u]);
-  if(supervisorRole.rows[0]?.role!=="owner")return {error:"SUPERVISOR_PERMISSION_REQUIRED",http:403};
   const record=await client.query("SELECT protocol,reference_date::text AS reference_date,requester FROM siash_census_late_requests WHERE protocol=$1 FOR UPDATE",[protocol]);
   if(!record.rows.length)return {error:"LATE_CENSUS_NOT_FOUND",http:404};
   const request=record.rows[0];
   if(request.requester===req.user.u)return {error:"SELF_APPROVAL_FORBIDDEN",http:403};
+  const supervisorRole=await client.query("SELECT role FROM siash_users WHERE username=$1",[req.user.u]);
+  if(supervisorRole.rows[0]?.role!=="owner")return {error:"SUPERVISOR_PERMISSION_REQUIRED",http:403};
   const events=await client.query("SELECT event_type FROM siash_census_late_events WHERE protocol=$1 ORDER BY id DESC LIMIT 1",[protocol]);
   const status=events.rows[0]?.event_type;
   const reviewed=decideReview({request:{requester:request.requester,status},supervisor:req.user.u,approved:req.body?.approved,reason:req.body?.reason,now:new Date()});
