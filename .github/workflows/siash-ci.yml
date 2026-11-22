@@ -25,6 +25,8 @@ jobs:
         run: |
           node --check server.js
           node --check app.js
+      - name: Clinical supervisor security contract
+        run: node --test tests/clinical-supervisor-contract.test.cjs
       - name: Regression suite
         shell: bash
         run: |

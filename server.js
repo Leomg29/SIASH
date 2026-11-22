@@ -31,7 +31,7 @@ async function initDb(){
     CREATE TABLE IF NOT EXISTS siash_users(
       username TEXT PRIMARY KEY,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('owner','operational')),
+      role TEXT NOT NULL CHECK(role IN ('owner','operational','clinical_supervisor')),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS siash_state(
@@ -141,14 +141,38 @@ async function initDb(){
       details JSONB
     );
   `);
+  await pool.query(`DO $role$ DECLARE item record; BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='siash_users'::regclass
+      AND conname='siash_users_role_check'
+      AND pg_get_constraintdef(oid) LIKE '%clinical_supervisor%') THEN
+      FOR item IN SELECT conname FROM pg_constraint WHERE conrelid='siash_users'::regclass
+        AND contype='c' AND pg_get_constraintdef(oid) LIKE '%role%' AND pg_get_constraintdef(oid) LIKE '%operational%'
+      LOOP EXECUTE format('ALTER TABLE siash_users DROP CONSTRAINT %I',item.conname); END LOOP;
+      ALTER TABLE siash_users ADD CONSTRAINT siash_users_role_check
+        CHECK(role IN ('owner','operational','clinical_supervisor'));
+    END IF;
+  END $role$;`);
 }
 const STRONG_PASSWORD=/[!@#$%^&*._-]/;
 function validNewPassword(password){return typeof password==="string"&&password.length>=10&&password.length<=128&&STRONG_PASSWORD.test(password)}
+const CLINICAL_DECISION_ROLES=new Set(["owner","clinical_supervisor"]);
+async function databaseRole(username,client=pool){
+ const q=await client.query("SELECT role FROM siash_users WHERE username=$1",[username]);
+ return q.rows[0]?.role||null;
+}
+function canDecideClinical(role){return CLINICAL_DECISION_ROLES.has(role)}
 function tokenFor(user){ return jwt.sign({u:user.username,r:user.role}, JWT_SECRET,{expiresIn:"12h"}); }
-function auth(req,res,next){
+async function auth(req,res,next){
   const h=req.headers.authorization||"";
   const token=h.startsWith("Bearer ")?h.slice(7):"";
-  try{req.user=jwt.verify(token,JWT_SECRET);next()}catch(e){res.status(401).json({error:"Sessão inválida ou expirada."})}
+  let identity;
+  try{identity=jwt.verify(token,JWT_SECRET)}
+  catch(e){return res.status(401).json({error:"Sessão inválida ou expirada."})}
+  try{
+    const role=await databaseRole(identity.u);
+    if(!role)return res.status(401).json({error:"Conta não encontrada."});
+    req.user={...identity,r:role};next();
+  }catch(e){next(e)}
 }
 async function audit(username,action,details=null){
   try{await pool.query("INSERT INTO siash_cloud_audit(username,action,details) VALUES($1,$2,$3)",[username,action,details])}catch(e){}
@@ -1787,6 +1811,11 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 
+app.get("/api/admin/audit",auth,async(req,res)=>{
+ if(req.user.r!=="owner")return res.status(403).json({error:"OWNER_REQUIRED"});
+ const q=await pool.query("SELECT id,username,action,details,created_at FROM siash_cloud_audit ORDER BY id DESC LIMIT 100");
+ res.json({events:q.rows});
+});
 app.get("/api/users",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente Administrador Proprietário."});
   const q=await pool.query("SELECT username,role,created_at FROM siash_users ORDER BY username");res.json(q.rows);
@@ -1794,17 +1823,35 @@ app.get("/api/users",auth,async(req,res)=>{
 app.post("/api/users",auth,async(req,res)=>{
   if(req.user.r!=="owner")return res.status(403).json({error:"Somente Administrador Proprietário."});
   const username=String(req.body?.username||"").trim(),password=String(req.body?.password||"");
+  const role=req.body?.role??"operational";
+  if(!["operational","clinical_supervisor"].includes(role))return res.status(400).json({error:"INVALID_USER_ROLE"});
   if(!/^[a-zA-Z0-9._-]{3,64}$/.test(username)||!validNewPassword(password))
     return res.status(400).json({error:"Login: 3 a 64 caracteres (letras, números, ponto, hífen ou sublinhado). Senha: 10 a 128 caracteres com pelo menos um especial (!@#$%^&*._-)."});
   const hash=await bcrypt.hash(password,12);
   try{
-    await pool.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,'operational')",[username,hash]);
+    await pool.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,$3)",[username,hash,role]);
   }catch(e){if(e.code==="23505")return res.status(409).json({error:"Este login já existe. Nenhuma senha foi alterada."});throw e}
-  await audit(req.user.u,"Usuário operacional Cloud criado.",{username});
-  res.status(201).json({ok:true,username});
+  await audit(req.user.u,"Usuário Cloud criado.",{username,role});
+  res.status(201).json({ok:true,username,role});
 });
 
 
+app.patch("/api/users/:username/role",auth,async(req,res)=>{
+ if(req.user.r!=="owner")return res.status(403).json({error:"OWNER_REQUIRED"});
+ const username=req.params.username,role=req.body?.role;
+ if(!["operational","clinical_supervisor"].includes(role))return res.status(400).json({error:"INVALID_USER_ROLE"});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const target=await client.query("SELECT role FROM siash_users WHERE username=$1 FOR UPDATE",[username]);
+  if(!target.rows.length){await client.query("ROLLBACK");return res.status(404).json({error:"USER_NOT_FOUND"})}
+  if(target.rows[0].role==="owner"){await client.query("ROLLBACK");return res.status(403).json({error:"OWNER_ROLE_IMMUTABLE"})}
+  await client.query("UPDATE siash_users SET role=$1 WHERE username=$2",[role,username]);
+  await client.query("INSERT INTO siash_cloud_audit(username,action,details) VALUES($1,$2,$3)",[req.user.u,"Perfil clínico alterado.",JSON.stringify({username,previousRole:target.rows[0].role,newRole:role})]);
+  await client.query("COMMIT");res.json({ok:true,username,role});
+ }catch(e){await client.query("ROLLBACK").catch(()=>{});res.status(503).json({error:"ROLE_UPDATE_UNAVAILABLE"})}
+ finally{client.release()}
+});
 // Regularização tardia: fluxo exclusivamente humano, append-only, sem alteração de siash_state.
 const {randomUUID}=require("node:crypto");
 const {validateRequest,decideReview}=require("./census-late-regularization.cjs");
@@ -1853,7 +1900,7 @@ app.post("/api/census/late-requests",auth,async(req,res)=>{
  },res);
 });
 app.post("/api/census/late-requests/:protocol/decision",auth,async(req,res)=>{
- // Perfil owner é o único perfil de supervisão já existente na base; não ampliar permissões por payload.
+ // Papel clínico é verificado dentro da transação, jamais pelo JWT ou payload.
  const base=req.body?.base_revision;
  if(!Number.isSafeInteger(base)||base<1)return lateError(res,"BASE_REVISION_REQUIRED",428);
  const protocol=req.params.protocol;
@@ -1867,8 +1914,8 @@ app.post("/api/census/late-requests/:protocol/decision",auth,async(req,res)=>{
   if(!record.rows.length)return {error:"LATE_CENSUS_NOT_FOUND",http:404};
   const request=record.rows[0];
   if(request.requester===req.user.u)return {error:"SELF_APPROVAL_FORBIDDEN",http:403};
-  const supervisorRole=await client.query("SELECT role FROM siash_users WHERE username=$1",[req.user.u]);
-  if(supervisorRole.rows[0]?.role!=="owner")return {error:"SUPERVISOR_PERMISSION_REQUIRED",http:403};
+  const supervisorRole=await client.query("SELECT role FROM siash_users WHERE username=$1 FOR SHARE",[req.user.u]);
+  if(!canDecideClinical(supervisorRole.rows[0]?.role))return {error:"SUPERVISOR_PERMISSION_REQUIRED",http:403};
   const events=await client.query("SELECT event_type FROM siash_census_late_events WHERE protocol=$1 ORDER BY id DESC LIMIT 1",[protocol]);
   const status=events.rows[0]?.event_type;
   const reviewed=decideReview({request:{requester:request.requester,status},supervisor:req.user.u,approved:req.body?.approved,reason:req.body?.reason,now:new Date()});
