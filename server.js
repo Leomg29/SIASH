@@ -359,6 +359,23 @@ app.put("/api/state",auth,async(req,res)=>{
     const removalAudit=detectDailyRecordRemoval(oldDaily,newDaily);
     if(removalAudit.blocked){await client.query("ROLLBACK");return res.status(422).json({error:"CLINICAL_RECORD_REMOVAL_BLOCKED",message:removalAudit.reason,date:removalAudit.date||null});}
     if(!Array.isArray(newDaily)){await client.query("ROLLBACK");return res.status(422).json({error:"Lançamentos diários inválidos."});}
+    // Proteção transacional: nenhuma conferência nova fora da janela oficial,
+    // nem substituição ou remoção de conferências históricas existentes.
+    const {validateConferenceMutation}=require("./census-window.cjs");
+    const serverNow=new Date();
+    for(const before of oldDaily){
+      if(!before?.censusConference)continue;
+      const after=newDaily.find(d=>d?.date===before.date);
+      if(!after||JSON.stringify(after.censusConference??null)!==JSON.stringify(before.censusConference)){
+        await client.query("ROLLBACK");return res.status(422).json({error:"CENSUS_CONFERENCE_IMMUTABLE",date:before.date,message:"Conferência histórica protegida; use fluxo supervisionado de retificação."});
+      }
+    }
+    for(const after of newDaily){
+      if(!after?.censusConference)continue;
+      const before=oldDaily.find(d=>d?.date===after.date);
+      const verdict=validateConferenceMutation({before,after,referenceDate:after.date,now:serverNow});
+      if(!verdict.ok){await client.query("ROLLBACK");return res.status(422).json({error:verdict.code,date:after.date,message:verdict.reason||"Conferência inválida."});}
+    }
     for(const daily of newDaily){
       if(!daily||typeof daily.date!=="string"||!/^\\d{4}-\\d{2}-\\d{2}$/.test(daily.date))continue;
       const admissions=Number(daily.admissoes);
