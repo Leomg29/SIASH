@@ -105,6 +105,34 @@ async function initDb(){
       note TEXT NOT NULL,
       state_revision BIGINT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS siash_census_late_requests(
+      protocol TEXT PRIMARY KEY,
+      reference_date DATE NOT NULL,
+      requester TEXT NOT NULL REFERENCES siash_users(username),
+      midnight_count INTEGER NOT NULL CHECK(midnight_count>=0),
+      justification TEXT NOT NULL,
+      evidence TEXT NOT NULL,
+      state_revision BIGINT NOT NULL,
+      requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(reference_date)
+    );
+    CREATE TABLE IF NOT EXISTS siash_census_late_events(
+      id BIGSERIAL PRIMARY KEY,
+      protocol TEXT NOT NULL REFERENCES siash_census_late_requests(protocol),
+      reference_date DATE NOT NULL,
+      event_type TEXT NOT NULL CHECK(event_type IN ('pendente','regularizacao_solicitada','aguardando_supervisor','regularizacao_aprovada','regularizacao_rejeitada','pendente_validacao_clinica')),
+      actor TEXT NOT NULL REFERENCES siash_users(username),
+      state_revision BIGINT NOT NULL,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      details JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+    CREATE INDEX IF NOT EXISTS siash_census_late_events_protocol_idx ON siash_census_late_events(protocol,id);
+    CREATE OR REPLACE FUNCTION siash_census_late_no_mutation() RETURNS trigger LANGUAGE plpgsql AS $late$
+    BEGIN RAISE EXCEPTION 'Clinical late census audit is append-only'; END $late$;
+    DROP TRIGGER IF EXISTS siash_census_late_requests_immutable ON siash_census_late_requests;
+    CREATE TRIGGER siash_census_late_requests_immutable BEFORE UPDATE OR DELETE ON siash_census_late_requests FOR EACH ROW EXECUTE FUNCTION siash_census_late_no_mutation();
+    DROP TRIGGER IF EXISTS siash_census_late_events_immutable ON siash_census_late_events;
+    CREATE TRIGGER siash_census_late_events_immutable BEFORE UPDATE OR DELETE ON siash_census_late_events FOR EACH ROW EXECUTE FUNCTION siash_census_late_no_mutation();
     CREATE TABLE IF NOT EXISTS siash_cloud_audit(
       id BIGSERIAL PRIMARY KEY,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1774,6 +1802,92 @@ app.post("/api/users",auth,async(req,res)=>{
   }catch(e){if(e.code==="23505")return res.status(409).json({error:"Este login já existe. Nenhuma senha foi alterada."});throw e}
   await audit(req.user.u,"Usuário operacional Cloud criado.",{username});
   res.status(201).json({ok:true,username});
+});
+
+
+// Regularização tardia: fluxo exclusivamente humano, append-only, sem alteração de siash_state.
+const {randomUUID}=require("node:crypto");
+const {validateRequest,decideReview}=require("./census-late-regularization.cjs");
+function lateError(res,code,status=422){return res.status(status).json({error:code})}
+async function lateTransaction(handler,res){
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const result=await handler(client);
+  if(result?.error){await client.query("ROLLBACK");return lateError(res,result.error,result.http||422)}
+  await client.query("COMMIT");return res.status(result.http||200).json(result.data);
+ }catch(e){
+  await client.query("ROLLBACK").catch(()=>{});
+  if(e.code==="23505")return lateError(res,"LATE_CENSUS_ALREADY_REQUESTED",409);
+  console.error("Falha transacional da regularização tardia:",e);
+  return lateError(res,"LATE_CENSUS_UNAVAILABLE",503);
+ }finally{client.release()}
+}
+app.post("/api/census/late-requests",auth,async(req,res)=>{
+ const base=req.body?.base_revision;
+ if(!Number.isSafeInteger(base)||base<1)return lateError(res,"BASE_REVISION_REQUIRED",428);
+ const now=new Date();
+ const validated=validateRequest({
+  referenceDate:req.body?.referenceDate,
+  proposedCount:req.body?.midnightCount,
+  justification:req.body?.justification,
+  evidence:req.body?.evidence,
+  actor:req.user.u,now
+ });
+ if(!validated.ok)return lateError(res,validated.code);
+ return lateTransaction(async client=>{
+  const state=await client.query("SELECT revision,payload FROM siash_state WHERE id=1 FOR UPDATE");
+  if(!state.rows.length)return {error:"STATE_NOT_FOUND",http:409};
+  const revision=Number(state.rows[0].revision);
+  if(revision!==base)return {error:"STATE_REVISION_CONFLICT",http:409};
+  const daily=state.rows[0].payload?.state?.daily?.find?.(d=>d.date===validated.referenceDate);
+  if(daily?.censusConference)return {error:"CENSUS_CONFERENCE_ALREADY_EXISTS",http:409};
+  const previous=await client.query("SELECT protocol FROM siash_census_late_requests WHERE reference_date=$1 FOR UPDATE",[validated.referenceDate]);
+  if(previous.rows.length)return {error:"LATE_CENSUS_ALREADY_REQUESTED",http:409};
+  const protocol=randomUUID();
+  await client.query("INSERT INTO siash_census_late_requests(protocol,reference_date,requester,midnight_count,justification,evidence,state_revision,requested_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",[protocol,validated.referenceDate,req.user.u,validated.proposedCount,validated.justification,validated.evidence,revision,now]);
+  for(const eventType of ["pendente","regularizacao_solicitada","aguardando_supervisor"]){
+   await client.query("INSERT INTO siash_census_late_events(protocol,reference_date,event_type,actor,state_revision,occurred_at,details) VALUES($1,$2,$3,$4,$5,$6,$7)",[protocol,validated.referenceDate,eventType,req.user.u,revision,now,JSON.stringify({source:"late_request",justification:validated.justification,evidence:validated.evidence,midnightCount:validated.proposedCount})]);
+  }
+  return {http:201,data:{protocol,referenceDate:validated.referenceDate,status:"aguardando_supervisor",requestedAt:now.toISOString(),timeZone:"America/Sao_Paulo",stateRevision:revision}};
+ },res);
+});
+app.post("/api/census/late-requests/:protocol/decision",auth,async(req,res)=>{
+ // Perfil owner é o único perfil de supervisão já existente na base; não ampliar permissões por payload.
+ const base=req.body?.base_revision;
+ if(!Number.isSafeInteger(base)||base<1)return lateError(res,"BASE_REVISION_REQUIRED",428);
+ const protocol=req.params.protocol;
+ if(!/^[0-9a-f-]{36}$/i.test(protocol))return lateError(res,"INVALID_PROTOCOL",400);
+ return lateTransaction(async client=>{
+  const state=await client.query("SELECT revision FROM siash_state WHERE id=1 FOR UPDATE");
+  if(!state.rows.length)return {error:"STATE_NOT_FOUND",http:409};
+  const revision=Number(state.rows[0].revision);
+  if(revision!==base)return {error:"STATE_REVISION_CONFLICT",http:409};
+  const record=await client.query("SELECT protocol,reference_date::text AS reference_date,requester FROM siash_census_late_requests WHERE protocol=$1 FOR UPDATE",[protocol]);
+  if(!record.rows.length)return {error:"LATE_CENSUS_NOT_FOUND",http:404};
+  const request=record.rows[0];
+  if(request.requester===req.user.u)return {error:"SELF_APPROVAL_FORBIDDEN",http:403};
+  const supervisorRole=await client.query("SELECT role FROM siash_users WHERE username=$1",[req.user.u]);
+  if(supervisorRole.rows[0]?.role!=="owner")return {error:"SUPERVISOR_PERMISSION_REQUIRED",http:403};
+  const events=await client.query("SELECT event_type FROM siash_census_late_events WHERE protocol=$1 ORDER BY id DESC LIMIT 1",[protocol]);
+  const status=events.rows[0]?.event_type;
+  const reviewed=decideReview({request:{requester:request.requester,status},supervisor:req.user.u,approved:req.body?.approved,reason:req.body?.reason,now:new Date()});
+  if(!reviewed.ok)return {error:reviewed.code,http:reviewed.code==="INVALID_REVIEW_STATE"?409:422};
+  const now=new Date();
+  await client.query("INSERT INTO siash_census_late_events(protocol,reference_date,event_type,actor,state_revision,occurred_at,details) VALUES($1,$2,$3,$4,$5,$6,$7)",[protocol,request.reference_date,reviewed.status,req.user.u,revision,now,JSON.stringify({reason:reviewed.reviewReason})]);
+  return {data:{protocol,status:reviewed.status,reviewedBy:req.user.u,reviewedAt:now.toISOString(),timeZone:"America/Sao_Paulo",stateRevision:revision}};
+ },res);
+});
+app.get("/api/census/late-requests",auth,async(req,res)=>{
+ try{
+  const q=await pool.query("SELECT r.protocol,r.reference_date::text AS reference_date,r.requester,r.midnight_count,r.justification,r.evidence,r.state_revision,r.requested_at,(SELECT e.event_type FROM siash_census_late_events e WHERE e.protocol=r.protocol ORDER BY e.id DESC LIMIT 1) AS status FROM siash_census_late_requests r ORDER BY r.requested_at DESC LIMIT 100");
+  res.json({requests:q.rows});
+ }catch(e){return lateError(res,"LATE_CENSUS_UNAVAILABLE",503)}
+});
+app.get("/api/census/late-requests/:protocol/events",auth,async(req,res)=>{
+ if(!/^[0-9a-f-]{36}$/i.test(req.params.protocol))return lateError(res,"INVALID_PROTOCOL",400);
+ try{const q=await pool.query("SELECT id,protocol,reference_date::text AS reference_date,event_type,actor,state_revision,occurred_at,details FROM siash_census_late_events WHERE protocol=$1 ORDER BY id",[req.params.protocol]);res.json({events:q.rows})}
+ catch(e){return lateError(res,"LATE_CENSUS_UNAVAILABLE",503)}
 });
 
 app.use(express.static(__dirname,{extensions:["html"]}));
