@@ -13,7 +13,7 @@ test("00:00 com admissao exige conferencia manual",()=>{
  assert.equal(decideMidnightClosure({...base,daily:{internados:4,admissoes:1}}).status,"pending");
 });
 test("fechamento manual anterior nao pode ser sobrescrito",()=>{
- assert.equal(decideMidnightClosure({...base,daily:{internados:4,admissoes:0,censusConference:{responsible:"Enfermagem"}}}).status,"manual");
+ assert.equal(decideMidnightClosure({...base,daily:{internados:4,admissoes:0,censusConference:{referenceDate:"2026-11-21",registeredAt:"2026-11-22T11:42:33Z",responsible:"Enfermagem",count:4}}}).status,"manual");
 });
 test("sem registro diario ou com estado atualizado apos 00:00 nao fecha",()=>{
  assert.equal(decideMidnightClosure({...base,daily:null}).status,"pending");
