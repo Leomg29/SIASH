@@ -179,6 +179,23 @@ function scheduleCloudSave({retry=false}={}){
    try{
      const r=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
      SIASH_CLOUD.revision=r.revision;
+     // Incorporar metadados oficiais do servidor na base e no rascunho atual.
+     // Nunca sobrescrever edições feitas durante o envio.
+     if(r.bed_event_stamps){
+       for(const key of ["bedMoves","profileHistory","movements"]){
+         for(const stamp of r.bed_event_stamps[key]||[]){
+           if(Array.isArray(sentState[key])&&sentState[key][stamp.index]){
+             sentState[key][stamp.index]=stamp.event;
+             if(Array.isArray(S[key])&&S[key][stamp.index]){
+               const current=S[key][stamp.index],official=stamp.event;
+               const core=x=>JSON.stringify(Object.fromEntries(Object.entries(x).filter(([k])=>!["id","recordedBy","recordedAt","recordedAtSaoPaulo","timeZone"].includes(k))));
+               if(core(current)===core(official))S[key][stamp.index]=official;
+             }
+           }
+         }
+       }
+       localStorage.setItem(STORE,JSON.stringify(S));
+     }
      cloudSetBase(sentState);
      // O servidor é a fonte de verdade para autor e horário do cancelamento.
      // Se houve novas edições durante o PUT, não sobrescrever o rascunho atual.
@@ -207,8 +224,8 @@ function scheduleCloudSave({retry=false}={}){
        SIASH_CLOUD.conflict=true;
        localStorage.setItem(STORE,JSON.stringify(S));
        void showCloudConflictPanel();
-       updateCloudBadge(e.status===422?"INTEGRIDADE PIPA · revisão necessária":"CONFLITO · dados locais preservados",true);
-       alert(e.status===422?"O servidor recusou uma alteração do PIPA por inconsistência de integridade: "+e.message+" Seu rascunho está preservado e o envio automático foi bloqueado. Solicite conciliação à coordenação.":"ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
+       updateCloudBadge(e.status===422?"INTEGRIDADE CLÍNICA · revisão necessária":"CONFLITO · dados locais preservados",true);
+       alert(e.status===422?"O servidor recusou uma alteração por inconsistência de integridade clínica: "+e.message+" Seu rascunho está preservado e o envio automático foi bloqueado. Solicite conciliação à coordenação.":"ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
      }else{
        // A resposta pode ter sido perdida depois do commit: conferir a revisão antes de reenviar.
        try{
