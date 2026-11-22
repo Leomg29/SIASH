@@ -578,7 +578,7 @@ function allMonths(){const months=[...S.daily.map(r=>monthOf(r.date)),...S.pipa.
 function dateBR(s){return s?s.split("-").reverse().join("/"):"—"}
 function nowBR(){return new Date().toLocaleString("pt-BR")}
 function parseISODate(s){if(!s)return null;const p=s.split("-").map(Number);if(p.length!==3||p.some(Number.isNaN))return null;return new Date(Date.UTC(p[0],p[1]-1,p[2]))}
-function isoFromLegacyWhen(s){const m=String(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);return m?`${m[3]}-${pad(m[2])}-${pad(m[1])}`:null}
+function isoFromLegacyWhen(s){const m=String(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(!m)return null;const date=`${m[3]}-${pad(m[2])}-${pad(m[1])}`;return new Date(Date.UTC(+m[3],+m[2]-1,+m[1])).toISOString().slice(0,10)===date?date:null}
 function piccInsertDate(x){return x.insertDate||isoFromLegacyWhen(x.when)}
 function piccDaysBetween(start,end){const a=parseISODate(start),b=parseISODate(end);if(!a||!b||b<a)return 0;return Math.floor((b-a)/86400000)+1}
 function piccDays(x,end=todayISO()){const last=x.status==="Retirado"&&x.removalDate?x.removalDate:end;return piccInsertDate(x)?piccDaysBetween(piccInsertDate(x),last):null}
