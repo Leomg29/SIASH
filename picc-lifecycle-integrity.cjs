@@ -3,6 +3,7 @@ const crypto=require("node:crypto");
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const dateOK=s=>typeof s==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNaN(Date.parse(s))&&new Date(s+"T00:00:00Z").toISOString().slice(0,10)===s;
 const legacyKey=(x,i)=>x?.id||"legacy:"+i;
+const legacyDate=x=>{if(dateOK(x?.insertDate))return x.insertDate;const m=String(x?.when||"").match(/(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);if(!m)return null;const d=m[3]+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0");return dateOK(d)?d:null};
 function validatePiccMutation(previous,incoming){
  const old=previous?.state?.picc??[],next=incoming?.state?.picc;
  if(!Array.isArray(old)||!Array.isArray(next))return {ok:false,code:"PICC_INVALID_COLLECTION"};
@@ -20,7 +21,7 @@ function validatePiccMutation(previous,incoming){
   }
   if(a.status!=="Ativo"&&a.status!==undefined)return {ok:false,code:"PICC_LEGACY_REVIEW_REQUIRED",index:i};
   if(b.status==="Retirado"){
-   if(!dateOK(b.removalDate)||!dateOK(a.insertDate||b.insertDate)||b.removalDate<(a.insertDate||b.insertDate)||!String(b.removalReason||"").trim())return {ok:false,code:"PICC_INVALID_REMOVAL",index:i};
+   if(!dateOK(b.removalDate)||!legacyDate(a)||b.removalDate<legacyDate(a)||!String(b.removalReason||"").trim())return {ok:false,code:"PICC_INVALID_REMOVAL",index:i};
    const allowed=new Set(["status","removalDate","removalReason","removalNote","removedAt","updated"]);
    for(const k of new Set([...Object.keys(a),...Object.keys(b)]))if(!allowed.has(k)&&!same(a[k],b[k]))return {ok:false,code:"PICC_INSERTION_IMMUTABLE",index:i};
   }else if(b.status==="Ativo"||b.status===undefined){
@@ -62,6 +63,6 @@ function piccDaysBetween(a,b){
 function piccDaysInMonth(records,month,today){
  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))return 0;
  const [y,m]=month.split("-").map(Number),start=month+"-01",end=new Date(Date.UTC(y,m,0)).toISOString().slice(0,10),stopToday=today<end?today:end;
- return records.reduce((sum,x)=>{const insert=x.insertDate||null,stop=x.status==="Retirado"?x.removalDate:stopToday;if(!dateOK(insert)||!dateOK(stop))return sum;return sum+(piccDaysBetween(insert>start?insert:start,stop<end?stop:end)||0)},0);
+ return records.reduce((sum,x)=>{const insert=legacyDate(x),stop=x.status==="Retirado"?x.removalDate:stopToday;if(!dateOK(insert)||!dateOK(stop))return sum;return sum+(piccDaysBetween(insert>start?insert:start,stop<end?stop:end)||0)},0);
 }
-module.exports={validatePiccMutation,stampPiccEvents,piccDaysBetween,piccDaysInMonth,dateOK};
+module.exports={validatePiccMutation,stampPiccEvents,piccDaysBetween,piccDaysInMonth,dateOK,legacyDate};
