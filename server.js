@@ -1847,7 +1847,7 @@ app.post("/api/census/late-requests",auth,async(req,res)=>{
   const protocol=randomUUID();
   await client.query("INSERT INTO siash_census_late_requests(protocol,reference_date,requester,midnight_count,justification,evidence,state_revision,requested_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",[protocol,validated.referenceDate,req.user.u,validated.proposedCount,validated.justification,validated.evidence,revision,now]);
   for(const eventType of ["pendente","regularizacao_solicitada","aguardando_supervisor"]){
-   await client.query("INSERT INTO siash_census_late_events(protocol,reference_date,event_type,actor,state_revision,occurred_at,details) VALUES($1,$2,$3,$4,$5,$6,$7)",[protocol,validated.referenceDate,eventType,req.user.u,revision,now,JSON.stringify({source:"late_request"})]);
+   await client.query("INSERT INTO siash_census_late_events(protocol,reference_date,event_type,actor,state_revision,occurred_at,details) VALUES($1,$2,$3,$4,$5,$6,$7)",[protocol,validated.referenceDate,eventType,req.user.u,revision,now,JSON.stringify({source:"late_request",justification:validated.justification,evidence:validated.evidence,midnightCount:validated.proposedCount})]);
   }
   return {http:201,data:{protocol,referenceDate:validated.referenceDate,status:"aguardando_supervisor",requestedAt:now.toISOString(),timeZone:"America/Sao_Paulo",stateRevision:revision}};
  },res);
