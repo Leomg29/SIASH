@@ -38,7 +38,7 @@ test("Chromium: enfermeiro solicita, preserva formulário em 409, supervisor ind
   await nursePage.locator("#census-late-count").fill("4");
   await nursePage.locator("#census-late-justification").fill("Intercorrência assistencial no plantão noturno");
   await nursePage.locator("#census-late-evidence").fill("Registros do plantão e mapa de leitos");
-  await nursePage.evaluate(()=>{SIASH_CLOUD.revision=-1});
+  await nursePage.evaluate(revision=>{SIASH_CLOUD.revision=revision+1},revision);
   await nursePage.locator("#census-late-submit").click();
   await nursePage.waitForFunction(()=>document.querySelector("#census-late-form-status")?.textContent?.includes("409"),null,{timeout:10000});
   assert.equal(await nursePage.locator("#census-late-justification").inputValue(),"Intercorrência assistencial no plantão noturno");
