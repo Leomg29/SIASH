@@ -342,7 +342,7 @@ app.put("/api/state",auth,async(req,res)=>{
     // Authoritative admission-specific timestamp, independent of PICC/SAE/bed edits.
     // A historical positive admission can never be erased by later setting the counter to zero.
     const oldDaily=cur.rows[0].payload?.state?.daily||[];
-    const newDaily=payload?.state?.daily;
+    const newDaily=payload?.state?.daily??(Array.isArray(oldDaily)&&oldDaily.length===0?[]:undefined);
     const removalAudit=detectDailyRecordRemoval(oldDaily,newDaily);
     if(removalAudit.blocked){await client.query("ROLLBACK");return res.status(422).json({error:"CLINICAL_RECORD_REMOVAL_BLOCKED",message:removalAudit.reason,date:removalAudit.date||null});}
     if(!Array.isArray(newDaily)){await client.query("ROLLBACK");return res.status(422).json({error:"Lançamentos diários inválidos."});}
