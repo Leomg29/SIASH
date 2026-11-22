@@ -91,7 +91,9 @@ test('confirmacao precede qualquer mutacao de conferencia',()=>{
 test('altas para pediatria nao sao classificadas como leito canguru',()=>{
  assert.match(js,/canguru:sum\("canguru"\)\+sum\("altaCanguru"\)/);
  assert.doesNotMatch(js,/canguru:sum\("canguru"\)\+sum\("altaPediatria"\)/);
- assert.match(js,/\["Altas para Leito Canguru \(total\)",c\.canguru\]/);
+ assert.match(js,/\["Altas → Leito Canguru",c\.canguru\]/);
+ assert.doesNotMatch(js,/\["Altas → Pediatria"/);
+ assert.doesNotMatch(js,/\["Altas para Leito Canguru \(total\)"/);
 });
 
 test('competencia PIPA prioriza data do encaminhamento em todas as visoes',()=>{
