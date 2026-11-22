@@ -36,3 +36,8 @@ test('valida antes de montar registro e limpa opcao de preenchimento automatico'
  assert.ok(i>=0&&k>i&&j>k);
  assert.match(js,/\$\("d-obs"\)\.value="";\$\("d-altas-todas-canguru"\)\.checked=false\}\)/);
 });
+
+test('salvamento preserva campo legado canguru sem alterar historico',()=>{
+ assert.match(js,/if\(previous&&Object\.prototype\.hasOwnProperty\.call\(previous,"canguru"\)\)r\.canguru=previous\.canguru/);
+ assert.match(js,/if\(previous\?\.censusConference\)/);
+});
