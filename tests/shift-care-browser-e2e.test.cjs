@@ -27,6 +27,23 @@ test("PR99 Chromium: shift warning, closure, immutable history, care and HTTP409
   // A new bed episode must be explicitly confirmed, never copied from an earlier RN.
   await page.evaluate(()=>{S.beds[0].status="Ocupado";S.beds[0].rn="RN-ISOLATED";S.care[1]={sae:"Pendente",episodeRn:"RN-OLD"};renderAll()});
   assert.notEqual(await page.evaluate(()=>S.beds[0].rn),await page.evaluate(()=>S.care[1].episodeRn));
+  let episodeAlert="";
+  page.once("dialog",async d=>{episodeAlert=d.message();await d.dismiss()});
+  await page.evaluate(()=>{document.querySelector("#care-bed").value="1";document.querySelector("#care-save").click()});
+  assert.match(episodeAlert,/Mudança de ocupação detectada/);
+  assert.equal(await page.evaluate(()=>S.care[1].episodeRn),"RN-OLD");
+  // Reopening a completed shared task requires explicit confirmation and justification.
+  let reopenBody=null;
+  await page.route("**/api/pending/99",async route=>{reopenBody=JSON.parse(route.request().postData());await route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({item:{id:99,status:"Pendente"}})})});
+  await page.route("**/api/pending",route=>route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({items:[]})}));
+  await page.evaluate(()=>{sharedPending=[{id:99,status:"Concluída",scope:"bed",bed:"1",priority:"Crítica",description:"Rever material",created_by:"qa",created_at:"2026-11-20T12:00:00Z"}];SIASH_CLOUD.token="isolated-browser-token";renderPending()});
+  const answers=["accept","Justificativa documental para reabertura"];
+  page.on("dialog",async d=>{const answer=answers.shift();if(d.type()==="prompt")await d.accept(answer);else await d.accept()});
+  await page.evaluate(()=>changeSharedPending(99,"Pendente"));
+  await page.waitForFunction(()=>sharedPending.length===0);
+  assert.equal(reopenBody?.confirm_reopen,true);
+  assert.match(reopenBody?.reason||"",/Justificativa documental/);
+  page.removeAllListeners("dialog");
   // Simulate a real conflict response and assert local draft persistence.
   await page.route("**/api/state",async route=>{
    if(route.request().method()==="PUT")return route.fulfill({status:409,contentType:"application/json",body:JSON.stringify({error:"Conflito entre plantões",conflict:true,current_revision:2})});
