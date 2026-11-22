@@ -1287,6 +1287,13 @@ function renderHuddle(){const total=S.huddle.length,done=S.huddle.filter(x=>x.do
 window.toggleHuddle=i=>{S.huddle[i].done=!S.huddle[i].done;save()}
 function renderRH(){$("rh-table").innerHTML=[...S.rh].reverse().map(x=>`<tr><td>${safe(x.type)}</td><td>${safe(x.name)}</td><td>${safe(x.detail)}</td><td>${safe(x.status)}</td></tr>`).join("")||'<tr><td colspan="4">Nenhuma solicitação registrada.</td></tr>'}
 let adminUsersLoading=false;
+async function loadAdminAudit(){
+ if(!isOwner()||!SIASH_CLOUD.token)return;
+ try{const result=await cloudJson("/api/admin/audit");const events=result.events||[];
+  if($("admin-audit-count"))$("admin-audit-count").textContent=events.length;
+  if($("admin-audit"))$("admin-audit").replaceChildren(...events.slice(0,15).map(event=>{const el=document.createElement("div");el.className="event";el.textContent=new Date(event.created_at).toLocaleString("pt-BR")+" • "+event.username+" • "+event.action+" • "+JSON.stringify(event.details||{});return el}));
+ }catch(e){if($("admin-user-feedback"))$("admin-user-feedback").textContent="Auditoria indisponível: "+e.message}
+}
 async function loadAdminUsers(){
  if(!isOwner()||!SIASH_CLOUD.token||adminUsersLoading)return;
  adminUsersLoading=true;
@@ -1311,7 +1318,7 @@ async function loadAdminUsers(){
      button.addEventListener("click",async()=>{
       if(!isOwner()||!confirm("Confirma alteração auditável do perfil de "+u.username+"?"))return;
       button.disabled=true;
-      try{await cloudJson("/api/users/"+encodeURIComponent(u.username)+"/role",{method:"PATCH",body:JSON.stringify({role:next})});await loadAdminUsers();}
+      try{await cloudJson("/api/users/"+encodeURIComponent(u.username)+"/role",{method:"PATCH",body:JSON.stringify({role:next})});adminUsersLoading=false;await loadAdminUsers();}
       catch(e){$("admin-user-feedback").textContent="Alteração não realizada: "+e.message;button.disabled=false}
      });action.append(button);
     }
@@ -1320,7 +1327,7 @@ async function loadAdminUsers(){
    table.append(head,body);list.append(table);
   }
  }catch(e){const el=$("admin-user-feedback");if(el)el.textContent="Falha ao consultar usuários: "+e.message}
- finally{adminUsersLoading=false}
+ finally{adminUsersLoading=false;void loadAdminAudit()}
 }
 function renderAdmin(){const sec=securityState()||{};if($("admin-owner-name"))$("admin-owner-name").textContent=SESSION.user||sec.ownerUser||"—";if($("admin-audit-count"))$("admin-audit-count").textContent=(sec.audit||[]).length;if($("admin-audit"))$("admin-audit").innerHTML=(sec.audit||[]).slice(0,15).map(x=>`<div class="event"><strong>${safe(x.when)} • ${safe(x.user)}</strong><br>${safe(x.action)}</div>`).join("")||'<span class="muted">Nenhuma alteração administrativa registrada.</span>'}
 function renderSettings(){
