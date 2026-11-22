@@ -58,4 +58,4 @@ jobs:
           npm install --no-save --ignore-scripts --no-audit --no-fund playwright
           npx playwright install --with-deps chromium
       - name: Run real browser clinical conflict E2E
-        run: node --test tests/browser-isolated-e2e.test.cjs && node --test tests/browser-pr81-auth-census.test.cjs && node --test tests/census-late-browser-e2e.test.cjs && node --test tests/clinical-supervisor-browser-e2e.test.cjs && node --test tests/bed-movement-browser-e2e.test.cjs
+        run: node --test tests/browser-isolated-e2e.test.cjs && node --test tests/browser-pr81-auth-census.test.cjs && node --test tests/census-late-browser-e2e.test.cjs && node --test tests/clinical-supervisor-browser-e2e.test.cjs && node --test tests/bed-movement-browser-e2e.test.cjs && node --test tests/picc-lifecycle-browser-e2e.test.cjs
