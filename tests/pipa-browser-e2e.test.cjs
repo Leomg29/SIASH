@@ -54,8 +54,14 @@ test("PR98 Chromium: post-discharge, duplicate warning, cancel/chart, correction
   await page.waitForFunction(()=>document.querySelector("#pipa-rectifications").textContent.includes("qa-isolated"));
   assert.match(await page.locator("#pipa-rectifications").innerText(),/Município confirmado/);
   assert.equal(await page.evaluate(()=>S.pipa[0].city),"Ibiaí");
-  // Verify conflict draft protection without issuing a production write.
-  await page.evaluate(()=>{SIASH_CLOUD.conflict=true;localStorage.setItem(STORE,JSON.stringify(S))});
+  // Simulate an actual HTTP 409 from the isolated server and inspect the browser draft.
+  await page.route("**/api/state",async route=>{
+   if(route.request().method()==="PUT")return route.fulfill({status:409,contentType:"application/json",body:JSON.stringify({error:"Outro plantão salvou antes.",conflict:true,current_revision:2})});
+   return route.fulfill({status:200,contentType:"application/json",body:JSON.stringify({exists:true,revision:2,payload:{state:{pipa:[]}}})});
+  });
+  await page.evaluate(()=>{SIASH_CLOUD.conflict=false;SIASH_CLOUD.revision=1;scheduleCloudSave()});
+  await page.waitForFunction(()=>SIASH_CLOUD.conflict===true,{timeout:10000});
   assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem(STORE)).pipa.length),2);
+  assert.equal(await page.evaluate(()=>S.pipa.length),2);
  }finally{await browser?.close();child.kill("SIGTERM")}
 });
