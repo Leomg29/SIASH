@@ -4,7 +4,16 @@
 // Legacy events are compared byte-for-byte in their original order.
 const HISTORY_KEYS = ["bedMoves", "profileHistory", "movements"];
 const validBedNumber = n => Number.isInteger(n) && n >= 1 && n <= 10;
-const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
+// PostgreSQL JSONB does not preserve object key order; compare values structurally.
+function same(a,b) {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== typeof b) return false;
+  if (typeof a !== "object") return false;
+  if (Array.isArray(a) || Array.isArray(b))
+    return Array.isArray(a) && Array.isArray(b) && a.length===b.length && a.every((v,i)=>same(v,b[i]));
+  const ak=Object.keys(a).sort(),bk=Object.keys(b).sort();
+  return ak.length===bk.length && ak.every((k,i)=>k===bk[i] && same(a[k],b[k]));
+}
 function validateBedMovementMutation(previousPayload, nextPayload) {
   const oldState = previousPayload?.state || {};
   const nextState = nextPayload?.state || {};
