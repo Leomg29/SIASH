@@ -1,9 +1,10 @@
 "use strict";
 const crypto=require("node:crypto");
-const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+const canonical=x=>Array.isArray(x)?x.map(canonical):x&&typeof x==="object"?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
+const same=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
 const dateOK=s=>typeof s==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&!Number.isNaN(Date.parse(s))&&new Date(s+"T00:00:00Z").toISOString().slice(0,10)===s;
 const legacyKey=(x,i)=>x?.id||"legacy:"+i;
-const legacyDate=x=>{if(dateOK(x?.insertDate))return x.insertDate;const m=String(x?.when||"").match(/(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/);if(!m)return null;const d=m[3]+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0");return dateOK(d)?d:null};
+const legacyDate=x=>{if(dateOK(x?.insertDate))return x.insertDate;const m=String(x?.when||"").match(new RegExp("([0-9]{1,2})/([0-9]{1,2})/([0-9]{4})"));if(!m)return null;const d=m[3]+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0");return dateOK(d)?d:null};
 function validatePiccMutation(previous,incoming){
  const old=previous?.state?.picc??[],next=incoming?.state?.picc??(old.length===0?[]:undefined);
  if(!Array.isArray(old)||!Array.isArray(next))return {ok:false,code:"PICC_INVALID_COLLECTION"};
