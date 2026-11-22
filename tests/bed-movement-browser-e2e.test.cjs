@@ -22,10 +22,9 @@ test("PR96 Chromium: invalid occupancy blocked before local or cloud write",{ski
   await page.locator("#bed-number").selectOption("1");
   await page.locator("#bed-status").selectOption("Ocupado");
   await page.locator("#bed-rn").fill("");
-  const dialog=page.waitForEvent("dialog");
+  let warning="";page.on("dialog",async dialog=>{warning=dialog.message();await dialog.accept()});
   await page.locator("#bed-form button[type=submit]").click();
-  assert.match((await dialog).message(),/identificador não nominal/);
-  await page.evaluate(()=>{window.alert=()=>{}});
+  assert.match(warning,/identificador não nominal/);
   assert.equal(await page.evaluate(()=>S.beds[0].status),"Livre");
   await page.locator("#bed-status").selectOption("Livre");
   await page.locator("#bed-rn").fill("RN-INVALID");
