@@ -51,6 +51,8 @@ jobs:
         run: node --test tests/clinical-supervisor-postgres.test.cjs
       - name: PR96 bed movement PostgreSQL integrity
         run: node --test tests/bed-movement-postgres.test.cjs
+      - name: PR97 PICC lifecycle PostgreSQL integration
+        run: node --test tests/picc-lifecycle-postgres.test.cjs
       - name: Install Chromium for isolated browser E2E
         run: |
           npm install --no-save --ignore-scripts --no-audit --no-fund playwright
