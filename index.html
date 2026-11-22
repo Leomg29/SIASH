@@ -308,7 +308,7 @@
     <article class="metric-card"><span>Retirados na competência</span><strong id="picc-removed-month">0</strong></article>
   </div>
   <article class="panel">
-    <div class="panel-head"><h3>Nova inserção / correção</h3><span>um registro por dispositivo</span></div>
+    <div class="panel-head"><h3>Nova inserção de PICC</h3><span>um registro por dispositivo</span></div>
     <form id="picc-form" class="form-grid four">
       <label>Data da inserção<input id="picc-date" type="date" required></label>
       <label>Leito<select id="picc-bed" class="bed-select"></select></label>
@@ -328,7 +328,7 @@
       </div>
     </form>
     <div class="info-box"><strong>Integração automática:</strong> ao registrar o PICC aqui, a SIASH contabiliza a inserção no Lançamento Diário da mesma data e nos indicadores mensais. O tempo de permanência é calculado automaticamente.</div>
-    <div id="picc-edit-note" class="info-box hidden"><strong>Modo de edição:</strong> você está corrigindo um registro existente. Ao salvar, o registro será atualizado e não será criado outro PICC.</div>
+    <div id="picc-edit-note" class="info-box hidden">Retificações são eventos complementares auditáveis; o registro original não é alterado.</div>
   </article>
 
   <article id="picc-removal-panel" class="panel removal-panel hidden">
@@ -352,6 +352,9 @@
     </form>
   </article>
 
+  <div id="picc-sync-status" class="info-box" role="status">Persistência: aguardando sincronização.</div>
+  <div id="picc-reconciliation" class="info-box" role="status">Alertas de leito e dispositivos: somente informativos.</div>
+  <article class="panel"><div class="panel-head"><h3>Trilha de eventos PICC (somente leitura)</h3></div><div class="table-wrap"><table><thead><tr><th>Evento</th><th>Dispositivo</th><th>Data oficial</th><th>Responsável</th><th>Detalhes</th></tr></thead><tbody id="picc-event-table"></tbody></table></div></article>
   <article class="panel"><div class="panel-head"><h3>PICCs ativos</h3><span>dispositivos em uso por leito</span></div><div class="table-wrap"><table><thead><tr><th>Leito</th><th>Inserção</th><th>Dias de PICC</th><th>Veia/lado</th><th>Punções</th><th>Posição</th><th>Bundle</th><th>Status</th><th>Ações</th></tr></thead><tbody id="picc-active-table"></tbody></table></div></article>
   <article class="panel"><div class="panel-head"><h3>Histórico de PICCs retirados</h3><span>registro preservado para indicadores e auditoria</span></div><div class="table-wrap"><table><thead><tr><th>Leito</th><th>Inserção</th><th>Retirada</th><th>Total PICC-dia</th><th>Motivo</th><th>Veia/lado</th><th>Ações</th></tr></thead><tbody id="picc-history-table"></tbody></table></div></article>
 </section>

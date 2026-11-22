@@ -79,13 +79,13 @@ test('PostgreSQL real isolado: corrida, falha de rede, rascunho e conciliacao ma
    const context=vm.createContext({});
    vm.runInContext(appSource.slice(begin,end),context);
    const merge=(base,local,remote)=>vm.runInContext('cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(local)+','+JSON.stringify(remote)+')',context);
-   const initial={beds:[bed('BASE-1','PICC-1'),{n:4,patient:'BASE-4'}],picc:[{bed:1,status:'Ativo'},{bed:4,status:'Ativo'}]};
+   const initial={beds:[bed('BASE-1','PICC-1'),{n:4,patient:'BASE-4'}],picc:[{id:'picc-base-1',bed:1,status:'Ativo',insertDate:'2026-11-19',vein:'Basílica'},{id:'picc-base-4',bed:4,status:'Ativo',insertDate:'2026-11-19',vein:'Cefálica'}]};
    await seed(initial);
    const base=(await current()).payload.state;
    const local=clone(base),night=clone(base);
    local.beds[0].patient='RN-DIURNO';
    night.beds[1].patient='RN-NOTURNO';
-   night.picc[1].status='Retirado';
+   night.picc[1].status='Retirado';night.picc[1].removalDate='2026-11-20';night.picc[1].removalReason='Fim da terapia';
    assert.equal((await put(night,1)).status,200);
    assert.equal((await put(local,1)).status,409);
    const remote=await current();
@@ -108,8 +108,8 @@ test('PostgreSQL real isolado: corrida, falha de rede, rascunho e conciliacao ma
    const base={beds:[bed('BASE','PICC-BASE')],picc:[],pipa:[]};
    const entry=(id,city)=>({id,date:'2026-11-20',month:'2026-11',city,qty:1,postDischargeConfirmed:true,updated:'2026-11-20'});
    const day=clone(base),night=clone(base);
-   day.picc.push({id:'picc-day',bed:1,status:'Ativo'});
-   night.picc.push({id:'picc-night',bed:4,status:'Ativo'});
+   day.picc.push({id:'picc-day',bed:1,status:'Ativo',insertDate:'2026-11-20',vein:'Basílica'});
+   night.picc.push({id:'picc-night',bed:4,status:'Ativo',insertDate:'2026-11-20',vein:'Cefálica'});
    day.pipa.push(entry('pipa-day','Cidade A'));
    night.pipa.push(entry('pipa-night','Cidade B'));
    await seed(base);

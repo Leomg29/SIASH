@@ -196,6 +196,17 @@ function scheduleCloudSave({retry=false}={}){
        }
        localStorage.setItem(STORE,JSON.stringify(S));
      }
+     if(Array.isArray(r.picc_event_stamps)){
+       for(const stamp of r.picc_event_stamps){
+         const index=stamp.recordIndex;
+         if(!Array.isArray(sentState.piccEvents))sentState.piccEvents=[];
+         if(!Array.isArray(S.piccEvents))S.piccEvents=[];
+         const existing=sentState.piccEvents.findIndex(e=>e.id===stamp.id||(!e.id&&e.type===stamp.type&&e.recordIndex===index&&e.justification===stamp.justification));
+         if(existing>=0){sentState.piccEvents[existing]=stamp;if(S.piccEvents[existing])S.piccEvents[existing]=stamp;}
+         else{sentState.piccEvents.push(stamp);S.piccEvents.push(stamp);}
+       }
+       localStorage.setItem(STORE,JSON.stringify(S));
+     }
      cloudSetBase(sentState);
      // O servidor é a fonte de verdade para autor e horário do cancelamento.
      // Se houve novas edições durante o PUT, não sobrescrever o rascunho atual.
@@ -224,8 +235,8 @@ function scheduleCloudSave({retry=false}={}){
        SIASH_CLOUD.conflict=true;
        localStorage.setItem(STORE,JSON.stringify(S));
        void showCloudConflictPanel();
-       updateCloudBadge(e.status===422?"INTEGRIDADE PIPA / LEITOS · revisão necessária":"CONFLITO · dados locais preservados",true);
-       alert(e.status===422?"O servidor recusou uma alteração do PIPA por inconsistência de integridade, ou outra alteração clínica protegida: "+e.message+" Seu rascunho está preservado e o envio automático foi bloqueado. Solicite conciliação à coordenação.":"ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
+       updateCloudBadge(e.status===422?"INTEGRIDADE PIPA / LEITOS / PICC · revisão necessária":"CONFLITO · dados locais preservados",true);
+       alert(e.status===422?"O servidor recusou uma alteração do PIPA por inconsistência de integridade, ou outra alteração clínica protegida (leitos ou PICC): "+e.message+" Seu rascunho está preservado e o envio automático foi bloqueado. Solicite conciliação à coordenação.":"ATENÇÃO: outro profissional alterou os dados ou sua sessão está desatualizada. Seu trabalho permanece neste navegador. Não recarregue nem feche a página antes de conferir e salvar uma cópia dos lançamentos. Contate a coordenação para conciliar as alterações.");
      }else{
        // A resposta pode ter sido perdida depois do commit: conferir a revisão antes de reenviar.
        try{
@@ -363,7 +374,7 @@ async function showCloudConflictPanel(){
  await loadRemote();
 }
 function updateCloudBadge(text,bad=false){
- const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);if(document.getElementById("bed-sync-status"))renderBedReconciliation();
+ const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);if(document.getElementById("bed-sync-status"))renderBedReconciliation();const piccSync=document.getElementById("picc-sync-status");if(piccSync)piccSync.textContent=SIASH_CLOUD.conflict?"Conflito HTTP 409 / 422 · rascunho local preservado":SIASH_CLOUD.syncing?"Sincronizando":cloudPending()?"Rascunho local · aguardando PostgreSQL":SIASH_CLOUD.lastSync?"Salvo no PostgreSQL":"Rascunho local";
 }
 async function uploadDocCloud(key,file){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token||!file)return;
@@ -505,7 +516,7 @@ function blankState(){return{
 let S=JSON.parse(localStorage.getItem(STORE)||"null")||blankState();
 function normalize(){if(!S.settings)S.settings=blankState().settings;if(!S.daily)S.daily=[];if(!S.beds||S.beds.length!==10)S.beds=blankState().beds;
 S.beds.forEach((b,i)=>{if(typeof b.isolation==="undefined")b.isolation=i>=8;if(!b.profile)b.profile=b.type||"Intensivo";delete b.type});
-if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.movements)S.movements=[];if(!S.checklist)S.checklist=blankState().checklist;if(!S.events)S.events=[];if(!S.care)S.care={};if(!S.picc)S.picc=[];S.picc.forEach(x=>{if(!x.insertDate)x.insertDate=isoFromLegacyWhen(x.when);if(!x.status)x.status="Ativo";if(x.status==="Retirado"&&!x.removalDate)x.removalDate=x.insertDate});if(!S.pipa)S.pipa=[];if(!S.pending)S.pending=[];if(!S.thermalEvents)S.thermalEvents=[];if(!S.docs)S.docs=[];normalizeDocs();if(!S.huddle)S.huddle=[];if(!S.rh)S.rh=[]}
+if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.movements)S.movements=[];if(!S.checklist)S.checklist=blankState().checklist;if(!S.events)S.events=[];if(!S.care)S.care={};if(!S.picc)S.picc=[];if(!S.piccEvents)S.piccEvents=[];if(!S.pipa)S.pipa=[];if(!S.pending)S.pending=[];if(!S.thermalEvents)S.thermalEvents=[];if(!S.docs)S.docs=[];normalizeDocs();if(!S.huddle)S.huddle=[];if(!S.rh)S.rh=[]}
 normalize();localStorage.setItem(STORE,JSON.stringify(S));
 function save(){localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
 function currentMonth(){return monthOf(todayISO())}
@@ -560,19 +571,19 @@ function monthStats(m){
  const sum=k=>rows.reduce((a,b)=>a+(+b[k]||0),0);
  const pd=sum("internados"),days=rows.length,ld=(S.settings.beds||10)*days,outs=sum("altas")+sum("transferencias")+sum("obitos");
  const latest=rows.length?rows[rows.length-1]:null;
- return{rows,pd,days,ld,outs,occ:ld?pd/ld*100:0,los:outs?pd/outs:0,adm:sum("admissoes"),altas:sum("altas"),transf:sum("transferencias"),deaths:sum("obitos"),pipa:pipaMonthTotal(m),canguru:sum("canguru")+sum("altaCanguru"),altaPediatria:sum("altaPediatria"),altaCanguru:sum("altaCanguru"),picc:S.picc.filter(x=>monthOf(piccInsertDate(x))===m).length,piccDays:piccDaysInMonth(m),piccActive:S.picc.filter(x=>x.status==="Ativo").length,piccRemoved:S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length,pezinho:sum("pezinho"),vmDays:sum("vm"),vmCurrent:latest?(+latest.vm||0):0,intub:sum("intub"),extubProg:sum("extubProg"),extub:sum("extub"),lpp:sum("lpp"),hypothermia:thermalMonthCount(m,"Hipotermia"),hyperthermia:thermalMonthCount(m,"Hipertermia")}
+ return{rows,pd,days,ld,outs,occ:ld?pd/ld*100:0,los:outs?pd/outs:0,adm:sum("admissoes"),altas:sum("altas"),transf:sum("transferencias"),deaths:sum("obitos"),pipa:pipaMonthTotal(m),canguru:sum("canguru")+sum("altaCanguru"),altaPediatria:sum("altaPediatria"),altaCanguru:sum("altaCanguru"),picc:S.picc.filter(x=>monthOf(piccInsertDate(x))===m).length,piccDays:piccDaysInMonth(m),piccActive:S.picc.filter(x=>(!x.status||x.status==="Ativo")).length,piccRemoved:S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length,pezinho:sum("pezinho"),vmDays:sum("vm"),vmCurrent:latest?(+latest.vm||0):0,intub:sum("intub"),extubProg:sum("extubProg"),extub:sum("extub"),lpp:sum("lpp"),hypothermia:thermalMonthCount(m,"Hipotermia"),hyperthermia:thermalMonthCount(m,"Hipertermia")}
 }
 function monthCoverage(m,days){const parts=String(m||"").split("-").map(Number);if(parts.length!==2||!parts[0]||parts[1]<1||parts[1]>12)return null;const calendarDays=new Date(parts[0],parts[1],0).getDate();return{registered:days,calendarDays,incomplete:days<calendarDays};}
 function allMonths(){const months=[...S.daily.map(r=>monthOf(r.date)),...S.pipa.filter(r=>!r.cancelledAt).map(r=>r.date?monthOf(r.date):r.month),...S.picc.map(x=>monthOf(piccInsertDate(x))),...S.picc.filter(x=>x.removalDate).map(x=>monthOf(x.removalDate)),currentMonth()];return [...new Set(months.filter(Boolean))].sort()}
 function dateBR(s){return s?s.split("-").reverse().join("/"):"—"}
 function nowBR(){return new Date().toLocaleString("pt-BR")}
 function parseISODate(s){if(!s)return null;const p=s.split("-").map(Number);if(p.length!==3||p.some(Number.isNaN))return null;return new Date(Date.UTC(p[0],p[1]-1,p[2]))}
-function isoFromLegacyWhen(s){const m=String(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);return m?`${m[3]}-${pad(m[2])}-${pad(m[1])}`:todayISO()}
+function isoFromLegacyWhen(s){const m=String(s||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);if(!m)return null;const date=`${m[3]}-${pad(m[2])}-${pad(m[1])}`;return new Date(Date.UTC(+m[3],+m[2]-1,+m[1])).toISOString().slice(0,10)===date?date:null}
 function piccInsertDate(x){return x.insertDate||isoFromLegacyWhen(x.when)}
 function piccDaysBetween(start,end){const a=parseISODate(start),b=parseISODate(end);if(!a||!b||b<a)return 0;return Math.floor((b-a)/86400000)+1}
-function piccDays(x,end=todayISO()){const last=x.status==="Retirado"&&x.removalDate?x.removalDate:end;return piccDaysBetween(piccInsertDate(x),last)}
+function piccDays(x,end=todayISO()){const last=x.status==="Retirado"&&x.removalDate?x.removalDate:end;return piccInsertDate(x)?piccDaysBetween(piccInsertDate(x),last):null}
 function piccInsertedOn(date){return S.picc.filter(x=>piccInsertDate(x)===date).length}
-function piccDaysInMonth(m){const y=+m.slice(0,4),mo=+m.slice(5,7),monthStart=`${m}-01`,monthEnd=`${m}-${pad(new Date(y,mo,0).getDate())}`,today=todayISO();let total=0;S.picc.forEach(x=>{const start=piccInsertDate(x);const stop=x.status==="Retirado"&&x.removalDate?x.removalDate:today;const a=start>monthStart?start:monthStart;const b=stop<monthEnd?stop:monthEnd;if(b>=a)total+=piccDaysBetween(a,b)});return total}
+function piccDaysInMonth(m){const y=+m.slice(0,4),mo=+m.slice(5,7),monthStart=`${m}-01`,monthEnd=`${m}-${pad(new Date(y,mo,0).getDate())}`,today=todayISO();let total=0;S.picc.forEach(x=>{const start=piccInsertDate(x);if(!start)return;const stop=x.status==="Retirado"&&x.removalDate?x.removalDate:(today<monthEnd?today:monthEnd);const a=start>monthStart?start:monthStart;const b=stop<monthEnd?stop:monthEnd;if(b>=a)total+=piccDaysBetween(a,b)});return total}
 function populateBedSelects(){document.querySelectorAll(".bed-select").forEach(sel=>{const current=sel.value;let first=sel.id==="pending-bed"?'<option value="Geral / Setor">Geral / Setor</option>':'<option value="">Selecione</option>';sel.innerHTML=first+S.beds.map(b=>`<option value="${b.n}">Leito ${pad(b.n)} — ${b.profile}${b.isolation?" — Isolamento":""} — ${b.status}</option>`).join("");if([...sel.options].some(o=>o.value===current))sel.value=current})}
 function renderClock(){const d=new Date();$("clock-date").textContent=d.toLocaleDateString("pt-BR");$("clock-time").textContent=d.toLocaleTimeString("pt-BR");const h=d.getHours();$("shift-label").textContent=h>=7&&h<19?"Diurno 07h–19h":"Noturno 19h–07h"}
 function renderDashboard(){const m=currentMonth(),c=monthStats(m);$("m-pacientedias").textContent=c.pd;$("m-ocupacao").textContent=fmt(c.occ,1)+"%";$("m-permanencia").textContent=c.outs?fmt(c.los,1)+" d":"—";$("m-admissoes").textContent=c.adm;$("m-transferencias").textContent=c.transf;$("m-pipa").textContent=pipaMonthTotal(m);$("m-leitosdia").textContent=c.ld;$("m-diaslancados").textContent=c.days;const totalDays=new Date(+m.slice(0,4),+m.slice(5,7),0).getDate();$("m-diaspendentes").textContent=Math.max(0,totalDays-c.days);$("m-pendencias").textContent=S.pending.filter(x=>!x.done).length;
@@ -805,29 +816,42 @@ function renderChecklist(){$("checklist-score").textContent="Adesão "+checkScor
 window.setCheck=(i,v)=>{S.checklist[i].status=v;save()}
 function renderCare(){$("care-table").innerHTML=Object.entries(S.care).sort((a,b)=>+a[0]-+b[0]).map(([bed,x])=>`<tr><td>Leito ${pad(bed)}</td><td>${safe(x.sae)}</td><td>${safe(x.evol)}</td><td>${safe(x.multi)}</td><td>${safe(x.updated)}</td></tr>`).join("")||'<tr><td colspan="5">Nenhum status assistencial registrado.</td></tr>'}
 function renderPicc(){
- const m=currentMonth(),active=S.picc.map((x,i)=>({x,i})).filter(({x})=>x.status==="Ativo").sort((a,b)=>+a.x.bed-+b.x.bed),removed=S.picc.map((x,i)=>({x,i})).filter(({x})=>x.status==="Retirado").sort((a,b)=>(b.x.removalDate||"").localeCompare(a.x.removalDate||""));
+ const m=currentMonth(),active=S.picc.map((x,i)=>({x,i})).filter(({x})=>(!x.status||x.status==="Ativo")).sort((a,b)=>+a.x.bed-+b.x.bed),removed=S.picc.map((x,i)=>({x,i})).filter(({x})=>x.status==="Retirado").sort((a,b)=>(b.x.removalDate||"").localeCompare(a.x.removalDate||""));
  $("picc-active-count").textContent=active.length;$("picc-days-month").textContent=piccDaysInMonth(m);$("picc-removed-month").textContent=S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length;
  $("picc-active-table").innerHTML=active.map(({x,i})=>`<tr>
- <td><strong>Leito ${pad(x.bed)}</strong></td><td>${dateBR(piccInsertDate(x))}</td><td><strong>D${piccDays(x)}</strong> (${piccDays(x)} dia${piccDays(x)===1?"":"s"})</td><td>${safe(x.vein)} / ${safe(x.side)}</td>
+ <td><strong>Leito ${pad(x.bed)}</strong></td><td>${dateBR(piccInsertDate(x))}</td><td><strong>${piccDays(x)===null?"Conferir data legada":"D"+piccDays(x)}</strong> (${piccDays(x)??"—"} dia${piccDays(x)===1?"":"s"})</td><td>${safe(x.vein)} / ${safe(x.side)}</td>
  <td>${x.punctures}</td><td>${safe(x.position)}</td><td class="${x.bundle?"status-ok":"status-bad"}">${x.bundle?"Conforme":"Não conforme"}</td><td><span class="device-status active">Ativo</span></td>
- <td><button class="ghost" onclick="editPicc(${i})">Editar</button> <button class="secondary compact-btn" onclick="startPiccRemoval(${i})">Registrar retirada</button> <button class="ghost danger-text" onclick="deletePicc(${i})">Excluir</button></td>
+ <td><button class="ghost" onclick="editPicc(${i})">Retificar</button> <button class="secondary compact-btn" onclick="startPiccRemoval(${i})">Registrar retirada</button></td>
  </tr>`).join("")||'<tr><td colspan="9">Nenhum PICC ativo.</td></tr>';
- $("picc-history-table").innerHTML=removed.map(({x,i})=>`<tr><td>Leito ${pad(x.bed)}</td><td>${dateBR(piccInsertDate(x))}</td><td>${dateBR(x.removalDate)}</td><td>${piccDays(x)}</td><td>${safe(x.removalReason||"—")}</td><td>${safe(x.vein)} / ${safe(x.side)}</td><td><button class="ghost" onclick="editPicc(${i})">Ver/editar</button> <button class="ghost danger-text" onclick="deletePicc(${i})">Excluir</button></td></tr>`).join("")||'<tr><td colspan="7">Nenhum PICC retirado registrado.</td></tr>';
+ $("picc-history-table").innerHTML=removed.map(({x,i})=>`<tr><td>Leito ${pad(x.bed)}</td><td>${dateBR(piccInsertDate(x))}</td><td>${dateBR(x.removalDate)}</td><td>${piccDays(x)}</td><td>${safe(x.removalReason||"—")}</td><td>${safe(x.vein)} / ${safe(x.side)}</td><td><button class="ghost" onclick="editPicc(${i})">Retificar</button></td></tr>`).join("")||'<tr><td colspan="7">Nenhum PICC retirado registrado.</td></tr>';
+ const events=$("picc-event-table");
+ if(events)events.innerHTML=(S.piccEvents||[]).map(e=>`<tr><td>${safe(e.type)}</td><td>${safe(e.deviceRef||"Legado / pendente")}</td><td>${safe(e.recordedAtSaoPaulo||"Rascunho local")}</td><td>${safe(e.recordedBy||"Pendente")}</td><td>${safe(e.justification||e.correctionText||e.removalReason||e.insertDate||"—")}</td></tr>`).join("")||'<tr><td colspan="5">Nenhum evento PICC auditado nesta versão.</td></tr>';
+ const sync=$("picc-sync-status");if(sync)sync.textContent=SIASH_CLOUD.conflict?"Conflito HTTP 409 · rascunho local preservado":SIASH_CLOUD.syncing?"Sincronizando":cloudPending()?"Rascunho local · aguardando PostgreSQL":SIASH_CLOUD.lastSync?"Salvo no PostgreSQL":"Rascunho local";
+ const warnings=[];for(const x of active.map(v=>v.x)){const bed=S.beds.find(b=>String(b.n)===String(x.bed));if(!bed||bed.status!=="Ocupado")warnings.push(`PICC ativo associado ao leito ${pad(x.bed)} sem ocupação atual correspondente; confira remanejamento e identificação do RN.`);if(!piccInsertDate(x))warnings.push(`PICC legado do leito ${pad(x.bed)} sem data de inserção válida: conferência humana necessária.`);}
+ const warn=$("picc-reconciliation");if(warn)warn.textContent=warnings.length?"Alertas informativos (sem baixa automática): "+warnings.join(" | "):"Nenhuma divergência identificada entre PICCs ativos e ocupação atual. Conferência clínica permanece necessária.";
 }
 
 function clearPiccForm(){
  $("picc-edit-index").value="";$("picc-date").value=todayISO();$("picc-bed").value="";$("picc-vein").value="";$("picc-side").value="Direita";$("picc-punctures").value=1;$("picc-length").value="";$("picc-external").value="";$("picc-position").value="Sim";$("picc-b1").value="Sim";$("picc-b2").value="Sim";$("picc-b3").value="Sim";$("picc-save-btn").textContent="Registrar PICC";$("picc-cancel-edit").classList.add("hidden");$("picc-edit-note").classList.add("hidden");
 }
 window.editPicc=i=>{
- const x=S.picc[i];if(!x)return;$("picc-edit-index").value=String(i);$("picc-date").value=piccInsertDate(x);$("picc-bed").value=String(x.bed);$("picc-vein").value=x.vein;$("picc-side").value=x.side;$("picc-punctures").value=x.punctures;$("picc-length").value=x.length||"";$("picc-external").value=x.external||"";$("picc-position").value=x.position;$("picc-b1").value=x.b1||"Sim";$("picc-b2").value=x.b2||"Sim";$("picc-b3").value=x.b3||"Sim";$("picc-save-btn").textContent="Salvar alteração";$("picc-cancel-edit").classList.remove("hidden");$("picc-edit-note").classList.remove("hidden");document.querySelector('[data-view="picc"]').click();window.scrollTo({top:0,behavior:"smooth"});
-}
+ const x=S.picc[i];if(!x)return;
+ const justification=window.prompt("Retificação complementar de PICC (sem alterar o registro original). Informe a justificativa obrigatória:");
+ if(justification===null)return;
+ if(!justification.trim())return alert("A justificativa é obrigatória.");
+ const correctionText=window.prompt("Descreva a informação correta e o campo retificado (o histórico original será preservado):");
+ if(correctionText===null)return;
+ if(!correctionText.trim())return alert("Descreva a retificação.");
+ if(!window.confirm(`Confirmar retificação complementar do PICC do leito ${pad(x.bed)}?\\nRegistro original preservado.\\nJustificativa: ${justification}\\nRetificação: ${correctionText}`))return;
+ if(!Array.isArray(S.piccEvents))S.piccEvents=[];
+ S.piccEvents.push({type:"Retificação",recordIndex:i,justification:justification.trim(),correctionText:correctionText.trim()});
+ save();
+};
 window.startPiccRemoval=i=>{
- const x=S.picc[i];if(!x||x.status!=="Ativo")return;$("picc-removal-index").value=String(i);$("picc-removal-date").value=todayISO();$("picc-removal-reason").value="";$("picc-removal-note").value="";$("picc-removal-target").textContent=`Leito ${pad(x.bed)} • inserido em ${dateBR(piccInsertDate(x))} • D${piccDays(x)}`;$("picc-removal-panel").classList.remove("hidden");$("picc-removal-panel").scrollIntoView({behavior:"smooth",block:"center"});
+ const x=S.picc[i];if(!x||(x.status&&x.status!=="Ativo"))return;$("picc-removal-index").value=String(i);$("picc-removal-date").value=todayISO();$("picc-removal-reason").value="";$("picc-removal-note").value="";$("picc-removal-target").textContent=`Leito ${pad(x.bed)} • inserido em ${dateBR(piccInsertDate(x))} • D${piccDays(x)}`;$("picc-removal-panel").classList.remove("hidden");$("picc-removal-panel").scrollIntoView({behavior:"smooth",block:"center"});
 }
 function cancelPiccRemoval(){$("picc-removal-index").value="";$("picc-removal-reason").value="";$("picc-removal-note").value="";$("picc-removal-panel").classList.add("hidden")}
-window.deletePicc=i=>{
- const x=S.picc[i];if(!x)return;if(confirm(`Excluir definitivamente o registro de PICC do Leito ${pad(x.bed)}?\n\nUse esta opção apenas para corrigir um lançamento indevido. Para retirada clínica, use Registrar retirada.`)){S.picc.splice(i,1);clearPiccForm();cancelPiccRemoval();save();showToast("Registro de PICC excluído",1200)}
-}
+
 
 function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();const m=$("pipa-month").value||monthOf($("pipa-date").value);if(!$("pipa-month").value)$("pipa-month").value=m;const rows=S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m),total=rows.reduce((a,b)=>a+(+b.qty||0),0),g={};const audit=pipaReconciliationSummary(m),auditEl=$("pipa-reconciliation");if(auditEl)auditEl.textContent=`Conferência: ${audit.dated} encaminhamento(s) datado(s); ${audit.monthlyOnly} registro(s) histórico(s) sem data; ${audit.legacyDaily} no censo diário legado; ${audit.overlapDays} dia(s) com possível sobreposição. Não somar as fontes sem conciliação.`;rows.forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("pipa-total").textContent=total;$("pipa-cities").textContent=Object.values(g).filter(x=>x>0).length;$("pipa-competence").textContent=m.split("-").reverse().join("/");$("pipa-updated").textContent=S.pipa.length?S.pipa[S.pipa.length-1].updated:"—";const entries=Object.entries(g).filter(([,q])=>q>0),max=Math.max(1,...entries.map(([,q])=>q));$("pipa-bars").innerHTML=entries.length?entries.map(([c,q])=>`<div class="bar-item"><div class="bar-value">${q}</div><div class="bar" style="height:${Math.max(5,q/max*100)}%"></div><div class="bar-label">${safe(c)}</div></div>`).join(""):'<span class="muted">Sem encaminhamentos nesta competência.</span>';$("pipa-table").innerHTML=[...S.pipa].reverse().map((r,idx)=>{
  const i=S.pipa.length-1-idx;
@@ -1484,17 +1508,17 @@ $("movement-form").addEventListener("submit",e=>{e.preventDefault();S.movements.
 $("care-save").addEventListener("click",()=>{const bed=$("care-bed").value;if(!bed)return alert("Selecione o leito.");S.care[bed]={sae:$("care-sae").value,evol:$("care-evol").value,multi:$("care-multi").value,updated:nowBR()};save()})
 $("picc-form").addEventListener("submit",e=>{
  e.preventDefault();if(!$("picc-date").value||!$("picc-bed").value||!$("picc-vein").value)return alert("Informe a data da inserção, o leito e a veia/sítio.");
- const b1=$("picc-b1").value,b2=$("picc-b2").value,b3=$("picc-b3").value,bundle=[b1,b2,b3].every(x=>x==="Sim"),editIndex=$("picc-edit-index").value===""?null:+$("picc-edit-index").value,old=editIndex===null?null:S.picc[editIndex];
+ const b1=$("picc-b1").value,b2=$("picc-b2").value,b3=$("picc-b3").value,bundle=[b1,b2,b3].every(x=>x==="Sim"),editIndex=null,old=null;
  const record={id:old?.id||crypto.randomUUID(),when:old?old.when:nowBR(),updated:nowBR(),insertDate:$("picc-date").value,bed:$("picc-bed").value,vein:$("picc-vein").value,side:$("picc-side").value,punctures:+$("picc-punctures").value||1,length:$("picc-length").value,external:$("picc-external").value,position:$("picc-position").value,b1,b2,b3,bundle,status:old?old.status:"Ativo",removalDate:old?old.removalDate:null,removalReason:old?old.removalReason:null,removalNote:old?old.removalNote:null,removedAt:old?old.removedAt:null};
  if(record.removalDate&&record.removalDate<record.insertDate)return alert("A data de inserção não pode ser posterior à data de retirada.");
- if(editIndex!==null){S.picc[editIndex]=record;clearPiccForm();save();showToast("Registro de PICC atualizado",1200);return}
- const activeSameBed=S.picc.filter(x=>String(x.bed)===String(record.bed)&&x.status==="Ativo");if(activeSameBed.length){const proceed=confirm(`Já existe ${activeSameBed.length} PICC ativo no Leito ${pad(record.bed)}.\n\nSe for apenas correção, cancele e edite o registro existente.\n\nDeseja registrar outro PICC ativo neste leito?`);if(!proceed)return}
+
+ const activeSameBed=S.picc.filter(x=>String(x.bed)===String(record.bed)&&(!x.status||x.status==="Ativo"));if(activeSameBed.length){const proceed=confirm(`Já existe ${activeSameBed.length} PICC ativo no Leito ${pad(record.bed)}.\n\nSe for apenas correção, cancele e edite o registro existente.\n\nDeseja registrar outro PICC ativo neste leito?`);if(!proceed)return}
  S.picc.push(record);clearPiccForm();save();showToast("PICC registrado e indicadores atualizados",1400)
 })
 $("picc-cancel-edit").addEventListener("click",clearPiccForm)
 $("picc-removal-cancel").addEventListener("click",cancelPiccRemoval)
 $("picc-removal-form").addEventListener("submit",e=>{
- e.preventDefault();const i=+$("picc-removal-index").value,x=S.picc[i],date=$("picc-removal-date").value,reason=$("picc-removal-reason").value;if(!x||x.status!=="Ativo")return alert("PICC ativo não localizado.");if(!date||!reason)return alert("Informe a data e o motivo da retirada.");if(date<piccInsertDate(x))return alert("A retirada não pode ser anterior à inserção.");x.status="Retirado";x.removalDate=date;x.removalReason=reason;x.removalNote=$("picc-removal-note").value.trim();x.removedAt=nowBR();x.updated=nowBR();cancelPiccRemoval();save();showToast(`PICC do Leito ${pad(x.bed)} retirado`,1600)
+ e.preventDefault();const i=+$("picc-removal-index").value,x=S.picc[i],date=$("picc-removal-date").value,reason=$("picc-removal-reason").value;if(!x||(x.status&&x.status!=="Ativo"))return alert("PICC ativo não localizado.");if(!date||!reason)return alert("Informe a data e o motivo da retirada.");if(!piccInsertDate(x))return alert("PICC legado sem data de inserção verificável. Não é seguro registrar a retirada até conferência técnica do histórico.");if(date<piccInsertDate(x))return alert("A retirada não pode ser anterior à inserção.");if(!window.confirm(`Confirmar retirada do PICC?\\nLeito: ${pad(x.bed)}\\nRN: ${S.beds.find(b=>String(b.n)===String(x.bed))?.rn||"Não identificado"}\\nInserção: ${piccInsertDate(x)||"Data legada não identificada"}\\nDias: ${piccDays(x)??"Não calculável"}\\nMotivo: ${reason}`))return;x.status="Retirado";x.removalDate=date;x.removalReason=reason;x.removalNote=$("picc-removal-note").value.trim();x.removedAt=nowBR();x.updated=nowBR();cancelPiccRemoval();save();showToast(`PICC do Leito ${pad(x.bed)} retirado`,1600)
 })
 
 $("pipa-form").addEventListener("submit",e=>{e.preventDefault();const qty=Number($("pipa-qty").value);if(!$("pipa-date").value||!$("pipa-city").value)return alert("Informe data do encaminhamento e município de origem.");$("pipa-month").value=monthOf($("pipa-date").value);if(!Number.isSafeInteger(qty)||qty<1)return alert("Informe quantidade inteira e maior que zero.");if(!$("pipa-post-discharge").checked)return alert("Confirme que os RNs foram encaminhados após a alta da UTIN.");S.pipa.push({id:crypto.randomUUID(),date:$("pipa-date").value,month:$("pipa-month").value,city:$("pipa-city").value,qty,note:$("pipa-note").value.trim(),postDischargeConfirmed:true,updated:nowBR()});$("pipa-qty").value=1;$("pipa-post-discharge").checked=false;$("pipa-note").value="";save()})
