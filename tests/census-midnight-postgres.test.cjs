@@ -18,7 +18,7 @@ test("PostgreSQL isolado: censo exclusivamente manual, legado preservado e admis
  const port=await new Promise((resolve,reject)=>{const s=net.createServer();s.once("error",reject);s.listen(0,"127.0.0.1",()=>{const p=s.address().port;s.close(()=>resolve(p))})});
  const secret="ci-pr81-midnight-secret-minimum-32-characters";
  const child=spawn(process.execPath,["server.js"],{env:{...process.env,DATABASE_URL:isolated,JWT_SECRET:secret,PORT:String(port),PGSSLMODE:"disable"},stdio:"pipe"});
- const auth=jwt.sign({u:"ci-nurse",r:"operational"},secret,{expiresIn:"1h"});
+ let auth;
  const referenceDate=previousDate(dateInBrazil(new Date()));
  const midnight=midnightBrazilUtc(dateInBrazil(new Date()));
  const before=new Date(midnight.getTime()-60000);
@@ -30,6 +30,7 @@ test("PostgreSQL isolado: censo exclusivamente manual, legado preservado e admis
   // Real authentication regression against isolated PostgreSQL.
   const bcrypt=require("bcryptjs");
   await db.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,$3)",["legacy-nurse",await bcrypt.hash("LegacyPass123",12),"operational"]);
+  auth=jwt.sign({u:"legacy-nurse",r:"operational"},secret,{expiresIn:"1h"});
   const post=async(path,body,token)=>fetch("http://127.0.0.1:"+port+path,{method:"POST",headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})},body:JSON.stringify(body)});
   let login=await post("/api/login",{username:"legacy-nurse",password:"LegacyPass123"});
   assert.equal(login.status,200,"legacy password must remain valid");
