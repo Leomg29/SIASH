@@ -33,12 +33,16 @@ test("PR96 isolated PostgreSQL: append-only histories, atomic rollback and stale
   assert.deepEqual(afterRejected.rows,before.rows);
   assert.equal((await db.query("SELECT COUNT(*)::int n FROM siash_state_history")).rows[0].n,historyBefore.rows[0].n);
   const valid=clone(payload);valid.state.beds[0].status="Ocupado";valid.state.beds[0].rn="RN-CI-96";
-  valid.state.bedMoves.push({when:"new",origin:2,target:1,rn:"RN-CI-96"});
+  valid.state.movements.push({when:"new",type:"Admissão",note:"Evento novo de CI"});
   const accepted=await put(valid,1);assert.equal(accepted.status,200,JSON.stringify(accepted.body));
   assert.equal((await put(payload,1)).status,409);
   const final=await db.query("SELECT revision,payload FROM siash_state WHERE id=1");
   assert.equal(Number(final.rows[0].revision),2);
-  assert.equal(final.rows[0].payload.state.bedMoves.length,2);
+  assert.equal(final.rows[0].payload.state.bedMoves.length,1);
+  assert.equal(final.rows[0].payload.state.movements.length,2);
+  assert.equal(final.rows[0].payload.state.movements[1].recordedBy,username);
+  assert.match(final.rows[0].payload.state.movements[1].id,/^[0-9a-f-]{36}$/);
+  assert.equal(final.rows[0].payload.state.movements[1].timeZone,"America/Sao_Paulo");
   assert.deepEqual(final.rows[0].payload.state.bedMoves[0],state.bedMoves[0]);
  }finally{child.kill("SIGTERM");await db.end()}
 });
