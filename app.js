@@ -374,7 +374,7 @@ async function showCloudConflictPanel(){
  await loadRemote();
 }
 function updateCloudBadge(text,bad=false){
- const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);if(document.getElementById("bed-sync-status"))renderBedReconciliation();
+ const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);if(document.getElementById("bed-sync-status"))renderBedReconciliation();const piccSync=document.getElementById("picc-sync-status");if(piccSync)piccSync.textContent=SIASH_CLOUD.conflict?"Conflito HTTP 409 / 422 · rascunho local preservado":SIASH_CLOUD.syncing?"Sincronizando":cloudPending()?"Rascunho local · aguardando PostgreSQL":SIASH_CLOUD.lastSync?"Salvo no PostgreSQL":"Rascunho local";
 }
 async function uploadDocCloud(key,file){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token||!file)return;
