@@ -39,6 +39,9 @@ test('Chromium PR81: login limpo, troca de senha e alerta de admissão no censo'
   const payload={state:{daily:[{date:day,internados:3,admissoes:1}]}};
   await db.query('INSERT INTO siash_state(id,payload,revision) VALUES(1,$1,1) ON CONFLICT(id) DO UPDATE SET payload=EXCLUDED.payload,revision=1',[payload]);
   await db.query('INSERT INTO siash_daily_admission_records(reference_date,admission_count,ever_admitted,recorded_by) VALUES($1,1,TRUE,$2) ON CONFLICT(reference_date) DO UPDATE SET admission_count=1,ever_admitted=TRUE',[day,'pr81-test']);
+  const windowStatus=await page.evaluate(()=>cloudJson('/api/census/window-status'));
+  assert.equal(windowStatus.referenceDate,day);
+  assert.equal(windowStatus.attention,'overdue');
   await page.evaluate(()=>refreshMidnightCensusStatus());
   await page.waitForFunction(()=>{const b=document.querySelector('#census-pending-attention');return b&&!b.classList.contains('hidden')&&!b.disabled},null,{timeout:10000});
   await page.locator('[data-view="lancamento"]').click();
