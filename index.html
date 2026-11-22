@@ -128,6 +128,8 @@
     <p id="census-status" class="muted">Selecione uma data para conferir o censo.</p>
     <p id="census-closure-status" class="muted">Sem fechamento registrado.</p>
       <p id="census-midnight-alert" class="muted" role="status" aria-live="polite"></p>
+    <button id="census-pending-attention" type="button" class="primary hidden" aria-label="Atenção: censo pendente, abrir conferência" style="animation:siashCensusPulse 1.8s ease-in-out infinite">⚠ CENSO PENDENTE — VERIFICAR</button>
+    <style>@keyframes siashCensusPulse{0%,100%{box-shadow:0 0 0 0 rgba(180,60,20,.45)}50%{box-shadow:0 0 0 9px rgba(180,60,20,0)}}@media(prefers-reduced-motion:reduce){#census-pending-attention{animation:none!important}}</style>
     <label>Responsável pelo fechamento (plantão noturno)<input id="census-closer" placeholder="Identificação funcional" autocomplete="off"></label>
     <button id="census-close" type="button" class="primary">Registrar conferência do censo</button>
     <p class="muted">Registro manual de conferência, com data/hora real e responsável. Não comprova automaticamente que a contagem foi feita à meia-noite. É necessário salvar o lançamento diário antes.</p>
