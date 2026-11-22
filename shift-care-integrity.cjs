@@ -20,6 +20,13 @@ function validateShiftMutation(previous,next){
   }
  }
  const oldEvents=arr(old.events),newEvents=arr(cur.events),closures=arr(cur.shiftHistory).slice(arr(old.shiftHistory).length);
+ if(closures.length>1)return bad("SHIFT_MULTIPLE_CLOSURES_BLOCKED","shiftHistory");
+ if(closures.length){
+  const c=closures[0],expected=old.shiftId||cur.shiftId;
+  if(old.shiftClosed||!cur.shiftClosed||c.shiftId!==expected||!same(c.events,arr(old.events))||!same(c.checklist,arr(old.checklist))||!same(c.care||{},old.care||{}))
+   return bad("SHIFT_CLOSURE_SNAPSHOT_INVALID","shiftHistory");
+ }
+ if(!old.shiftClosed&&cur.shiftClosed&&!closures.length)return bad("SHIFT_CLOSURE_REQUIRED","shiftHistory");
  const closed=closures.find(x=>x.shiftId===old.shiftId)||(old.shiftClosed?arr(old.shiftHistory).find(x=>x.shiftId===old.shiftId):null);
  if(old.shiftId&&cur.shiftId!==old.shiftId){
   if(!closed||!Array.isArray(closed.events)||!Array.isArray(closed.checklist)||!same(closed.events,oldEvents)||!same(closed.checklist,arr(old.checklist)))return bad("SHIFT_CLOSURE_REQUIRED","shiftId");
