@@ -18,7 +18,7 @@ test("PR99 PostgreSQL: immutable shift/checklist/SAE, 409, 422, official stamps 
   const put=(payload,revision)=>request("/api/state","PUT",{payload,base_revision:revision});
   const beds=Array.from({length:10},(_,i)=>({n:i+1,isolation:i>=8,status:"Livre",profile:"Intensivo",rn:"",note:""}));
   const legacyEvent={text:"Histórico anterior sem UUID",when:"01/01/2024"};
-  const state={beds,bedMoves:[],profileHistory:[],movements:[],daily:[],picc:[],piccEvents:[],pipa:[],shiftId,shiftClosed:false,events:[legacyEvent],checklist:[{text:"Receber plantão",status:"Pendente"}],care:{"1":{sae:"Pendente",episodeRn:"RN-A"}},shiftHistory:[],checklistHistory:[],careHistory:[],shiftEvents:[]};
+  const state={beds,bedMoves:[],profileHistory:[],movements:[],daily:[],picc:[],piccEvents:[],pipa:[],shiftId,shiftClosed:false,events:[legacyEvent],checklist:[{text:"Receber plantão",status:"Pendente"}],care:{"1":{sae:"Pendente",episodeRn:"RN-A"}},shiftHistory:[],checklistHistory:[],careHistory:[],shiftEvents:[],pending:[{text:"Conferência legada de materiais",bed:"Leito 02",priority:"Alta",done:false}]};
   const payload={state,security:{},schema:"pr99-ci"};
   await db.query("UPDATE siash_state SET payload=$1,revision=1 WHERE id=1",[payload]);
   const historyBefore=Number((await db.query("SELECT COUNT(*) n FROM siash_state_history")).rows[0].n);
@@ -38,6 +38,11 @@ test("PR99 PostgreSQL: immutable shift/checklist/SAE, 409, 422, official stamps 
   assert.equal((await put(next,2)).status,200);
   const row=(await db.query("SELECT payload,revision FROM siash_state WHERE id=1")).rows[0];assert.equal(row.revision,3);assert.deepEqual(row.payload.state.shiftHistory[0],persisted.payload.state.shiftHistory[0]);
   assert.equal(Number((await db.query("SELECT COUNT(*) n FROM siash_state_history")).rows[0].n),historyBefore+2);
+  await request("/api/pending","GET");await request("/api/pending","GET");
+  const legacy=await db.query("SELECT COUNT(*)::int AS n FROM siash_pending_tasks WHERE legacy_key='siash-state-pending-0'");
+  assert.equal(legacy.rows[0].n,1);
+  const legacyTrail=await db.query("SELECT COUNT(*)::int AS n FROM siash_pending_history h JOIN siash_pending_tasks t ON t.id=h.task_id WHERE t.legacy_key='siash-state-pending-0'");
+  assert.equal(legacyTrail.rows[0].n,1);
   const pending=await request("/api/pending","POST",{scope:"bed",bed:"1",priority:"Crítica",description:"Conferir material no leito"});assert.equal(pending.status,201);
   const id=pending.data.item.id;assert.equal((await request("/api/pending/"+id,"PATCH",{status:"Concluída"})).status,200);
   assert.equal((await request("/api/pending/"+id,"PATCH",{status:"Pendente"})).status,422);
