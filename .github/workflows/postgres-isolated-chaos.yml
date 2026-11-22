@@ -45,6 +45,8 @@ jobs:
         run: node --test tests/postgres-isolated-chaos.test.cjs
       - name: Real PostgreSQL midnight census integration and idempotency
         run: node --test tests/census-midnight-postgres.test.cjs
+      - name: Late census dual-custody PostgreSQL integration
+        run: node --test tests/census-late-postgres-isolated.test.cjs
       - name: Install Chromium for isolated browser E2E
         run: |
           npm install --no-save --ignore-scripts --no-audit --no-fund playwright
