@@ -598,6 +598,7 @@ async function refreshMidnightCensusStatus(){
   const context=selected===data.referenceDate?"":" Selecione "+ref+" no lançamento diário para conferir.";
   const pending=data.attention==="overdue",warning=data.attention==="warning";
   if(attention){attention.classList.toggle("hidden",!pending);attention.disabled=!pending;}
+  lateCensusSetStatus(data);
   if(pending){el.textContent="ATENÇÃO — Censo de "+ref+" pendente após 00h10. Regularização supervisionada necessária."+context;el.style.color="#b45309";}
   else if(warning){el.textContent="Censo de "+ref+": faltam menos de cinco minutos para o encerramento da janela de confirmação manual."+context;el.style.color="#b45309";}
   else if(data.attention==="closed"){el.textContent="Conferência manual de "+ref+" registrada. A confirmação histórica não comprova, por si só, presença à meia-noite.";el.style.color="";}
@@ -607,6 +608,109 @@ async function refreshMidnightCensusStatus(){
  }catch(err){if(attention)attention.classList.add("hidden");el.textContent="Não foi possível consultar o servidor. O status do censo está indisponível; não presuma fechamento.";el.style.color="#b45309";}
 }
 $("census-pending-attention")?.addEventListener("click",()=>{const selected=$("d-date")?.value||todayISO();$("census-closer")?.focus();$("census-midnight-alert")?.scrollIntoView({behavior:"smooth",block:"center"});});
+
+
+/* Regularização tardia: estado local do formulário é preservado durante conflitos 409. */
+let LATE_CENSUS_REFERENCE=null,LATE_CENSUS_SELECTED=null,LATE_CENSUS_REQUESTS=[];
+const lateText=id=>$(id)?.value??"";
+function lateCensusSetStatus(data){
+ const panel=$("census-late-section");
+ if(!panel)return;
+ const overdue=data?.attention==="overdue";
+ panel.classList.toggle("hidden",!overdue);
+ if(overdue){LATE_CENSUS_REFERENCE=data.referenceDate;const input=$("census-late-date");if(input&&!input.value)input.value=data.referenceDate;}
+ if(overdue&&SIASH_CLOUD.token)void lateCensusLoadRequests();
+}
+function lateCensusMessage(id,message){const el=$(id);if(el)el.textContent=message;}
+function lateCensusConflict(id){
+ lateCensusMessage(id,"Conflito HTTP 409: outro plantão atualizou o estado. Os campos foram preservados. Atualize os dados e confira antes de reenviar.");
+}
+function lateCensusTime(value){return value?new Date(value).toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"}):"—"}
+function lateCensusNode(tag,value){const el=document.createElement(tag);el.textContent=String(value??"");return el}
+function lateCensusRow(container,label,value){
+ const p=document.createElement("p");p.append(lateCensusNode("strong",label+": "),lateCensusNode("span",value));container.append(p);
+}
+async function lateCensusLoadRequests(){
+ if(!SIASH_CLOUD.token)return;
+ try{
+  const result=await cloudJson("/api/census/late-requests");
+  LATE_CENSUS_REQUESTS=Array.isArray(result.requests)?result.requests:[];
+  const list=$("census-late-requests");if(!list)return;list.replaceChildren();
+  for(const request of LATE_CENSUS_REQUESTS){
+   const card=document.createElement("article");card.style.cssText="border-top:1px solid #ccc;padding:10px 0";
+   lateCensusRow(card,"Protocolo",request.protocol);
+   lateCensusRow(card,"Referência",request.reference_date);
+   lateCensusRow(card,"Solicitante",request.requester);
+   lateCensusRow(card,"Data/hora do servidor",lateCensusTime(request.requested_at));
+   lateCensusRow(card,"Contagem proposta",request.midnight_count);
+   lateCensusRow(card,"Justificativa",request.justification);
+   lateCensusRow(card,"Evidências",request.evidence);
+   lateCensusRow(card,"Estado",request.status+" — Tardio / Regularização");
+   const history=document.createElement("button");history.type="button";history.textContent="Ver trilha de auditoria";
+   history.addEventListener("click",()=>lateCensusShowEvents(request.protocol));card.append(history);
+   const same=String(request.requester)===String(SESSION.user);
+   const canReview=SESSION.role==="owner"&&!same&&request.status==="aguardando_supervisor";
+   if(canReview){const btn=document.createElement("button");btn.type="button";btn.textContent="Analisar solicitação";btn.addEventListener("click",()=>{
+    LATE_CENSUS_SELECTED=request;
+    $("census-late-review").classList.remove("hidden");
+    lateCensusMessage("census-late-review-summary",request.protocol+" — "+request.reference_date+" — "+request.requester);
+    lateCensusMessage("census-late-review-status","");
+   });card.append(btn);}
+   if(same&&request.status==="aguardando_supervisor")lateCensusRow(card,"Dupla custódia","Autoaprovação proibida");
+   list.append(card);
+  }
+  lateCensusMessage("census-late-panel-status",LATE_CENSUS_REQUESTS.length+" solicitação(ões) consultada(s).");
+ }catch(e){lateCensusMessage("census-late-panel-status","Não foi possível consultar as solicitações: "+e.message);}
+}
+async function lateCensusShowEvents(protocol){
+ const box=$("census-late-events");if(!box)return;
+ box.replaceChildren();
+ try{
+  const data=await cloudJson("/api/census/late-requests/"+encodeURIComponent(protocol)+"/events");
+  for(const event of data.events||[]){
+   const item=document.createElement("article");item.style.cssText="border-left:3px solid #98502b;margin:8px 0;padding:8px";
+   lateCensusRow(item,"Protocolo",event.protocol);
+   lateCensusRow(item,"Evento",event.event_type+" — Tardio / Regularização");
+   lateCensusRow(item,"Autor",event.actor);
+   lateCensusRow(item,"Data/hora oficial",lateCensusTime(event.occurred_at));
+   lateCensusRow(item,"Revisão",event.state_revision);
+   if(event.details?.reason)lateCensusRow(item,"Justificativa",event.details.reason);
+   if(event.details?.evidence)lateCensusRow(item,"Evidências",event.details.evidence);
+   box.append(item);
+  }
+ }catch(e){box.append(lateCensusNode("p","Falha ao consultar histórico: "+e.message));}
+}
+async function lateCensusSubmit(event){
+ event?.preventDefault?.();
+ const payload={referenceDate:lateText("census-late-date"),midnightCount:Number(lateText("census-late-count")),justification:lateText("census-late-justification"),evidence:lateText("census-late-evidence"),base_revision:SIASH_CLOUD.revision};
+ const submit=$("census-late-submit");if(submit)submit.disabled=true;
+ try{
+  const result=await cloudJson("/api/census/late-requests",{method:"POST",body:JSON.stringify(payload)});
+  lateCensusMessage("census-late-form-status","Solicitação tardia enviada. Protocolo: "+result.protocol+". Aguardando supervisor independente.");
+  await lateCensusLoadRequests();await lateCensusShowEvents(result.protocol);
+ }catch(e){if(e.status===409)lateCensusConflict("census-late-form-status");else lateCensusMessage("census-late-form-status","Solicitação não registrada: "+e.message);}
+ finally{if(submit)submit.disabled=false;}
+}
+async function lateCensusDecide(approved){
+ const selected=LATE_CENSUS_SELECTED;
+ if(!selected)return;
+ if(String(selected.requester)===String(SESSION.user)){lateCensusMessage("census-late-review-status","Autoaprovação proibida.");return;}
+ const reason=lateText("census-late-review-reason");
+ if(reason.trim().length<15){lateCensusMessage("census-late-review-status","Informe uma justificativa com pelo menos 15 caracteres.");return;}
+ try{
+  const result=await cloudJson("/api/census/late-requests/"+encodeURIComponent(selected.protocol)+"/decision",{method:"POST",body:JSON.stringify({approved,reason,base_revision:SIASH_CLOUD.revision})});
+  lateCensusMessage("census-late-review-status","Decisão registrada: "+result.status);
+  $("census-late-review")?.classList.add("hidden");
+  await lateCensusLoadRequests();await lateCensusShowEvents(selected.protocol);
+ }catch(e){if(e.status===409)lateCensusConflict("census-late-review-status");else lateCensusMessage("census-late-review-status","Decisão não registrada: "+e.message);}
+}
+$("census-late-open")?.addEventListener("click",()=>{$("census-late-form-wrap")?.classList.remove("hidden");});
+$("census-late-cancel")?.addEventListener("click",()=>{$("census-late-form-wrap")?.classList.add("hidden");});
+$("census-late-form")?.addEventListener("submit",lateCensusSubmit);
+$("census-late-refresh")?.addEventListener("click",lateCensusLoadRequests);
+$("census-late-approve")?.addEventListener("click",()=>lateCensusDecide(true));
+$("census-late-reject")?.addEventListener("click",()=>lateCensusDecide(false));
+$("census-late-clinical")?.addEventListener("click",()=>lateCensusDecide(null));
 
 function renderCensusConference(date){
  const daily=S.daily.find(r=>r.date===date);
