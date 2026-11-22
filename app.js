@@ -915,7 +915,14 @@ function renderPending(){
 }
 // Registros legados são migrados no servidor; evitar alterações locais que causem divergência.
 async function changeSharedPending(id,status){
- try{await cloudJson("/api/pending/"+id,{method:"PATCH",body:JSON.stringify({status})});await loadSharedPending();showToast("Pendência atualizada",1400)}
+ const previous=sharedPending.find(x=>String(x.id)===String(id));let reason="",confirm_reopen=false;
+ if(previous?.status==="Concluída"&&status!=="Concluída"){
+  if(!confirm("Reabrir pendência concluída? A alteração será auditada.")){renderPending();return;}
+  reason=prompt("Justificativa obrigatória da reabertura (mínimo 10 caracteres):")||"";
+  if(reason.trim().length<10){alert("Justificativa insuficiente.");renderPending();return;}
+  confirm_reopen=true;
+ }
+ try{await cloudJson("/api/pending/"+id,{method:"PATCH",body:JSON.stringify({status,reason,confirm_reopen})});await loadSharedPending();showToast("Pendência atualizada",1400)}
  catch(e){alert("Não foi possível atualizar: "+e.message);await loadSharedPending()}
 }
 

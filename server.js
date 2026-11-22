@@ -285,6 +285,8 @@ app.post("/api/pending",auth,async(req,res)=>{
 });
 app.patch("/api/pending/:id",auth,async(req,res)=>{
   const id=Number(req.params.id),status=String(req.body?.status||'');
+  const reopenReason=String(req.body?.reason||"").trim();
+  const reopenConfirmed=req.body?.confirm_reopen===true;
   if(!Number.isSafeInteger(id)||id<1||!['Pendente','Em andamento','Concluída'].includes(status))
     return res.status(400).json({error:'Situação inválida.'});
   const client=await pool.connect();
@@ -293,8 +295,9 @@ app.patch("/api/pending/:id",auth,async(req,res)=>{
     const previous=await client.query('SELECT status FROM siash_pending_tasks WHERE id=$1 FOR UPDATE',[id]);
     if(!previous.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Pendência não encontrada.'});}
     const old=previous.rows[0].status;
+    if(old==="Concluída"&&status!=="Concluída"&&(!reopenConfirmed||reopenReason.length<10||reopenReason.length>1000)){await client.query("ROLLBACK");return res.status(422).json({error:"PENDING_REOPEN_REASON_REQUIRED"});}
     const q=await client.query("UPDATE siash_pending_tasks SET status=$2,updated_by=$3,updated_at=NOW(),completed_at=CASE WHEN $2='Concluída' THEN NOW() ELSE NULL END WHERE id=$1 RETURNING *",[id,status,req.user.u]);
-    if(old!==status)await client.query("INSERT INTO siash_pending_history(task_id,actor,action,previous_status,new_status) VALUES($1,$2,'Situação alterada',$3,$4)",[id,req.user.u,old,status]);
+    if(old!==status)await client.query("INSERT INTO siash_pending_history(task_id,actor,action,previous_status,new_status) VALUES($1,$2,$3,$4,$5)",[id,req.user.u,old==="Concluída"?"Reaberta: "+reopenReason:"Situação alterada",old,status]);
     await client.query('COMMIT');res.json({item:q.rows[0]});
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });

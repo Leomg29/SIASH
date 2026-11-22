@@ -33,6 +33,8 @@ jobs:
         run: node --test tests/picc-lifecycle-integrity.test.cjs
       - name: PR98 PIPA integrity unit tests
         run: node --test tests/pipa-integrity-pr98.test.cjs
+      - name: PR99 shift care integrity unit tests
+        run: node --test tests/shift-care-integrity.test.cjs
       - name: Regression suite
         shell: bash
         run: |
