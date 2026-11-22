@@ -1,0 +1,12 @@
+"use strict";
+const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("node:vm");
+const server=fs.readFileSync("server.js","utf8"),app=fs.readFileSync("app.js","utf8");
+const a=server.indexOf("function detectDailyRecordRemoval("),b=server.indexOf('app.put("/api/state"',a);
+assert.ok(a>=0&&b>a);
+const check=vm.runInNewContext(server.slice(a,b)+";detectDailyRecordRemoval");
+test("registro historico nao pode desaparecer",()=>{assert.equal(check([{date:"2026-11-20"}],[]).blocked,true)});
+test("duplicidades historicas nao podem ser colapsadas",()=>{assert.equal(check([{date:"2026-11-20"},{date:"2026-11-20"}],[{date:"2026-11-20"}]).blocked,true)});
+test("edicoes e inclusoes nao sao confundidas com exclusoes",()=>{assert.equal(check([{date:"2026-11-20",internados:4}],[{date:"2026-11-20",internados:5},{date:"2026-11-21"}]).blocked,false)});
+test("payload sem daily nao apaga registros antigos",()=>{assert.equal(check([{date:"2026-11-20"}],undefined).blocked,true)});
+test("backend retorna 422 com codigo clinico antes de persistir",()=>{assert.match(server,/const removalAudit=detectDailyRecordRemoval\(oldDaily,newDaily\)/);assert.match(server,/res\.status\(422\)\.json\(\{error:"CLINICAL_RECORD_REMOVAL_BLOCKED"/)});
+test("interface nao chama filter ou save para excluir diario",()=>{const line=app.split("\n").find(x=>x.startsWith("window.deleteDaily="));assert.ok(line);assert.doesNotMatch(line,/S\.daily\s*=|save\(/)});

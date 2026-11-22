@@ -513,6 +513,30 @@ function canguruSourceOverlap(m){
 function canguruConsistencyAudit(m){
  return S.daily.filter(r=>monthOf(r.date)===m).filter(r=>{const total=(Number(r.canguru)||0)+(Number(r.altaCanguru)||0);return total>0&&total>(Number(r.altas)||0)}).map(r=>({date:r.date,altas:Number(r.altas)||0,canguru:(Number(r.canguru)||0)+(Number(r.altaCanguru)||0)}));
 }
+// Advisory only: never mutate daily records or infer missing census values.
+function auditDailyBalance(records,month){
+ const rows=(Array.isArray(records)?records:[]).filter(r=>r&&typeof r.date==="string");
+ const counts=new Map(),warnings=[];
+ for(const r of rows)counts.set(r.date,(counts.get(r.date)||0)+1);
+ const unique=[...new Map(rows.map(r=>[r.date,r])).entries()].sort(([a],[b])=>a.localeCompare(b));
+ const validDate=d=>{if(!/^\d{4}-\d{2}-\d{2}$/.test(d))return false;const x=new Date(d+"T00:00:00Z");return !Number.isNaN(x.getTime())&&x.toISOString().slice(0,10)===d};
+ const count=r=>Number.isSafeInteger(r)&&r>=0?r:(typeof r==="string"&&/^(0|[1-9]\d*)$/.test(r)&&Number.isSafeInteger(Number(r))?Number(r):null);
+ for(let i=0;i<unique.length;i++){
+  const [date,r]=unique[i];
+  if(!validDate(date)){warnings.push({date,type:"invalid-date"});continue}
+  if(counts.get(date)>1){warnings.push({date,type:"duplicate",occurrences:counts.get(date)});continue}
+  if(i===0)continue;
+  const [prior,previous]=unique[i-1];
+  if(!validDate(prior)||counts.get(prior)>1){warnings.push({date,type:"not-comparable"});continue}
+  const days=(Date.parse(date+"T00:00:00Z")-Date.parse(prior+"T00:00:00Z"))/86400000;
+  if(days!==1){warnings.push({date,type:"gap",prior});continue}
+  const nums=[count(previous.internados),count(r.internados),count(r.admissoes),count(r.altas),count(r.transferencias),count(r.obitos)];
+  if(nums.some(n=>n===null)){warnings.push({date,type:"invalid-count"});continue}
+  const expected=nums[0]+nums[2]-nums[3]-nums[4]-nums[5];
+  if(!Number.isSafeInteger(expected)||nums[1]!==expected)warnings.push({date,type:"balance",expected,actual:nums[1],difference:nums[1]-expected});
+ }
+ return warnings.filter(w=>w.date.slice(0,7)===month);
+}
 function monthStats(m){
  const rows=S.daily.filter(r=>monthOf(r.date)===m).sort((a,b)=>a.date.localeCompare(b.date));
  const sum=k=>rows.reduce((a,b)=>a+(+b[k]||0),0);
@@ -621,7 +645,7 @@ function renderThermalEvents(date){
  $("thermal-table").innerHTML=rows.map(x=>`<tr><td>${dateBR(x.date)}</td><td>Leito ${pad(x.bed)}</td><td>${safe(x.rn||"Sem identificador")}</td><td>${safe(x.type)}</td><td>${safe(x.note||"—")}</td><td><button class="ghost" onclick="deleteThermalEvent('${x.id}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="6">Nenhum evento térmico registrado nesta data.</td></tr>';
 }
 window.deleteThermalEvent=id=>{if(confirm("Excluir este evento térmico?")){S.thermalEvents=S.thermalEvents.filter(x=>x.id!==id);save()}}
-window.deleteDaily=date=>{if(confirm("Excluir este lançamento?")){S.daily=S.daily.filter(r=>r.date!==date);if($("d-date").value===date)loadDailyForm(date);save()}}
+window.deleteDaily=date=>{alert("Exclusão de lançamento clínico bloqueada. Preserve o registro e solicite correção auditável à coordenação.");return false;}
 function renderBeds(){
  populateBedSelects();
  $("bed-grid").innerHTML=S.beds.map(b=>`<div class="bed-card ${b.status==="Ocupado"?"occupied":""} ${b.profile==="Intermediário"?"intermediate":""} ${b.status==="Bloqueado"?"blocked":""}">
@@ -707,7 +731,12 @@ async function changeSharedPending(id,status){
 }
 
 function fillMonthSelect(id){const sel=$(id),cur=sel.value;sel.innerHTML=allMonths().map(m=>`<option value="${m}">${m.split("-").reverse().join("/")}</option>`).join("");sel.value=allMonths().includes(cur)?cur:currentMonth()}
-function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Leito Canguru",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];const coverage=monthCoverage(m,c.days);const coverageAlert=$("indicator-coverage-alert");coverageAlert.hidden=!coverage?.incomplete;coverageAlert.textContent=coverage?.incomplete?`Cobertura parcial: ${coverage.registered} de ${coverage.calendarDays} dias com lançamento nesta competência. Leitos-dia e taxa de ocupação consideram somente os dias lançados; não representam necessariamente o mês completo. Nenhum valor foi ajustado automaticamente.`:"";const overlaps=canguruSourceOverlap(m),inconsistencies=canguruConsistencyAudit(m);$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("")+(overlaps.length?`<tr><td colspan="2" role="status"><strong>Auditoria Leito Canguru:</strong> ${overlaps.length} dia(s) com preenchimento simultâneo dos campos histórico e atual (${overlaps.map(r=>safe(dateBR(r.date))).join(", ")}). A soma exibida foi preservada; conferir os registros antes de concluir que há duplicidade.</td></tr>`:"")+(inconsistencies.length?`<tr><td colspan="2" role="status"><strong>Conferência de consistência:</strong> ${inconsistencies.length} dia(s) com altas para Leito Canguru superiores ao total de altas registrado (${inconsistencies.map(r=>safe(dateBR(r.date))).join(", ")}). Verificar classificação e lançamentos; nenhum valor foi alterado.</td></tr>`:"");const g={};S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
+function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Leito Canguru",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];const coverage=monthCoverage(m,c.days);const coverageAlert=$("indicator-coverage-alert");coverageAlert.hidden=!coverage?.incomplete;coverageAlert.textContent=coverage?.incomplete?`Cobertura parcial: ${coverage.registered} de ${coverage.calendarDays} dias com lançamento nesta competência. Leitos-dia e taxa de ocupação consideram somente os dias lançados; não representam necessariamente o mês completo. Nenhum valor foi ajustado automaticamente.`:"";const balanceWarnings=auditDailyBalance(S.daily,m);
+ let balanceAlert=$("indicator-balance-alert");
+ if(!balanceAlert){balanceAlert=document.createElement("div");balanceAlert.id="indicator-balance-alert";balanceAlert.setAttribute("role","status");balanceAlert.className="indicator-coverage-alert";coverageAlert.insertAdjacentElement("afterend",balanceAlert)}
+ balanceAlert.hidden=balanceWarnings.length===0;
+ balanceAlert.textContent=balanceWarnings.length?"Conferência de consistência: "+balanceWarnings.map(w=>w.type==="balance"?w.date+": saldo esperado "+w.expected+", informado "+w.actual+" (diferença "+w.difference+").":w.type==="duplicate"?w.date+": "+w.occurrences+" lançamentos na mesma data.":w.date+": "+({"gap":"lacuna entre dias","invalid-count":"contagem inválida","invalid-date":"data inválida","not-comparable":"comparação impedida por data anterior duplicada ou inválida"}[w.type]||"verificar lançamento")+".").join(" ")+" Nenhum registro foi alterado automaticamente.":"";
+ const overlaps=canguruSourceOverlap(m),inconsistencies=canguruConsistencyAudit(m);$("indicator-production").innerHTML=prod.map(x=>`<tr><th>${x[0]}</th><td>${x[1]}</td></tr>`).join("")+(overlaps.length?`<tr><td colspan="2" role="status"><strong>Auditoria Leito Canguru:</strong> ${overlaps.length} dia(s) com preenchimento simultâneo dos campos histórico e atual (${overlaps.map(r=>safe(dateBR(r.date))).join(", ")}). A soma exibida foi preservada; conferir os registros antes de concluir que há duplicidade.</td></tr>`:"")+(inconsistencies.length?`<tr><td colspan="2" role="status"><strong>Conferência de consistência:</strong> ${inconsistencies.length} dia(s) com altas para Leito Canguru superiores ao total de altas registrado (${inconsistencies.map(r=>safe(dateBR(r.date))).join(", ")}). Verificar classificação e lançamentos; nenhum valor foi alterado.</td></tr>`:"");const g={};S.pipa.filter(x=>!x.cancelledAt&&(x.date?monthOf(x.date):x.month)===m).forEach(r=>g[r.city]=(g[r.city]||0)+(+r.qty||0));$("indicator-pipa-cities").innerHTML=Object.entries(g).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td>${safe(c)}</td><td>${q}</td></tr>`).join("")||'<tr><td colspan="2">Sem dados PIPA por município.</td></tr>'}
 function renderComparison(){
  const current=currentMonth(),parts=current.split("-").map(Number),months=[];
  for(let offset=-2;offset<=0;offset++){const d=new Date(parts[0],parts[1]-1+offset,1);months.push(`${d.getFullYear()}-${pad(d.getMonth()+1)}`)}
