@@ -31,6 +31,8 @@ jobs:
         run: node --test tests/bed-movement-integrity.test.cjs
       - name: PR97 PICC lifecycle unit tests
         run: node --test tests/picc-lifecycle-integrity.test.cjs
+      - name: PR98 PIPA integrity unit tests
+        run: node --test tests/pipa-integrity-pr98.test.cjs
       - name: Regression suite
         shell: bash
         run: |

@@ -74,7 +74,7 @@
     const latest=rows.length?rows[rows.length-1]:null;
     currentGrid.appendChild(barChart("RN em VM — último dia lançado no mês",latest?[{label:latest.date.slice(8,10)+"/"+latest.date.slice(5,7),value:Number(latest.vm)||0}]:[]));
     container.appendChild(currentGrid);
-    const pipa=S.pipa.filter(x=>x.month===month).reduce((a,x)=>{const city=String(x.city||"Não informado");a[city]=(a[city]||0)+(Number(x.qty)||0);return a;},{});
+    const pipa=S.pipa.filter(x=>!x.cancelledAt&&(x.date?String(x.date).slice(0,7):x.month)===month).reduce((a,x)=>{const city=String(x.city||"Não informado");a[city]=(a[city]||0)+(Number(x.qty)||0);return a;},{});
     const cities=Object.entries(pipa).sort((a,b)=>b[1]-a[1]).map(([label,value])=>({label,value}));
     container.appendChild(barChart("PIPA por município",cities));
   }

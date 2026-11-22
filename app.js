@@ -520,6 +520,8 @@ if(!S.bedMoves)S.bedMoves=[];if(!S.profileHistory)S.profileHistory=[];if(!S.move
 normalize();localStorage.setItem(STORE,JSON.stringify(S));
 function save(){localStorage.setItem(STORE,JSON.stringify(S));scheduleCloudSave();renderAll()}
 function currentMonth(){return monthOf(todayISO())}
+function pipaMunicipalityKey(value){return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLocaleLowerCase("pt-BR").replace(/[^a-z0-9]+/g," ").trim().replace(/\s+/g," ")}
+function pipaPossibleDuplicates(candidate){return S.pipa.filter(x=>!x.cancelledAt&&(x.date||"")===candidate.date&&(x.date?monthOf(x.date):x.month)===candidate.month&&pipaMunicipalityKey(x.city)===pipaMunicipalityKey(candidate.city)&&Number(x.qty)===Number(candidate.qty))}
 function pipaCountOn(date){return S.pipa.filter(x=>!x.cancelledAt&&x.date===date).reduce((n,x)=>n+(Number(x.qty)||0),0)}
 function pipaDailyAudit(date){
  const daily=S.daily.find(x=>x.date===date);
@@ -858,8 +860,22 @@ function renderPipa(){if(!$("pipa-date").value)$("pipa-date").value=todayISO();c
  const origin=r.date?"Datado — "+dateBR(r.date):"Histórico sem data";
  const status=r.cancelledAt?"Cancelado":"Ativo";
  const audit=r.cancelledAt?`<div class="muted">Cancelado em ${safe(new Date(r.cancelledAt).toLocaleString("pt-BR"))} por ${safe(r.cancelledBy||"—")}. Motivo: ${safe(r.cancelReason||"—")}</div>`:"";
- return `<tr><td>${safe((r.month||monthOf(r.date)||"").split("-").reverse().join("/"))}</td><td>${safe(r.city)}</td><td>${safe(r.qty)}</td><td>${safe(r.note||"")}</td><td>${safe(origin)}</td><td>${status}${audit}</td><td>${r.cancelledAt?"—":`<button class="ghost" onclick="deletePipa(${i})">Cancelar</button>`}</td></tr>`;
+ return `<tr><td>${safe((r.month||monthOf(r.date)||"").split("-").reverse().join("/"))}</td><td>${safe(r.city)}</td><td>${safe(r.qty)}</td><td>${safe(r.note||"")}</td><td>${safe(origin)}</td><td>${status}${audit}</td><td>${r.cancelledAt?"—":`<button class="ghost" onclick="deletePipa(${i})">Cancelar</button> <button class="ghost" onclick="rectifyPipa(${i})">Retificar</button>`}</td></tr>`;
  }).join("")||'<tr><td colspan="7">Nenhum encaminhamento registrado.</td></tr>'}
+window.rectifyPipa=async i=>{
+ const record=S.pipa[i];if(!record)return;
+ if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return alert("Retificação auditável requer conexão autenticada com o servidor.");
+ const reason=window.prompt("Justificativa obrigatória (10 a 1000 caracteres):");if(reason===null)return;
+ const correction=window.prompt("Descreva a correção complementar, sem modificar o registro original:");if(correction===null)return;
+ if(reason.trim().length<10||reason.trim().length>1000||correction.trim().length<3||correction.trim().length>2000)return alert("Confira a justificativa e a descrição da retificação.");
+ if(!window.confirm("Registrar retificação complementar auditável? O registro original será preservado."))return;
+ try{await cloudJson("/api/pipa/rectifications",{method:"POST",body:JSON.stringify({base_revision:SIASH_CLOUD.revision,record_index:i,reason:reason.trim(),correction:correction.trim()})});showToast("Retificação complementar auditada no PostgreSQL.",2600);await refreshPipaRectifications();}
+ catch(err){alert("Retificação não confirmada no servidor. Preserve a justificativa e confira a sessão antes de tentar novamente. "+err.message);}
+};
+async function refreshPipaRectifications(){
+ const target=$("pipa-rectifications");if(!target||!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return;
+ try{const result=await cloudJson("/api/pipa/rectifications");target.textContent=(result.events||[]).map(x=>x.record_index+" · "+x.username+" · "+new Date(x.created_at).toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"})+" · "+x.reason+" · "+x.correction).join("\\n")||"Nenhuma retificação complementar registrada.";}catch(_){target.textContent="Histórico de retificações indisponível. Não presumir ausência de registros.";}
+}
 window.deletePipa=i=>{
  const r=S.pipa[i];if(!r||r.cancelledAt)return;
  const ref=`${r.city} — ${r.qty} RN(s) — ${r.date?dateBR(r.date):"histórico sem data, competência "+r.month}`;
@@ -1521,7 +1537,8 @@ $("picc-removal-form").addEventListener("submit",e=>{
  e.preventDefault();const i=+$("picc-removal-index").value,x=S.picc[i],date=$("picc-removal-date").value,reason=$("picc-removal-reason").value;if(!x||(x.status&&x.status!=="Ativo"))return alert("PICC ativo não localizado.");if(!date||!reason)return alert("Informe a data e o motivo da retirada.");if(!piccInsertDate(x))return alert("PICC legado sem data de inserção verificável. Não é seguro registrar a retirada até conferência técnica do histórico.");if(date<piccInsertDate(x))return alert("A retirada não pode ser anterior à inserção.");if(!window.confirm(`Confirmar retirada do PICC?\\nLeito: ${pad(x.bed)}\\nRN: ${S.beds.find(b=>String(b.n)===String(x.bed))?.rn||"Não identificado"}\\nInserção: ${piccInsertDate(x)||"Data legada não identificada"}\\nDias: ${piccDays(x)??"Não calculável"}\\nMotivo: ${reason}`))return;x.status="Retirado";x.removalDate=date;x.removalReason=reason;x.removalNote=$("picc-removal-note").value.trim();x.removedAt=nowBR();x.updated=nowBR();cancelPiccRemoval();save();showToast(`PICC do Leito ${pad(x.bed)} retirado`,1600)
 })
 
-$("pipa-form").addEventListener("submit",e=>{e.preventDefault();const qty=Number($("pipa-qty").value);if(!$("pipa-date").value||!$("pipa-city").value)return alert("Informe data do encaminhamento e município de origem.");$("pipa-month").value=monthOf($("pipa-date").value);if(!Number.isSafeInteger(qty)||qty<1)return alert("Informe quantidade inteira e maior que zero.");if(!$("pipa-post-discharge").checked)return alert("Confirme que os RNs foram encaminhados após a alta da UTIN.");S.pipa.push({id:crypto.randomUUID(),date:$("pipa-date").value,month:$("pipa-month").value,city:$("pipa-city").value,qty,note:$("pipa-note").value.trim(),postDischargeConfirmed:true,updated:nowBR()});$("pipa-qty").value=1;$("pipa-post-discharge").checked=false;$("pipa-note").value="";save()})
+$("pipa-form").addEventListener("submit",e=>{e.preventDefault();const qty=Number($("pipa-qty").value);if(!$("pipa-date").value||!$("pipa-city").value)return alert("Informe data do encaminhamento e município de origem.");$("pipa-month").value=monthOf($("pipa-date").value);if(!Number.isSafeInteger(qty)||qty<1)return alert("Informe quantidade inteira e maior que zero.");if(!$("pipa-post-discharge").checked)return alert("Confirme que os RNs foram encaminhados após a alta da UTIN.");const candidate={id:crypto.randomUUID(),date:$("pipa-date").value,month:$("pipa-month").value,city:($("pipa-city").value==="Outro"?$("pipa-city-other").value.trim():$("pipa-city").value),qty,note:$("pipa-note").value.trim(),postDischargeConfirmed:true,updated:nowBR()};if(!candidate.city)return alert("Informe o município de origem.");const duplicates=pipaPossibleDuplicates(candidate);if(duplicates.length&&!window.confirm("Possível encaminhamento PIPA duplicado na mesma data, município e quantidade. Confirme manualmente antes de registrar; nenhum dado será conciliado automaticamente."))return;S.pipa.push(candidate);$("pipa-qty").value=1;$("pipa-post-discharge").checked=false;$("pipa-note").value="";save()})
+$("pipa-city").addEventListener("change",()=>{$("pipa-city-other-wrap").hidden=$("pipa-city").value!=="Outro";});
 $("pipa-date").addEventListener("change",()=>{$("pipa-month").value=monthOf($("pipa-date").value);renderPipa()})
 $("pending-form").addEventListener("submit",async e=>{
  e.preventDefault();

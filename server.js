@@ -90,6 +90,21 @@ async function initDb(){
       reason TEXT NOT NULL,
       state_revision BIGINT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS siash_pipa_rectification_audit(
+      id UUID PRIMARY KEY,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      username TEXT NOT NULL,
+      record_index INTEGER NOT NULL,
+      record_before JSONB NOT NULL,
+      correction TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      state_revision BIGINT NOT NULL
+    );
+    CREATE OR REPLACE FUNCTION siash_pipa_rectification_no_mutation() RETURNS trigger LANGUAGE plpgsql AS $pipa_immutable$
+    BEGIN RAISE EXCEPTION 'PIPA rectification audit is append-only'; END $pipa_immutable$;
+    DROP TRIGGER IF EXISTS siash_pipa_rectification_immutable ON siash_pipa_rectification_audit;
+    CREATE TRIGGER siash_pipa_rectification_immutable BEFORE UPDATE OR DELETE ON siash_pipa_rectification_audit
+      FOR EACH ROW EXECUTE FUNCTION siash_pipa_rectification_no_mutation();
     CREATE TABLE IF NOT EXISTS siash_daily_admission_records(
       reference_date DATE PRIMARY KEY,
       admission_count INTEGER NOT NULL CHECK(admission_count>=0),
@@ -463,6 +478,32 @@ app.put("/api/state",auth,async(req,res)=>{
     await client.query("COMMIT");
     return res.json({ok:true,picc_event_stamps:piccEventStamps,bed_event_stamps:Object.fromEntries(["bedMoves","profileHistory","movements"].map(key=>[key,(payload.state?.[key]||[]).slice((cur.rows[0].payload?.state?.[key]||[]).length).map((event,i)=>({index:i+(cur.rows[0].payload?.state?.[key]||[]).length,event}))])),revision:Number(updated.rows[0].revision),updated_at:updated.rows[0].updated_at,pipa_cancellations:pipaAudit.events.map(e=>({index:e.index,cancelledAt:payload.state.pipa[e.index].cancelledAt,cancelledBy:req.user.u,cancelReason:payload.state.pipa[e.index].cancelReason}))});
   }catch(e){try{await client.query("ROLLBACK")}catch(_){}throw e}finally{client.release()}
+});
+// Complementary correction: append-only audit; never mutates an original PIPA row.
+app.post("/api/pipa/rectifications",auth,async(req,res)=>{
+ const base=Number(req.body?.base_revision),index=req.body?.record_index;
+ const reason=typeof req.body?.reason==="string"?req.body.reason.trim():"";
+ const correction=typeof req.body?.correction==="string"?req.body.correction.trim():"";
+ if(!Number.isSafeInteger(base)||base<1)return res.status(428).json({error:"Versão base obrigatória."});
+ if(!Number.isSafeInteger(index)||index<0||reason.length<10||reason.length>1000||correction.length<3||correction.length>2000)return res.status(422).json({error:"Índice, justificativa ou retificação inválidos."});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const user=await client.query("SELECT username FROM siash_users WHERE username=$1",[req.user.u]);
+  if(!user.rows.length){await client.query("ROLLBACK");return res.status(403).json({error:"Usuário não está ativo na base."});}
+  const state=await client.query("SELECT payload,revision FROM siash_state WHERE id=1 FOR UPDATE");
+  if(!state.rows.length||Number(state.rows[0].revision)!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Conflito de revisão; rascunho deve ser preservado.",conflict:true});}
+  const record=state.rows[0].payload?.state?.pipa?.[index];
+  if(!record||typeof record!=="object"){await client.query("ROLLBACK");return res.status(422).json({error:"Registro PIPA não encontrado."});}
+  const crypto=require("node:crypto");const id=crypto.randomUUID();
+  const saved=await client.query("INSERT INTO siash_pipa_rectification_audit(id,username,record_index,record_before,correction,reason,state_revision) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING created_at",[id,req.user.u,index,record,correction,reason,base]);
+  await client.query("COMMIT");
+  return res.json({ok:true,id,record_index:index,username:req.user.u,created_at:saved.rows[0].created_at,created_at_sao_paulo:new Intl.DateTimeFormat("pt-BR",{timeZone:"America/Sao_Paulo",dateStyle:"short",timeStyle:"medium"}).format(new Date(saved.rows[0].created_at))});
+ }catch(err){try{await client.query("ROLLBACK")}catch(_){}return res.status(503).json({error:"Não foi possível registrar a retificação; nenhuma alteração foi aplicada."});}finally{client.release()}
+});
+app.get("/api/pipa/rectifications",auth,async(req,res)=>{
+ try{const q=await pool.query("SELECT id,username,record_index,correction,reason,state_revision,created_at FROM siash_pipa_rectification_audit ORDER BY created_at,id");return res.json({events:q.rows});}
+ catch(_){return res.status(503).json({error:"Histórico de retificações indisponível."});}
 });
 app.put("/api/state/init",auth,async(req,res)=>{
   const payload=req.body?.payload;
