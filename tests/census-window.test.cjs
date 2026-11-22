@@ -33,3 +33,22 @@ test("não aceitar timestamp ambíguo ou admissão futura",()=>{
  assert.throws(()=>effectiveAdmissionDate({effectiveAt:"2026-11-23T00:20:00"}),/fuso/);
  assert.throws(()=>effectiveAdmissionDate({effectiveAt:"2026-11-23T01:00:00-03:00",recordedAt:"2026-11-23T03:00:00Z"}),/posterior/);
 });
+
+test("pendência continua visível após 00h10, sem fechamento automático",()=>{
+ for(const time of ["00:10:01","00:11:00","08:42:00","23:54:59"]){
+  const w=censusAttention({now:at("2026-11-23",time)});
+  assert.equal(w.attention,"overdue");assert.equal(w.canConfirm,false);
+  assert.equal(w.referenceDate,"2026-11-22");
+ }
+});
+test("API de janela apenas consulta o estado e usa relógio do servidor",()=>{
+ const fs=require("node:fs"),path=require("node:path");
+ const server=fs.readFileSync(path.join(__dirname,"../server.js"),"utf8");
+ const start=server.indexOf('app.get("/api/census/window-status"');
+ const end=server.indexOf('app.get("/api/census/midnight-status"',start);
+ assert.ok(start>0&&end>start);
+ const route=server.slice(start,end);
+ assert.match(route,/const now=new Date\(\)/);
+ assert.match(route,/SELECT payload FROM siash_state/);
+ assert.doesNotMatch(route,/INSERT INTO|UPDATE siash_|DELETE FROM|pool\.query\("INSERT/i);
+});
