@@ -16,7 +16,8 @@ test("late decision verifies database role and forbids self approval",()=>{
 });
 test("role updates restricted to owner, audited, owner role immutable",()=>{
  assert.match(server,/app\.patch\("\/api\/users\/:username\/role"/);
- assert.match(server,/databaseRole\(req\.user\.u\)!=="owner"/);
+ assert.match(server,/if\(req\.user\.r!=="owner"\)return res\.status\(403\)/);
+ assert.match(server,/const role=await databaseRole\(identity\.u\)/);
  assert.match(server,/OWNER_ROLE_IMMUTABLE/);
  assert.match(server,/INSERT INTO siash_cloud_audit\(username,action,details\)/);
 });
