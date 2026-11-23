@@ -1,0 +1,53 @@
+"use strict";
+const test=require("node:test"),assert=require("node:assert/strict");
+const {spawn}=require("node:child_process"),{setTimeout:delay}=require("node:timers/promises");
+test("PR99 PostgreSQL: immutable shift/checklist/SAE, 409, 422, official stamps and pending reopening",{skip:process.env.SIASH_ISOLATED_CI!=="1",timeout:120000},async()=>{
+ assert.match(process.env.DATABASE_URL||"",/siash_ci/);
+ const {Pool}=require("pg"),bcrypt=require("bcryptjs"),db=new Pool({connectionString:process.env.DATABASE_URL,ssl:false});
+ const port=18918,url="http://127.0.0.1:"+port;
+ const child=spawn(process.execPath,["server.js"],{env:{...process.env,PORT:String(port),PGSSLMODE:"disable",JWT_SECRET:"pr99-isolated-test-secret-2026-longer-than-32"},stdio:["ignore","pipe","pipe"]});
+ let logs="";child.stdout.on("data",d=>logs+=d);child.stderr.on("data",d=>logs+=d);
+ const clone=x=>structuredClone(x),shiftId="a05eab1c-69a0-4d16-aac2-138e19dfe012";
+ try{
+  for(let i=0;i<150;i++){try{if((await fetch(url+"/api/health")).ok)break}catch{}if(child.exitCode!==null)throw Error(logs);if(i===149)throw Error(logs);await delay(100)}
+  const username="pr99_"+Date.now(),password="PR99Isolated!2026";
+  await db.query("INSERT INTO siash_users(username,password_hash,role) VALUES($1,$2,'operational')",[username,await bcrypt.hash(password,4)]);
+  const login=await fetch(url+"/api/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({username,password})});
+  assert.equal(login.status,200);const token=(await login.json()).token,headers={"content-type":"application/json",authorization:"Bearer "+token};
+  const request=async(path,method,body)=>{const r=await fetch(url+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,data:await r.json()}};
+  const put=(payload,revision)=>request("/api/state","PUT",{payload,base_revision:revision});
+  const beds=Array.from({length:10},(_,i)=>({n:i+1,isolation:i>=8,status:"Livre",profile:"Intensivo",rn:"",note:""}));
+  const legacyEvent={text:"Histórico anterior sem UUID",when:"01/01/2024"};
+  const state={beds,bedMoves:[],profileHistory:[],movements:[],daily:[],picc:[],piccEvents:[],pipa:[],shiftId,shiftClosed:false,events:[legacyEvent],checklist:[{text:"Receber plantão",status:"Pendente"}],care:{"1":{sae:"Pendente",episodeRn:"RN-A"}},shiftHistory:[],checklistHistory:[],careHistory:[],shiftEvents:[],pending:[{text:"Conferência legada de materiais",bed:"Leito 02",priority:"Alta",done:false}]};
+  const payload={state,security:{},schema:"pr99-ci"};
+  await db.query("UPDATE siash_state SET payload=$1,revision=1 WHERE id=1",[payload]);
+  const historyBefore=Number((await db.query("SELECT COUNT(*) n FROM siash_state_history")).rows[0].n);
+  const removal=clone(payload);removal.state.events=[];assert.equal((await put(removal,1)).status,422);
+  const changed=clone(payload);changed.state.checklist[0].status="Realizado";assert.equal((await put(changed,1)).status,422);
+  const care=clone(payload);care.state.care["1"].sae="Concluída";assert.equal((await put(care,1)).status,422);
+  const closure=clone(payload);closure.state.shiftClosed=true;closure.state.shiftHistory.push({shiftId,events:clone(state.events),checklist:clone(state.checklist),care:clone(state.care),closedAt:"Aguardando servidor"});
+  const ok=await put(closure,1);assert.equal(ok.status,200,JSON.stringify(ok.data));
+  assert.equal(ok.data.shift_event_stamps.shiftHistory[0].event.recordedBy,username);
+  assert.ok(ok.data.shift_event_stamps.shiftHistory[0].event.recordedAt);
+  const persisted=(await db.query("SELECT payload,revision FROM siash_state WHERE id=1")).rows[0];
+  assert.deepEqual(persisted.payload.state.events,[legacyEvent]);
+  assert.equal(persisted.payload.state.shiftHistory[0].recordedBy,username);
+  assert.equal((await put(payload,1)).status,409);
+  const forged=clone(persisted.payload);forged.state.shiftHistory[0].recordedBy="intruso";assert.equal((await put(forged,2)).status,422);
+  const next=clone(persisted.payload);next.state.shiftId="73f2c4b0-fc75-4bca-9b68-216e2fd9457c";next.state.shiftClosed=false;next.state.events=[];next.state.checklist=[{text:"Receber plantão",status:"Pendente"}];
+  assert.equal((await put(next,2)).status,200);
+  const row=(await db.query("SELECT payload,revision FROM siash_state WHERE id=1")).rows[0];assert.equal(Number(row.revision),3);assert.deepEqual(row.payload.state.shiftHistory[0],persisted.payload.state.shiftHistory[0]);
+  assert.equal(Number((await db.query("SELECT COUNT(*) n FROM siash_state_history")).rows[0].n),historyBefore+2);
+  await request("/api/pending","GET");await request("/api/pending","GET");
+  const legacy=await db.query("SELECT COUNT(*)::int AS n FROM siash_pending_tasks WHERE legacy_key='siash-state-pending-0'");
+  assert.equal(legacy.rows[0].n,1);
+  const legacyTrail=await db.query("SELECT COUNT(*)::int AS n FROM siash_pending_history h JOIN siash_pending_tasks t ON t.id=h.task_id WHERE t.legacy_key='siash-state-pending-0'");
+  assert.equal(legacyTrail.rows[0].n,1);
+  const pending=await request("/api/pending","POST",{scope:"bed",bed:"1",priority:"Crítica",description:"Conferir material no leito"});assert.equal(pending.status,201);
+  const id=pending.data.item.id;assert.equal((await request("/api/pending/"+id,"PATCH",{status:"Concluída"})).status,200);
+  assert.equal((await request("/api/pending/"+id,"PATCH",{status:"Pendente"})).status,422);
+  assert.equal((await request("/api/pending/"+id,"PATCH",{status:"Pendente",confirm_reopen:true,reason:"Reabertura solicitada para nova conferência"})).status,200);
+  const trail=await request("/api/pending/"+id+"/history","GET");assert.equal(trail.status,200);
+  assert.ok(trail.data.items.some(x=>x.actor===username&&x.action.includes("Reaberta:")));
+ }finally{child.kill("SIGTERM");await db.end()}
+});

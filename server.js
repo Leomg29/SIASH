@@ -285,6 +285,8 @@ app.post("/api/pending",auth,async(req,res)=>{
 });
 app.patch("/api/pending/:id",auth,async(req,res)=>{
   const id=Number(req.params.id),status=String(req.body?.status||'');
+  const reopenReason=String(req.body?.reason||"").trim();
+  const reopenConfirmed=req.body?.confirm_reopen===true;
   if(!Number.isSafeInteger(id)||id<1||!['Pendente','Em andamento','Concluída'].includes(status))
     return res.status(400).json({error:'Situação inválida.'});
   const client=await pool.connect();
@@ -293,8 +295,9 @@ app.patch("/api/pending/:id",auth,async(req,res)=>{
     const previous=await client.query('SELECT status FROM siash_pending_tasks WHERE id=$1 FOR UPDATE',[id]);
     if(!previous.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Pendência não encontrada.'});}
     const old=previous.rows[0].status;
+    if(old==="Concluída"&&status!=="Concluída"&&(!reopenConfirmed||reopenReason.length<10||reopenReason.length>1000)){await client.query("ROLLBACK");return res.status(422).json({error:"PENDING_REOPEN_REASON_REQUIRED"});}
     const q=await client.query("UPDATE siash_pending_tasks SET status=$2,updated_by=$3,updated_at=NOW(),completed_at=CASE WHEN $2='Concluída' THEN NOW() ELSE NULL END WHERE id=$1 RETURNING *",[id,status,req.user.u]);
-    if(old!==status)await client.query("INSERT INTO siash_pending_history(task_id,actor,action,previous_status,new_status) VALUES($1,$2,'Situação alterada',$3,$4)",[id,req.user.u,old,status]);
+    if(old!==status)await client.query("INSERT INTO siash_pending_history(task_id,actor,action,previous_status,new_status) VALUES($1,$2,$3,$4,$5)",[id,req.user.u,old==="Concluída"?"Reaberta: "+reopenReason:"Situação alterada",old,status]);
     await client.query('COMMIT');res.json({item:q.rows[0]});
   }catch(e){await client.query('ROLLBACK');throw e}finally{client.release()}
 });
@@ -419,6 +422,10 @@ app.put("/api/state",auth,async(req,res)=>{
     if(!cur.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"Estado central não encontrado. Recarregue os dados.",conflict:true});}
     const current=Number(cur.rows[0].revision);
     if(current!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Outro profissional salvou alterações antes de você. Seus dados locais foram preservados; não atualize a página antes de exportar ou conferir seus lançamentos.",conflict:true,current_revision:current});}
+    const {validateShiftMutation,stampShiftMutation}=require("./shift-care-integrity.cjs");
+    const shiftVerdict=validateShiftMutation(cur.rows[0].payload,payload);
+    if(!shiftVerdict.ok){await client.query("ROLLBACK");return res.status(422).json({error:shiftVerdict.code,path:shiftVerdict.path});}
+    const shiftEventStamps=stampShiftMutation(cur.rows[0].payload,payload,req.user.u);
     // PR #96: validate bed-state changes and immutable movement histories before any writes.
     const {validateBedMovementMutation}=require("./bed-movement-integrity.cjs");
     const bedAudit=validateBedMovementMutation(cur.rows[0].payload,payload);
@@ -476,7 +483,7 @@ app.put("/api/state",auth,async(req,res)=>{
     await client.query("INSERT INTO siash_state_history(payload,saved_by,reason) VALUES($1,$2,$3)",[cur.rows[0].payload,req.user.u,req.body?.reason||"Antes de atualização do estado"]);
     const updated=await client.query("UPDATE siash_state SET payload=$1,updated_at=NOW(),updated_by=$2,revision=revision+1 WHERE id=1 RETURNING revision,updated_at",[payload,req.user.u]);
     await client.query("COMMIT");
-    return res.json({ok:true,picc_event_stamps:piccEventStamps,bed_event_stamps:Object.fromEntries(["bedMoves","profileHistory","movements"].map(key=>[key,(payload.state?.[key]||[]).slice((cur.rows[0].payload?.state?.[key]||[]).length).map((event,i)=>({index:i+(cur.rows[0].payload?.state?.[key]||[]).length,event}))])),revision:Number(updated.rows[0].revision),updated_at:updated.rows[0].updated_at,pipa_cancellations:pipaAudit.events.map(e=>({index:e.index,cancelledAt:payload.state.pipa[e.index].cancelledAt,cancelledBy:req.user.u,cancelReason:payload.state.pipa[e.index].cancelReason}))});
+    return res.json({ok:true,shift_event_stamps:shiftEventStamps,picc_event_stamps:piccEventStamps,bed_event_stamps:Object.fromEntries(["bedMoves","profileHistory","movements"].map(key=>[key,(payload.state?.[key]||[]).slice((cur.rows[0].payload?.state?.[key]||[]).length).map((event,i)=>({index:i+(cur.rows[0].payload?.state?.[key]||[]).length,event}))])),revision:Number(updated.rows[0].revision),updated_at:updated.rows[0].updated_at,pipa_cancellations:pipaAudit.events.map(e=>({index:e.index,cancelledAt:payload.state.pipa[e.index].cancelledAt,cancelledBy:req.user.u,cancelReason:payload.state.pipa[e.index].cancelReason}))});
   }catch(e){try{await client.query("ROLLBACK")}catch(_){}throw e}finally{client.release()}
 });
 // Complementary correction: append-only audit; never mutates an original PIPA row.
