@@ -37,7 +37,7 @@ const server=fs.readFileSync(path.join(__dirname,"..","server.js"),"utf8");
 const app=fs.readFileSync(path.join(__dirname,"..","app.js"),"utf8");
 assert.match(server,/deprecated=new Set\(\["@cf\/nvidia\/nemotron-3-120b-a12b"\]\)/);
 assert.match(server,/msg\.includes\("deprecated"\)/);
-assert.match(server,/preparedZip\.test\(\)===true/);
+assert.match(server,/crc32\(entry\.getData\(\)\)===\(entry\.header\.crc>>>0\)/);
 assert.match(server,/requiredParts\.every\(name=>!!preparedZip\.getEntry\(name\)\)/);
 assert.match(server,/docxPreparedIntegrity:preparedDocxIntegrity/);
 assert.match(app,/v\.docxPreparedIntegrity=ai\.docxPreparedIntegrity\?\.zipCrc32===true&&ai\.docxPreparedIntegrity\?\.ooxml===true/);
