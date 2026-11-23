@@ -133,7 +133,7 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
      {revision:"01",workflow:"Vigente",wordKey:"pr100-legacy-ci",createdBy:"CI"},
      {revision:"02",workflow:"Aguardando aprovação",wordKey:key,wordName:"pr100.docx",publicationPrepared:true,approvalEmbedded:true,docxIntegrityValidated:true,createdBy:"CI"}
     ]});
-    await db.query("INSERT INTO siash_documents(doc_key,file_name,mime_type,file_data,updated_by) VALUES($1,$2,$3,$4,$5)",[key,"pr100.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document",docx,"CI"]);
+    await db.query("INSERT INTO siash_documents(doc_key,file_name,mime_type,file_data,updated_by) VALUES($1,$2,$3,$4,$5)",[key,"pr100.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document",generatedBuffer,"CI"]);
     await db.query("UPDATE siash_state SET payload=$1,revision=revision+1 WHERE id=1",[payload]);
     const current=Number(originalRevision)+1;
     const publication=await page.evaluate(async ({token,docId,current})=>{
