@@ -1389,12 +1389,36 @@ async function reviseWithOpenAI(prompt){
 }
 function cloudflareConfigured(){return !!(CLOUDFLARE_API_TOKEN&&CLOUDFLARE_ACCOUNT_ID)}
 function availableAIProviders(){const cfCandidates=cloudflareModelCandidates(),cfEffective=cfCandidates[0]||CLOUDFLARE_AI_MODEL;return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL,searchMode:geminiUseSearch()?"google_search":"off"},cloudflare:{configured:cloudflareConfigured(),model:cfEffective,configuredModel:CLOUDFLARE_AI_MODEL,configuredModelIgnored:!!CLOUDFLARE_AI_MODEL&&cfEffective!==CLOUDFLARE_AI_MODEL,freeModelFallbacks:CLOUDFLARE_FREE_MODEL_FALLBACKS,searchMode:"off"},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
+// Optional OpenAI-compatible free-tier providers. No outbound call without a configured key.
+const GROQ_API_KEY=String(process.env.GROQ_API_KEY||"").trim();
+const GROQ_MODEL=String(process.env.GROQ_MODEL||"llama-3.3-70b-versatile");
+const OPENROUTER_API_KEY=String(process.env.OPENROUTER_API_KEY||"").trim();
+const OPENROUTER_MODEL=String(process.env.OPENROUTER_MODEL||"openrouter/free");
+const HUGGINGFACE_API_KEY=String(process.env.HUGGINGFACE_API_KEY||"").trim();
+const HUGGINGFACE_MODEL=String(process.env.HUGGINGFACE_MODEL||"");
+async function reviseWithCompatibleProvider(provider,prompt){
+ const configs={
+  groq:{key:GROQ_API_KEY,model:GROQ_MODEL,url:"https://api.groq.com/openai/v1/chat/completions"},
+  openrouter:{key:OPENROUTER_API_KEY,model:OPENROUTER_MODEL,url:"https://openrouter.ai/api/v1/chat/completions"},
+  huggingface:{key:HUGGINGFACE_API_KEY,model:HUGGINGFACE_MODEL,url:"https://router.huggingface.co/v1/chat/completions"}
+ };
+ const cfg=configs[provider];if(!cfg?.key||!cfg.model)throw new Error(provider+" não configurado");
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);
+ try{
+  const response=await fetch(cfg.url,{method:"POST",signal:controller.signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+cfg.key},body:JSON.stringify({model:cfg.model,messages:[{role:"system",content:"Retorne somente JSON com summary, updates e references. Nunca invente referências; utilize apenas identificadores FONTE_N fornecidos."},{role:"user",content:prompt}],temperature:0})});
+  if(!response.ok)throw new Error(provider+" HTTP "+response.status);
+  const payload=await response.json(),raw=payload?.choices?.[0]?.message?.content;
+  if(typeof raw!=="string")throw new Error(provider+" resposta vazia");
+  const clean=raw.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,"").replace(/\s*\x60\x60\x60$/,"");
+  const parsed=JSON.parse(clean);
+  if(!parsed||!Array.isArray(parsed.updates)||!Array.isArray(parsed.references)||typeof parsed.summary!=="string")throw new Error(provider+" contrato JSON inválido");
+  return {result:parsed,sources:[],model:cfg.model,provider,researchMode:"external_evidence_only"};
+ }finally{clearTimeout(timer)}
+}
 function providerOrder(requested){
-  const p=String(requested||AI_DEFAULT_PROVIDER||"auto").toLowerCase();
-  if(p==="gemini")return ["gemini","cloudflare","openai"];
-  if(p==="cloudflare")return ["cloudflare","gemini","openai"];
-  if(p==="openai")return ["openai","cloudflare","gemini"];
-  return ["gemini","cloudflare","openai"];
+ const preferred=String(requested||AI_DEFAULT_PROVIDER||"auto").toLowerCase();
+ const base=["gemini","cloudflare","groq","openrouter","huggingface","openai"];
+ return base.includes(preferred)?[preferred,...base.filter(p=>p!==preferred)]:base;
 }
 
 // v0.14.33 — governança científica das fontes: prioriza fontes primárias/oficiais e rejeita redes sociais.
@@ -1679,6 +1703,9 @@ async function runAIRevision(prompt,requested,options={}){
       if(p==="gemini"&&GEMINI_API_KEY)ai=await reviseWithGemini(revisionPrompt);
       else if(p==="cloudflare"&&cloudflareConfigured())ai=await reviseWithCloudflare(revisionPrompt);
       else if(p==="openai"&&openaiClient)ai=await reviseWithOpenAI(revisionPrompt);
+      else if(p==="groq"&&GROQ_API_KEY)ai=await reviseWithCompatibleProvider(p,revisionPrompt);
+      else if(p==="openrouter"&&OPENROUTER_API_KEY)ai=await reviseWithCompatibleProvider(p,revisionPrompt);
+      else if(p==="huggingface"&&HUGGINGFACE_API_KEY&&HUGGINGFACE_MODEL)ai=await reviseWithCompatibleProvider(p,revisionPrompt);
       else {errors.push(`${p}: não configurado`);console.log(`[SIASH AI] provedor ignorado | provider=${p} | motivo=não_configurado`);continue}
       if(webResearch){
         const tavilyById=new Map((webResearch.sources||[]).map(s=>[String(s.sourceId||"").toUpperCase(),s]));
