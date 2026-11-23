@@ -74,7 +74,7 @@ test("PR102 Chromium UI: real AI update click, privacy, metadata, draft reconcil
   },code);
   assert.ok(meta.provider&&meta.model);assert.match(meta.research,/pubmed|europe|tavily|cache/i);
   assert.ok(meta.refs.some(x=>x.url===officialUrl));assert.equal(meta.crc,true);
-  await page.evaluate(()=>{localStorage.setItem("siash_cloud_pending_v1",JSON.stringify({user:SESSION.user,revision:1,state:{docs:[]}}));document.querySelector("#cloud-conflict-panel").hidden=false});
+  await page.evaluate(()=>{localStorage.setItem("siash_cloud_pending_v1",JSON.stringify({user:SESSION.user,revision:1,state:{docs:[]}}));showCloudConflictPanel()});
   await page.locator("#cloud-conflict-close").click();
   assert.ok(await page.evaluate(()=>localStorage.getItem("siash_cloud_pending_v1")));
   assert.deepEqual(errors,[]);
