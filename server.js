@@ -454,6 +454,8 @@ app.put("/api/state",auth,async(req,res)=>{
     if(!cur.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"Estado central não encontrado. Recarregue os dados.",conflict:true});}
     const current=Number(cur.rows[0].revision);
     if(current!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Outro profissional salvou alterações antes de você. Seus dados locais foram preservados; não atualize a página antes de exportar ou conferir seus lançamentos.",conflict:true,current_revision:current});}
+    const docsVerdict=docsGuard.validateDocsMutation(cur.rows[0].payload?.state?.docs||[],payload?.state?.docs||[]);
+    if(!docsVerdict.ok){await client.query("ROLLBACK");return res.status(422).json({error:docsVerdict.code});}
     const {validateShiftMutation,stampShiftMutation}=require("./shift-care-integrity.cjs");
     const shiftVerdict=validateShiftMutation(cur.rows[0].payload,payload);
     if(!shiftVerdict.ok){await client.query("ROLLBACK");return res.status(422).json({error:shiftVerdict.code,path:shiftVerdict.path});}
@@ -1880,6 +1882,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
       console.log(`[SIASH AI] auditoria obrigatória | code=${doc_code} | updates_recebidos=${Array.isArray(result.updates)?result.updates.length:0} | alteracoes_reais=${effective.length} | achados=${scientificAudit.findings.length}`);
       if(!effective.length){result.validationWarnings=[...(result.validationWarnings||[]),"A auditoria científica indica revisão necessária, mas a IA não produziu novo delta textual neste ciclo. Conferência profissional obrigatória."];result.requiresProfessionalReview=true;}
     }
+    if(effective.some(x=>!Array.isArray(x.references)||!x.references.length))throw new Error("Pesquisa científica sem lastro: alterações sem referência rastreável.");
     if(effective.some(x=>!Array.isArray(x.references)||!x.references.length)){result.validationWarnings=[...(result.validationWarnings||[]),"Há alteração proposta sem referência específica vinculada. Conferir a rastreabilidade antes da publicação."];result.requiresProfessionalReview=true;}
     const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&(x.title||x.url));
     const norm=s=>normalizedText(s).toLowerCase();
@@ -1887,7 +1890,8 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     const unlinked=effective.filter(ch=>!(ch.references||[]).some(ref=>{const n=norm(ref);return sourceKeys.some(k=>k===n||k.includes(n)||n.includes(k))}));
     if(unlinked.length){result.validationWarnings=[...(result.validationWarnings||[]),`Há referência citada sem correspondência bibliográfica rastreável nos parágrafos: ${unlinked.map(x=>x.paragraph_index).join(", ")}. Conferir antes da publicação.`];result.requiresProfessionalReview=true;}
     const classified=candidateSources.length?await classifyReferenceUrls(candidateSources):{verified:[],pending:[]};
-    const references=[...classified.verified,...classified.pending];
+    const references=classified.verified.filter(x=>x.wordEligible===true);
+    if(effective.length&&!references.length)throw new Error("Pesquisa científica bloqueada: nenhuma fonte verificável e elegível encontrada.");
     const eligibleReferenceCount=references.filter(x=>x?.wordEligible===true).length;
     const officialEligibleReferenceCount=references.filter(x=>x?.wordEligible===true&&isOfficialScientificReference(x)).length;
     let traceable=[],excludedChanges=[];
@@ -1895,8 +1899,9 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
       if(!references.length){result.validationWarnings=[...(result.validationWarnings||[]),"A proposta contém alterações sem referências bibliográficas identificáveis. Conferência profissional obrigatória."];result.requiresProfessionalReview=true;}
       traceable=effective.filter(ch=>(ch.references||[]).some(ref=>references.some(src=>src.wordEligible===true&&sourceMatchesChangeReference(ref,src))));
       excludedChanges=effective.filter(ch=>!traceable.includes(ch));
-      if(!traceable.length&&effective.length){traceable=effective;result.validationWarnings=[...(result.validationWarnings||[]),"As alterações não obtiveram vínculo bibliográfico elegível automático. Foram preservadas na proposta para conferência profissional; não publicar sem revisar as fontes."];result.requiresProfessionalReview=true;}
+      if(!traceable.length&&effective.length)throw new Error("Pesquisa científica bloqueada: alterações sem fonte verificável.");
     }
+    if(requiresCurrentWebResearch&&!references.length)throw new Error("Pesquisa científica bloqueada: nenhuma fonte científica verificada.");
     if(periodicReviewRequired&&!traceable.length&&(eligibleReferenceCount<2||officialEligibleReferenceCount<1)){result.validationWarnings=[...(result.validationWarnings||[]),`Revisão periódica com referências insuficientes para validação automática: ${eligibleReferenceCount} elegível(is), ${officialEligibleReferenceCount} oficial(is). Conferir profissionalmente.`];result.requiresProfessionalReview=true;}
     // v0.14.6 — separa revisão documental periódica de alteração técnico-científica.
     // Se o POP precisa renovar a vigência, a ausência de mudança técnica NÃO é falha: cria-se uma
