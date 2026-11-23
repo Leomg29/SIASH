@@ -129,7 +129,8 @@ async function cloudLoadAfterLogin(){
    try{remote=await cloudJson("/api/state");SIASH_CLOUD.revision=remote.exists?remote.revision:null}
    catch(e){console.error("Consulta da revisão indisponível",e);SIASH_CLOUD.revision=null}
    updateCloudBadge(!remote?"OFFLINE · rascunho local protegido":cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
-   alert("Existe um rascunho não sincronizado neste navegador. Ele foi preservado e o salvamento automático foi bloqueado. Solicite conciliação antes de continuar.");
+   alert("Existe um rascunho não sincronizado. O salvamento permanece bloqueado. Abra a Conciliação de Rascunhos para inspecionar as versões antes de decidir.");
+   void showCloudConflictPanel();
    return true;
  }
  // Uma edição local iniciada durante o GET não pode ser substituída pela resposta atrasada.
@@ -314,6 +315,10 @@ async function showCloudConflictPanel(){
  const remoteEl=document.getElementById("cloud-conflict-remote");
  const msg=document.getElementById("cloud-conflict-message");
  const refresh=document.getElementById("cloud-conflict-refresh");
+ const exportBtn=document.getElementById("cloud-conflict-export");
+ const discardBtn=document.getElementById("cloud-conflict-discard");
+ if(exportBtn)exportBtn.onclick=exportCloudPendingDraft;
+ if(discardBtn)discardBtn.onclick=discardCloudPendingDraft;
  const close=document.getElementById("cloud-conflict-close");
  const confirm=document.getElementById("cloud-conflict-confirm");
  const resolutions=document.getElementById("cloud-conflict-resolutions");
@@ -398,6 +403,20 @@ async function showCloudConflictPanel(){
  }
  if(refresh)refresh.onclick=loadRemote;
  await loadRemote();
+}
+function exportCloudPendingDraft(){
+ const pending=cloudPending();if(!pending){alert("Nenhum rascunho pendente.");return false}
+ const blob=new Blob([JSON.stringify(pending,null,2)],{type:"application/json"});
+ const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="siash-rascunho-pendente-"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);return true;
+}
+function discardCloudPendingDraft(){
+ const pending=cloudPending();if(!pending)return;
+ if(pending.user&&pending.user!==SESSION.user){alert("Rascunho de outro usuário: descarte bloqueado.");return}
+ if(!confirm("ATENÇÃO: descartar este rascunho local não sincronizado? Faça antes uma cópia de segurança. Esta ação NÃO altera dados do servidor."))return;
+ if(!confirm("Confirma definitivamente o descarte? O conteúdo local pendente poderá ser perdido."))return;
+ // Never replace the working state with an unverified remote snapshot.
+ clearCloudDraft();SIASH_CLOUD.conflict=true;updateCloudBadge("Rascunho descartado · recarregue o estado remoto antes de editar",true);
+ const panel=document.getElementById("cloud-conflict-panel");if(panel)panel.hidden=true;
 }
 function updateCloudBadge(text,bad=false){
  const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);if(document.getElementById("bed-sync-status"))renderBedReconciliation();const piccSync=document.getElementById("picc-sync-status");if(piccSync)piccSync.textContent=SIASH_CLOUD.conflict?"Conflito HTTP 409 / 422 · rascunho local preservado":SIASH_CLOUD.syncing?"Sincronizando":cloudPending()?"Rascunho local · aguardando PostgreSQL":SIASH_CLOUD.lastSync?"Salvo no PostgreSQL":"Rascunho local";
