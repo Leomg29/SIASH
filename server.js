@@ -1885,13 +1885,13 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
       console.log(`[SIASH AI] auditoria obrigatória | code=${doc_code} | updates_recebidos=${Array.isArray(result.updates)?result.updates.length:0} | alteracoes_reais=${effective.length} | achados=${scientificAudit.findings.length}`);
       if(!effective.length){result.validationWarnings=[...(result.validationWarnings||[]),"A auditoria científica indica revisão necessária, mas a IA não produziu novo delta textual neste ciclo. Conferência profissional obrigatória."];result.requiresProfessionalReview=true;}
     }
-    if(effective.some(x=>!Array.isArray(x.references)||!x.references.length))throw new Error("Pesquisa científica sem lastro: alterações sem referência rastreável.");
+    // Rascunhos com rastreabilidade incompleta permanecem consultivos; a publicação exige validação independente.
     if(effective.some(x=>!Array.isArray(x.references)||!x.references.length)){result.validationWarnings=[...(result.validationWarnings||[]),"Há alteração proposta sem referência específica vinculada. Conferir a rastreabilidade antes da publicação."];result.requiresProfessionalReview=true;}
     const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&(x.title||x.url));
     const norm=s=>normalizedText(s).toLowerCase();
     const sourceKeys=candidateSources.flatMap(x=>[norm(x.title),norm(x.url)]).filter(Boolean);
     const unlinked=effective.filter(ch=>!(ch.references||[]).some(ref=>{const n=norm(ref);return sourceKeys.some(k=>k===n||k.includes(n)||n.includes(k))}));
-    if(unlinked.length){result.validationWarnings=[...(result.validationWarnings||[]),`Há referência citada sem correspondência bibliográfica rastreável nos parágrafos: ${unlinked.map(x=>x.paragraph_index).join(", ")}. Conferir antes da publicação.`];result.requiresProfessionalReview=true;}
+    if(unlinked.length){result.validationWarnings=[...(result.validationWarnings||[]),"As alterações não obtiveram vínculo bibliográfico elegível automático. Conferência profissional obrigatória antes da publicação.",`Há referência citada sem correspondência bibliográfica rastreável nos parágrafos: ${unlinked.map(x=>x.paragraph_index).join(", ")}. Conferir antes da publicação.`];result.requiresProfessionalReview=true;}
     const classified=candidateSources.length?await classifyReferenceUrls(candidateSources):{verified:[],pending:[]};
     const references=classified.verified.filter(x=>x.wordEligible===true);
     if(effective.length&&!references.length)throw new Error("Pesquisa científica bloqueada: nenhuma fonte verificável e elegível encontrada.");
