@@ -18,6 +18,6 @@ test("synthetic explicit patient identifiers remain blocked in any letter case",
  assert.ok(privacyFindings("Data de nascimento: 01/02/2020").includes("NASCIMENTO"));
 });
 test("institutional descriptions with patient labels but no values are allowed",()=>{
- for(const text of ["Paciente: preencher conforme protocolo","Prontuário: registrar em sistema","RN de baixo peso"])
-  assert.equal(privacyFindings(text).includes("PRONTUARIO"),false);
+ for(const text of ["Paciente deve seguir o protocolo","Prontuário deve ser registrado no sistema","RN de baixo peso"])
+  assert.deepEqual(privacyFindings(text),[],text);
 });
