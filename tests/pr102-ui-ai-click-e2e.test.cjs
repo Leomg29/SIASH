@@ -30,7 +30,7 @@ test("PR102 Chromium UI: real AI update click, privacy, metadata, draft reconcil
   const page=await browser.newPage(),errors=[];
   page.on("pageerror",e=>errors.push(e.message));
   page.on("console",m=>{if(m.type()==="error"&&/ReferenceError/.test(m.text()))errors.push(m.text())});
-  page.on("dialog",d=>d.accept());
+  let confirmations=0;page.on("dialog",d=>{confirmations++;d.accept()});
   await page.goto(url,{waitUntil:"domcontentloaded"});
   await page.evaluate(({username,token})=>{
    document.querySelector("#app-view")?.classList.remove("hidden");
@@ -77,8 +77,7 @@ test("PR102 Chromium UI: real AI update click, privacy, metadata, draft reconcil
   await page.evaluate(()=>{localStorage.setItem("siash_cloud_pending_v1",JSON.stringify({user:SESSION.user,revision:1,state:{docs:[]}}));showCloudConflictPanel()});
   await page.locator("#cloud-conflict-close").click();
   assert.ok(await page.evaluate(()=>localStorage.getItem("siash_cloud_pending_v1")));
-  let confirmations=0;
-  page.on("dialog",d=>{confirmations++;d.accept()});
+  confirmations=0;
   await page.evaluate(()=>{localStorage.setItem("siash_cloud_pending_v1",JSON.stringify({user:SESSION.user,revision:1,state:{docs:[]}}));showCloudConflictPanel()});
   await page.locator("#cloud-conflict-discard").click();
   assert.equal(confirmations,2);
