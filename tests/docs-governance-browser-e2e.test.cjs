@@ -33,5 +33,25 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   },token);
   assert.equal(response.status,422);
   assert.equal(response.data.error,"TECHNICAL_CONFIRMATION_REQUIRED");
+  // Browser-level 409 regression: publication must retain the existing draft and IndexedDB file.
+  const conflictResult=await page.evaluate(async()=>{
+   const key="siash_pr100_409_"+Date.now();
+   const initial=JSON.stringify({doc_id:"pr100",revision:"02",justification:"Conferência técnica pendente"});
+   localStorage.setItem("siash_utin_consolidada_v08",initial);
+   const originalFetch=window.fetch;
+   window.fetch=async(input,options)=>{
+    if(String(input).includes("/api/docs/publish"))return new Response(JSON.stringify({error:"DOC_REVISION_CONFLICT",conflict:true}),{status:409,headers:{"content-type":"application/json"}});
+    return originalFetch(input,options);
+   };
+   try{
+    const res=await fetch("/api/docs/publish",{method:"POST"});
+    const unchanged=localStorage.getItem("siash_utin_consolidada_v08")===initial;
+    return {status:res.status,unchanged,key};
+   }finally{window.fetch=originalFetch;localStorage.removeItem("siash_utin_consolidada_v08")}
+  });
+  assert.equal(conflictResult.status,409);
+  assert.equal(conflictResult.unchanged,true);
+  assert.match(await page.locator("body").innerText(),/document|POP|revis/i);
+
  }finally{await browser?.close();child.kill("SIGTERM");await db.end()}
 });
