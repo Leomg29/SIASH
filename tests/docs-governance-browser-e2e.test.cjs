@@ -82,6 +82,45 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
    }
   }finally{await second.close()}
 
+  // Real owner publication with a structurally verified OOXML artifact in isolated PostgreSQL.
+  // Synthetic fixture only: this does NOT claim a live PubMed query or an AI-generated document.
+  const AdmZip=require("adm-zip");
+  const key="pr100-e2e-docx-"+Date.now(),docId="pr100-e2e-"+Date.now();
+  const officialUrl="https://pubmed.ncbi.nlm.nih.gov/123456/";
+  const zip=new AdmZip();
+  zip.addFile("[Content_Types].xml",Buffer.from('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'));
+  zip.addFile("word/document.xml",Buffer.from('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>FUNDAÇÃO HOSPITALAR - CONFERÊNCIA TÉCNICA ASSISTIDA</w:t></w:r></w:p><w:p><w:r><w:t>Referências</w:t></w:r></w:p><w:p><w:r><w:t>'+officialUrl+'</w:t></w:r></w:p></w:body></w:document>'));
+  const docx=zip.toBuffer();
+  assert.equal(new AdmZip(docx).getEntry("word/document.xml").getData().toString("utf8").includes(officialUrl),true);
+  const prior=await db.query("SELECT payload,revision FROM siash_state WHERE id=1");
+  if(prior.rows.length){
+   const originalPayload=prior.rows[0].payload,originalRevision=prior.rows[0].revision;
+   try{
+    const payload=structuredClone(originalPayload);
+    payload.state=payload.state||{};payload.state.docs=Array.isArray(payload.state.docs)?payload.state.docs:[];
+    payload.state.docs.push({id:docId,code:"PR100-CI",title:"Teste isolado de publicação",sector:"UTIN",versions:[
+     {revision:"01",workflow:"Vigente",wordKey:"pr100-legacy-ci",createdBy:"CI"},
+     {revision:"02",workflow:"Aguardando aprovação",wordKey:key,wordName:"pr100.docx",publicationPrepared:true,approvalEmbedded:true,docxIntegrityValidated:true,createdBy:"CI"}
+    ]});
+    await db.query("INSERT INTO siash_documents(doc_key,file_name,mime_type,file_data,updated_by) VALUES($1,$2,$3,$4,$5)",[key,"pr100.docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document",docx,"CI"]);
+    await db.query("UPDATE siash_state SET payload=$1,revision=revision+1 WHERE id=1",[payload]);
+    const current=Number(originalRevision)+1;
+    const publication=await page.evaluate(async ({token,docId,current})=>{
+     const r=await fetch("/api/docs/publish",{method:"POST",headers:{"authorization":"Bearer "+token,"content-type":"application/json"},body:JSON.stringify({doc_id:docId,revision:"02",base_revision:current,technical_confirmation:true})});
+     return {status:r.status,data:await r.json()};
+    },{token,docId,current});
+    assert.equal(publication.status,200,JSON.stringify(publication.data));
+    const after=await db.query("SELECT payload FROM siash_state WHERE id=1");
+    const versions=after.rows[0].payload.state.docs.find(x=>x.id===docId).versions;
+    assert.equal(versions[0].workflow,"Obsoleto");
+    assert.equal(versions[1].workflow,"Vigente");
+   }finally{
+    await db.query("UPDATE siash_state SET payload=$1,revision=revision+1 WHERE id=1",[originalPayload]);
+    await db.query("DELETE FROM siash_doc_publication_audit WHERE doc_id=$1",[docId]);
+    await db.query("DELETE FROM siash_documents WHERE doc_key=$1",[key]);
+   }
+  }
+
 
  }finally{await browser?.close();child.kill("SIGTERM");await db.end()}
 });
