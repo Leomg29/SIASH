@@ -380,7 +380,7 @@ function updateCloudBadge(text,bad=false){
 async function uploadDocCloud(key,file){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token||!file)return;
  const res=await fetch("/api/doc/"+encodeURIComponent(key),{method:"PUT",headers:cloudHeaders({"Content-Type":"application/octet-stream","X-File-Name":encodeURIComponent(file.name||key)}),body:file});
- if(!res.ok)throw new Error("Falha ao sincronizar documento");
+ if(!res.ok)throw new Error(res.status===422?"Arquivo imutável: crie nova versão.":"Falha ao sincronizar documento");
 }
 async function getDocCloud(key){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return null;
@@ -955,7 +955,7 @@ function docsDb(){return new Promise((resolve,reject)=>{if(!window.indexedDB)ret
 async function putDocBlob(key,file){
  if(!file)return null;const db=await docsDb();
  await new Promise((resolve,reject)=>{const tx=db.transaction(DOCS_DB_STORE,"readwrite");tx.objectStore(DOCS_DB_STORE).put(file,key);tx.oncomplete=()=>{db.close();resolve(key)};tx.onerror=()=>{db.close();reject(tx.error)}});
- try{await uploadDocCloud(key,file)}catch(e){console.warn("Documento preservado localmente; sincronização Cloud pendente.",e);updateCloudBadge("Documento pendente de sincronização",true)}
+ try{await uploadDocCloud(key,file);updateCloudBadge("Sincronizado com PostgreSQL")}catch(e){console.warn("Sincronização documental pendente; arquivo preservado no navegador.");updateCloudBadge("Pendente de envio · IndexedDB",true);throw e}
  return key
 }
 async function getDocBlob(key){
@@ -1130,7 +1130,8 @@ window.sendDocToAI=async(i,options={})=>{
    if(!blob)throw new Error(options.correctionRegeneration?"Arquivo Word da revisão proposta não localizado.":"Arquivo Word vigente não localizado.");const buf=await blob.arrayBuffer(),bytes=new Uint8Array(buf);let bin="";for(let o=0;o<bytes.length;o+=0x8000)bin+=String.fromCharCode(...bytes.subarray(o,o+0x8000));
    const revisionStatus=docStatus(d),periodicReviewRequired=!!d.reviewRequired||["review","expired","priority","soon"].includes(revisionStatus.key);
    const periodicReviewReason=periodicReviewRequired?(`Revisão documental ${revisionStatus.text||"programada"}${revisionStatus.next?` · próxima revisão prevista: ${dateBR(revisionStatus.next)}`:""}`):"Atualização técnica solicitada pelo profissional";
-   const ai=await cloudJson("/api/ai/revise-pop",{method:"POST",body:JSON.stringify({doc_code:d.code,doc_title:d.title,current_revision:options.correctionRegeneration?rev:pub.revision,next_revision:rev,file_name:revisionBase.wordName||pub.wordName||`${d.code}.docx`,file_base64:btoa(bin),provider:S.settings?.aiProvider||"auto",correction_request:((d.versions||[]).find((x,xi)=>xi!==pubI&&String(x.revision)===rev&&x.workflow!=="Obsoleto")?.correctionRequested||""),periodic_review_required:periodicReviewRequired,periodic_review_reason:periodicReviewReason})});
+   const privacyCheck=await localDocPrivacyCheck(blob);if(privacyCheck.length)throw new Error("LGPD: identificadores potencialmente sensíveis detectados no Word. Revise e sanitize antes de enviar à IA.");
+    const ai=await cloudJson("/api/ai/revise-pop",{method:"POST",body:JSON.stringify({doc_code:d.code,doc_title:d.title,current_revision:options.correctionRegeneration?rev:pub.revision,next_revision:rev,file_name:revisionBase.wordName||pub.wordName||`${d.code}.docx`,file_base64:btoa(bin),provider:S.settings?.aiProvider||"auto",correction_request:((d.versions||[]).find((x,xi)=>xi!==pubI&&String(x.revision)===rev&&x.workflow!=="Obsoleto")?.correctionRequested||""),periodic_review_required:periodicReviewRequired,periodic_review_reason:periodicReviewReason})});
    const out=Uint8Array.from(atob(ai.file_base64),c=>c.charCodeAt(0)),proposalBlob=new Blob([out],{type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
    let vi=d.versions.findIndex((v,x)=>x!==pubI&&String(v.revision)===rev&&v.workflow!=="Obsoleto"),v=vi>=0?d.versions[vi]:null;if(!v){v={revision:rev,reviewDate:todayISO(),workflow:"Em revisão",createdBy:"SIASH Docs / IA",createdAt:nowBR()};d.versions.push(v);vi=d.versions.length-1}
    const periodicReviewOnly=ai.verification?.periodicReviewOnly===true,actualChanges=Number(ai.verification?.actualChanges||0),professionalWarnings=[...(ai.verification?.validationWarnings||[]),...(ai.validationWarnings||[])].filter(Boolean),requiresProfessionalReview=ai.verification?.requiresProfessionalReview===true||ai.requiresProfessionalReview===true||professionalWarnings.length>0||actualChanges===0;
@@ -1689,7 +1690,7 @@ $("doc-history-close").addEventListener("click",()=>{
 $("doc-revision-cancel").addEventListener("click",cancelDocRevision)
 $("doc-form").addEventListener("submit",async e=>{
  e.preventDefault();if(!canDocEdit())return alert("Seu perfil documental não permite cadastrar documentos.");
- const title=$("doc-title").value.trim(),code=$("doc-code").value.trim(),sector=$("doc-sector").value.trim()||"UTIN",type=$("doc-type")?.value||"POP";const access=currentDocAccess();if(!isOwner()&&access.sector!=="*"&&sector!==access.sector)return alert(`Seu acesso permite cadastrar documentos somente no setor ${access.sector}.`);const revision=$("doc-revision").value.trim()||"00",reviewDate=$("doc-review").value,period=+$("doc-period").value||24,workflow=$("doc-workflow").value,note=$("doc-note").value.trim()||"Emissão inicial.";
+ const title=$("doc-title").value.trim(),code=$("doc-code").value.trim(),sector=$("doc-sector").value.trim()||"UTIN",type=$("doc-type")?.value||"POP";const access=currentDocAccess();if(!isOwner()&&access.sector!=="*"&&sector!==access.sector)return alert(`Seu acesso permite cadastrar documentos somente no setor ${access.sector}.`);const revision=$("doc-revision").value.trim()||"00",reviewDate=$("doc-review").value,period=+$("doc-period").value||24,workflow="Em elaboração",note=$("doc-note").value.trim()||"Emissão inicial.";
  if(!title||!code)return alert("Confira o título e o código antes de adicionar o documento.");if(S.docs.some(d=>String(d.code||"").toLowerCase()===code.toLowerCase()))return alert("Já existe um documento com este código. O cadastro foi bloqueado para evitar duplicidade.");if(S.docs.some(d=>String(d.title||"").trim().toLowerCase()===title.toLowerCase()))return alert("Já existe um documento com este mesmo título. Confira a biblioteca antes de cadastrar outro.");
  const id=newDocId(),pdf=$("doc-pdf").files[0],word=$("doc-word").files[0];if(!pdf&&!word)return alert("Selecione pelo menos o Word ou o PDF do novo documento.");const version={revision,reviewDate,workflow,note,createdBy:SESSION.user||"Administrador Proprietário",createdAt:nowBR()};
  try{
