@@ -131,7 +131,7 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
     payload.state=payload.state||{};payload.state.docs=Array.isArray(payload.state.docs)?payload.state.docs:[];
     payload.state.docs.push({id:docId,code:"PR100-CI",title:"Teste isolado de publicação",sector:"UTIN",versions:[
      {revision:"01",workflow:"Vigente",wordKey:"pr100-legacy-ci",createdBy:"CI"},
-     {revision:"02",workflow:"Aguardando aprovação",wordKey:key,wordName:"pr100.docx",publicationPrepared:true,approvalEmbedded:true,docxIntegrityValidated:true,createdBy:"CI"}
+     {revision:"02",workflow:"Aguardando aprovação",wordKey:key,wordName:"pr100.docx",publicationPrepared:true,approvalEmbedded:true,docxIntegrityValidated:true,createdBy:"CI",aiProvider:"gemini",aiReferences:[{title:"Neonatal hand hygiene clinical study",url:officialUrl}]}
     ]});
     const uploaded=await page.evaluate(async ({token,key,bytes})=>{
      const binary=Uint8Array.from(atob(bytes),c=>c.charCodeAt(0));
