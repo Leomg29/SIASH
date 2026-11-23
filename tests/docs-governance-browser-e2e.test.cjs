@@ -51,7 +51,7 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   assert.deepEqual(privacy.clean,[]);assert.ok(privacy.cpf.includes("CPF"));
   assert.ok(privacy.cns.includes("CNS"));assert.ok(privacy.birth.includes("NASCIMENTO"));assert.ok(privacy.name.includes("NOME_CLINICO"));
   // Click the real draft-conciliation controls, ensuring a pending draft is not silently removed.
-  await page.evaluate(()=>{localStorage.setItem("siash_cloud_pending_v1",JSON.stringify({user:SESSION.user,revision:1,state:{docs:[]}}));document.querySelector("#cloud-conflict-panel").hidden=false});
+  await page.evaluate(()=>{localStorage.setItem("siash_cloud_pending_v1",JSON.stringify({user:SESSION.user,revision:1,state:{docs:[]}}));showCloudConflictPanel()});
   await page.locator("#cloud-conflict-close").click();
   assert.equal(await page.locator("#cloud-conflict-panel").isVisible(),false);
   assert.equal(await page.evaluate(()=>!!localStorage.getItem("siash_cloud_pending_v1")),true);
