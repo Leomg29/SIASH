@@ -46,7 +46,7 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
    cpf:await window.localDocPrivacyCheck("CPF: 529.982.247-25"),
    cns:await window.localDocPrivacyCheck("CNS: 123456789012345"),
    birth:await window.localDocPrivacyCheck("data de nascimento: 01/01/2025"),
-   name:await window.localDocPrivacyCheck("Paciente: Maria Silva")
+   name:await window.localDocPrivacyCheck("paciente: Maria Silva")
   }));
   assert.deepEqual(privacy.clean,[]);assert.ok(privacy.cpf.includes("CPF"));
   assert.ok(privacy.cns.includes("CNS"));assert.ok(privacy.birth.includes("NASCIMENTO"));assert.ok(privacy.name.includes("NOME_CLINICO"));
