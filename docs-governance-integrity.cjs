@@ -29,7 +29,11 @@ function validateDocsMutation(oldDocs,newDocs){
    const nv=newVersions.find(x=>String(x.revision)===String(v.revision)&&String(x.createdAt||"")===String(v.createdAt||""));
    if(!nv)return {ok:false,code:"DOC_VERSION_DELETION_FORBIDDEN"};
    for(const field of ["wordKey","pdfKey","wordPath","pdfPath"]){
-    if(v[field]&&v[field]!==nv[field])return {ok:false,code:"DOC_ARTIFACT_REBIND_FORBIDDEN"};
+    if(v[field]&&v[field]!==nv[field]){
+      const priorKeyField=field==="wordKey"?"previousWordKey":field==="pdfKey"?"previousPdfKey":null;
+      const allowedPreparation=v.workflow!=="Vigente"&&v.workflow!=="Obsoleto"&&priorKeyField&&nv[priorKeyField]===v[field]&&typeof nv[field]==="string"&&nv[field].includes("|")&&nv.workflow!=="Vigente";
+      if(!allowedPreparation)return {ok:false,code:"DOC_ARTIFACT_REBIND_FORBIDDEN"};
+    }
    }
    if(v.workflow==="Vigente"&&nv.workflow!=="Vigente"&&nv.workflow!=="Obsoleto")return {ok:false,code:"DOC_VIGENTE_INVALID_TRANSITION"};
    if(v.workflow!=="Vigente"&&nv.workflow==="Vigente")return {ok:false,code:"DOC_PUBLICATION_REQUIRES_SERVER"};
