@@ -1708,7 +1708,7 @@ async function runAIRevision(prompt,requested,options={}){
   const clinicalRejections=[];
   let webResearch=null;
   let revisionPrompt=prompt;
-  if(requireWebResearch&&TAVILY_API_KEY){
+  if(requireWebResearch&&TAVILY_API_KEY&&!scientificCooling("tavily")){
     try{
       webResearch=await researchWithTavily(prompt,options?.researchQuery||"");
       revisionPrompt=[
@@ -1729,6 +1729,14 @@ async function runAIRevision(prompt,requested,options={}){
       errors.push(`tavily: ${msg}`);
       console.warn(`[SIASH AI] Tavily indisponível | motivo=${msg}`);
     }
+  }
+  if(requireWebResearch&&!webResearch){
+    try{
+      webResearch=await researchPublicLiterature(options?.researchQuery||"");
+      revisionPrompt=[prompt,"","PESQUISA CIENTÍFICA PÚBLICA (PubMed/Europe PMC):",webResearch.evidence,
+        "Use exclusivamente as fontes FONTE_N acima. Nunca invente títulos, anos ou URLs; referências ausentes devem permanecer pendentes."].join("\\n");
+      console.log("[SIASH AI] pesquisa pública habilitada | fontes="+webResearch.sources.length);
+    }catch(e){errors.push("public_literature: "+String(e?.message||"indisponível").slice(0,200))}
   }
   console.log(`[SIASH AI] início da revisão | ordem=${order.join(">")}`);
   for(const p of order){
