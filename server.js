@@ -1712,6 +1712,7 @@ async function runAIRevision(prompt,requested,options={}){
       console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
       return ai;
     }catch(e){
+      scientificTrip(p,e);
       const msg=String(e?.message||"falha").replace(/\s+/g," ").slice(0,500);
       if(e?.code==="SCIENTIFIC_BINDING_REJECTED"||e?.code==="CLINICAL_SEQUENCE_INTEGRITY_REJECTED"){
         const validationKind=e.code==="SCIENTIFIC_BINDING_REJECTED"?"rastreabilidade científica":"integridade clínica";
