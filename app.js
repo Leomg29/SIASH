@@ -1387,9 +1387,11 @@ window.finalizePreparedPublication=async(i,vi)=>{
   updateCloudBadge("Sincronizado com PostgreSQL");
   showToast("Publicação transacional confirmada pelo servidor",3500);renderDocs();
  }catch(e){
-  preserveCloudDraft("Conflito ou bloqueio na publicação documental");
-  updateCloudBadge("Publicação pendente · rascunho preservado",true);
-  alert("Publicação não concluída no servidor. Rascunho preservado. "+(e.message||"Verifique permissões e revisão."));
+  const conflict=e.status===409||e.conflict===true;
+  preserveCloudDraft(conflict?"HTTP 409 · conciliação documental necessária":"Publicação documental pendente");
+  if(conflict)SIASH_CLOUD.conflict=true;
+  updateCloudBadge(conflict?"CONFLITO HTTP 409 · conciliação necessária · rascunho e arquivos preservados":"Publicação pendente · rascunho preservado",true);
+  alert(conflict?"Conflito HTTP 409: outro usuário atualizou a revisão. A proposta, justificativas e arquivos preparados permanecem no armazenamento local/IndexedDB. Concilie as revisões antes de publicar novamente.":"Publicação não concluída no servidor. Rascunho preservado. "+(e.message||"Verifique permissões e revisão."));
  }
 }
 window.requestDocCorrection=async(i,vi)=>{if(!requireProposalContext(i,vi))return;const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;const reason=(prompt("Descreva resumidamente o que precisa ser corrigido na proposta:")||"").trim();if(!reason)return;v.workflow="Em revisão";v.publicationPrepared=false;v.publicationPreparedAt="";v.publicationPreparedBy="";v.preparedInstitutionalRevision="";v.correctionRequested=reason;v.updatedAt=nowBR();save();renderDocs();openProposalWorkspace(i,vi);const status=$("doc-update-status");status.textContent=`Correção registrada para a revisão ${v.revision}. Regenerando a mesma proposta com IA...`;auditAdmin(`SIASH Docs: correção profissional solicitada para ${d.code} revisão ${v.revision}; regeneração automática iniciada.`);try{const result=await sendDocToAI(i,{skipConfirm:true,correctionRegeneration:true,expectedRevision:String(v.revision)});if(result?.ok){showToast(`Correção da revisão ${v.revision} concluída e pronta para conferência`,3500);alert(`Correção concluída na mesma revisão ${v.revision}. Abra o Word atualizado e confira antes de validar/publicar.`)}else{status.textContent="Correção registrada, mas a regeneração automática não foi concluída. A revisão anterior foi preservada.";showToast("Correção não concluída — proposta anterior preservada",3500)}}catch(e){console.error(e);status.textContent="Correção registrada, mas a regeneração automática não foi concluída. A revisão anterior foi preservada.";alert(e.message||"A correção não foi concluída.")}};
