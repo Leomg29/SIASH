@@ -35,6 +35,8 @@ jobs:
         run: node --test tests/pipa-integrity-pr98.test.cjs
       - name: PR99 shift care integrity unit tests
         run: node --test tests/shift-care-integrity.test.cjs
+      - name: PR100 Docs governance unit tests
+        run: node --test tests/docs-governance-integrity.test.cjs
       - name: Regression suite
         shell: bash
         run: |
