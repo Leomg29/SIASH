@@ -30,4 +30,17 @@ const evidence="https://www.sbp.com.br/documento-real";
 assert.equal(scientificReferencesVerified([{title:"Documento científico",year:2025,url:evidence}],[evidence]),true);
 assert.equal(scientificReferencesVerified([{title:"Documento científico",year:2025,url:evidence}],[]),false);
 assert.equal(scientificReferencesVerified([{title:"Documento científico",year:2025,url:"https://fake.example/"}],["https://fake.example/"]),false);
+// PR #101: regression contract for retired model, prepared artifact metadata and publication lock.
+const fs=require("node:fs");
+const path=require("node:path");
+const server=fs.readFileSync(path.join(__dirname,"..","server.js"),"utf8");
+const app=fs.readFileSync(path.join(__dirname,"..","app.js"),"utf8");
+assert.match(server,/deprecated=new Set\(\["@cf\/nvidia\/nemotron-3-120b-a12b"\]\)/);
+assert.match(server,/msg\.includes\("deprecated"\)/);
+assert.match(server,/crc32\(entry\.getData\(\)\)===\(entry\.header\.crc>>>0\)/);
+assert.match(server,/requiredParts\.every\(name=>!!preparedZip\.getEntry\(name\)\)/);
+assert.match(server,/docxPreparedIntegrity:preparedDocxIntegrity/);
+assert.match(app,/v\.docxPreparedIntegrity=ai\.docxPreparedIntegrity\?\.zipCrc32===true&&ai\.docxPreparedIntegrity\?\.ooxml===true/);
+assert.match(app,/v\.aiResearchMode=ai\.researchMode\|\|"sem_pesquisa_externa"/);
+assert.match(server,/!v\.docxIntegrityValidated/); // Final publication gate stays separate.
 console.log("SIASH Docs governance unit tests passed");

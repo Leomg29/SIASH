@@ -102,6 +102,7 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   const officialUrl="https://pubmed.ncbi.nlm.nih.gov/123456/";
   const zip=new AdmZip();
   zip.addFile("[Content_Types].xml",Buffer.from('<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>'));
+  zip.addFile("_rels/.rels",Buffer.from('<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>'));
   zip.addFile("word/document.xml",Buffer.from('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>FUNDAÇÃO HOSPITALAR - CONFERÊNCIA TÉCNICA ASSISTIDA</w:t></w:r></w:p><w:p><w:r><w:t>Referências</w:t></w:r></w:p><w:p><w:r><w:t>'+officialUrl+'</w:t></w:r></w:p></w:body></w:document>'));
   const docx=zip.toBuffer();
   assert.equal(new AdmZip(docx).getEntry("word/document.xml").getData().toString("utf8").includes(officialUrl),true);
@@ -110,6 +111,7 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   // provider response and OOXML generation against the deterministic local HTTP fixture.
   const sourceZip=new AdmZip();
   sourceZip.addFile("[Content_Types].xml",zip.getEntry("[Content_Types].xml").getData());
+  sourceZip.addFile("_rels/.rels",zip.getEntry("_rels/.rels").getData());
   sourceZip.addFile("word/document.xml",Buffer.from('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Higienização das mãos em neonatologia.</w:t></w:r></w:p><w:p><w:r><w:t>Referências</w:t></w:r></w:p></w:body></w:document>'));
   const generated=await page.evaluate(async ({token,source})=>{
    const response=await fetch("/api/ai/revise-pop",{method:"POST",headers:{authorization:"Bearer "+token,"content-type":"application/json"},body:JSON.stringify({doc_code:"PR100-CI-TEST",doc_title:"Higienização das mãos em neonatologia",current_revision:"01",next_revision:"02",file_name:"PR100-CI.docx",file_base64:source,provider:"gemini",correction_request:"Atualizar descrição de higienização das mãos com base na fonte científica"})});
