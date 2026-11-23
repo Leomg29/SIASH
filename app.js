@@ -76,6 +76,31 @@ const SIASH_PENDING_KEY="siash_cloud_pending_v1";
 function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
 function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:SIASH_CLOUD.revision,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
 function clearCloudDraft(){try{localStorage.removeItem(SIASH_PENDING_KEY)}catch(e){console.error(e)}}
+// PR #102: deterministic local LGPD gate; same patterns and CPF checksum as docs-governance-integrity.cjs.
+function localCpfValid(value){const d=String(value).replace(/\D/g,"");if(d.length!==11||/^(\d)\1+$/.test(d))return false;for(let t=9;t<11;t++){let sum=0;for(let i=0;i<t;i++)sum+=Number(d[i])*(t+1-i);let check=(sum*10)%11;if(check===10)check=0;if(check!==Number(d[t]))return false}return true}
+function localPrivacyFindings(text){
+ const s=String(text||""),hits=[];
+ if(/\b\d{3}[. ]?\d{3}[. ]?\d{3}[- ]?\d{2}\b/g.test(s)&&[...s.matchAll(/\b\d{3}[. ]?\d{3}[. ]?\d{3}[- ]?\d{2}\b/g)].some(m=>localCpfValid(m[0])))hits.push("CPF");
+ if(/\b(?:CNS|cart[aã]o\s+nacional\s+de\s+sa[uú]de)\s*[:#-]?\s*\d{15}\b/i.test(s))hits.push("CNS");
+ if(/\b(?:prontu[aá]rio|registro\s+do\s+paciente|n[úu]mero\s+de\s+atendimento)\s*(?:n[ºo.]*)?\s*[:#-]\s*[A-Z0-9-]{4,}\b/i.test(s))hits.push("PRONTUARIO");
+ if(/\b(?:data\s+de\s+nascimento|nascid[oa]\s+em|DN)\s*[:#-]\s*\d{2}[/.-]\d{2}[/.-]\d{4}\b/i.test(s))hits.push("NASCIMENTO");
+ if(/\b(?:paciente|RN(?:\s+de)?|rec[eé]m[- ]nascido|nome\s+do\s+paciente)\s*[:#-]?\s*[a-záàâãéêíóôõúç]{2,}(?:\s+[a-záàâãéêíóôõúç]{2,}){1,3}\b/i.test(s))hits.push("NOME_CLINICO");
+ return [...new Set(hits)];
+}
+async function localDocPrivacyCheck(input){
+ let text=String(input??"");
+ if(input instanceof Blob){
+  if(typeof JSZip==="undefined")throw Error("LGPD: leitor DOCX indisponível; envio bloqueado.");
+  const zip=await JSZip.loadAsync(await input.arrayBuffer(),{checkCRC32:true});
+  const documentXml=zip.file("word/document.xml");if(!documentXml)throw Error("LGPD: documento Word inválido; envio bloqueado.");
+  const xml=await documentXml.async("string");
+  const doc=new DOMParser().parseFromString(xml,"application/xml");
+  if(doc.querySelector("parsererror"))throw Error("LGPD: XML do Word inválido; envio bloqueado.");
+  text=Array.from(doc.getElementsByTagNameNS("http://schemas.openxmlformats.org/wordprocessingml/2006/main","t")).map(x=>x.textContent).join(" ");
+ }
+ return localPrivacyFindings(text);
+}
+window.localDocPrivacyCheck=localDocPrivacyCheck;
 function cloudDraftIsCurrent(pending,remote){return !!(pending&&remote?.exists&&Number.isSafeInteger(pending.revision)&&pending.revision===remote.revision)}
 
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
@@ -104,7 +129,8 @@ async function cloudLoadAfterLogin(){
    try{remote=await cloudJson("/api/state");SIASH_CLOUD.revision=remote.exists?remote.revision:null}
    catch(e){console.error("Consulta da revisão indisponível",e);SIASH_CLOUD.revision=null}
    updateCloudBadge(!remote?"OFFLINE · rascunho local protegido":cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
-   alert("Existe um rascunho não sincronizado neste navegador. Ele foi preservado e o salvamento automático foi bloqueado. Solicite conciliação antes de continuar.");
+   alert("Existe um rascunho não sincronizado. O salvamento permanece bloqueado. Abra a Conciliação de Rascunhos para inspecionar as versões antes de decidir.");
+   void showCloudConflictPanel();
    return true;
  }
  // Uma edição local iniciada durante o GET não pode ser substituída pela resposta atrasada.
@@ -289,6 +315,10 @@ async function showCloudConflictPanel(){
  const remoteEl=document.getElementById("cloud-conflict-remote");
  const msg=document.getElementById("cloud-conflict-message");
  const refresh=document.getElementById("cloud-conflict-refresh");
+ const exportBtn=document.getElementById("cloud-conflict-export");
+ const discardBtn=document.getElementById("cloud-conflict-discard");
+ if(exportBtn)exportBtn.onclick=exportCloudPendingDraft;
+ if(discardBtn)discardBtn.onclick=discardCloudPendingDraft;
  const close=document.getElementById("cloud-conflict-close");
  const confirm=document.getElementById("cloud-conflict-confirm");
  const resolutions=document.getElementById("cloud-conflict-resolutions");
@@ -373,6 +403,20 @@ async function showCloudConflictPanel(){
  }
  if(refresh)refresh.onclick=loadRemote;
  await loadRemote();
+}
+function exportCloudPendingDraft(){
+ const pending=cloudPending();if(!pending){alert("Nenhum rascunho pendente.");return false}
+ const blob=new Blob([JSON.stringify(pending,null,2)],{type:"application/json"});
+ const url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="siash-rascunho-pendente-"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);return true;
+}
+function discardCloudPendingDraft(){
+ const pending=cloudPending();if(!pending)return;
+ if(pending.user&&pending.user!==SESSION.user){alert("Rascunho de outro usuário: descarte bloqueado.");return}
+ if(!confirm("ATENÇÃO: descartar este rascunho local não sincronizado? Faça antes uma cópia de segurança. Esta ação NÃO altera dados do servidor."))return;
+ if(!confirm("Confirma definitivamente o descarte? O conteúdo local pendente poderá ser perdido."))return;
+ // Never replace the working state with an unverified remote snapshot.
+ clearCloudDraft();SIASH_CLOUD.conflict=true;updateCloudBadge("Rascunho descartado · recarregue o estado remoto antes de editar",true);
+ const panel=document.getElementById("cloud-conflict-panel");if(panel)panel.hidden=true;
 }
 function updateCloudBadge(text,bad=false){
  const el=document.getElementById("cloud-status");if(!el)return;el.textContent="Cloud: "+text;el.classList.toggle("cloud-bad",!!bad);if(document.getElementById("bed-sync-status"))renderBedReconciliation();const piccSync=document.getElementById("picc-sync-status");if(piccSync)piccSync.textContent=SIASH_CLOUD.conflict?"Conflito HTTP 409 / 422 · rascunho local preservado":SIASH_CLOUD.syncing?"Sincronizando":cloudPending()?"Rascunho local · aguardando PostgreSQL":SIASH_CLOUD.lastSync?"Salvo no PostgreSQL":"Rascunho local";
