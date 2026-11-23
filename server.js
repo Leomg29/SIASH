@@ -657,12 +657,12 @@ function docxCrc32(bytes){
  return (crc^0xffffffff)>>>0;
 }
 function docxXmlWellFormed(xml){
- if(!xml||!/^\\s*(?:<\\?xml[^>]*\\?>\\s*)?</.test(xml))return false;
- const stack=[],tokens=xml.match(/<!--[\\s\\S]*?-->|<\\?[^>]*\\?>|<!\\[CDATA\\[[\\s\\S]*?\\]\\]>|<![^>]*>|<[^>]*>/g)||[];
+ if(!xml||!/^\s*(?:<\?xml[^>]*\?>\s*)?</.test(xml))return false;
+ const stack=[],tokens=xml.match(/<!--[\s\S]*?-->|<\?[^>]*\?>|<!\[CDATA\[[\s\S]*?\]\]>|<![^>]*>|<[^>]*>/g)||[];
  for(const token of tokens){
-  if(/^<\\?|^<!/.test(token))continue;
-  if(/^<\\//.test(token)){const name=token.slice(2,-1).trim();if(stack.pop()!==name)return false}
-  else if(!/\\/\\s*>$/.test(token)){const name=(token.match(/^<([^\\s/>]+)/)||[])[1];if(!name)return false;stack.push(name)}
+  if(/^<\?|^<!/.test(token))continue;
+  if(/^<\//.test(token)){const name=token.slice(2,-1).trim();if(stack.pop()!==name)return false}
+  else if(!/\/\s*>$/.test(token)){const name=(token.match(/^<([^\s/>]+)/)||[])[1];if(!name)return false;stack.push(name)}
  }
  return stack.length===0&&tokens.length>0;
 }
@@ -679,7 +679,7 @@ function validateGeneratedDocx(buf){
   const types=zip.getEntry("[Content_Types].xml"),document=zip.getEntry("word/document.xml");
   if(!types||!document)return false;
   const typesXml=types.getData().toString("utf8"),docXml=document.getData().toString("utf8");
-  return docxXmlWellFormed(typesXml)&&docxXmlWellFormed(docXml)&&/<Types(?:\\s|>)/.test(typesXml)&&/<w:document(?:\\s|>)/.test(docXml)&&/<w:body(?:\\s|>)/.test(docXml);
+  return docxXmlWellFormed(typesXml)&&docxXmlWellFormed(docXml)&&/<Types(?:\s|>)/.test(typesXml)&&/<w:document(?:\s|>)/.test(docXml)&&/<w:body(?:\s|>)/.test(docXml);
  }catch(_){return false}
 }
 async function convertLegacyDocBufferToDocx(inputBuffer,inputName="documento.doc"){
