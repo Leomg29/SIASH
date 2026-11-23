@@ -607,6 +607,26 @@ app.post("/api/docs/publish",auth,async(req,res)=>{
   if(!validateGeneratedDocx(file.rows[0].file_data)){await client.query("ROLLBACK");return res.status(422).json({error:"DOCX_INTEGRITY_INVALID"})}
   const storedHash=await client.query("SELECT sha256 FROM siash_doc_artifacts WHERE doc_key=$1",[v.wordKey]);
   if(storedHash.rows.length&&storedHash.rows[0].sha256!==digest){await client.query("ROLLBACK");return res.status(422).json({error:"DOC_ARTIFACT_HASH_MISMATCH"})}
+  // AI drafts remain consultative; server independently rechecks sources at publication.
+  if(v.aiProvider||Array.isArray(v.aiReferences)||Array.isArray(v.aiChanges)){
+    const refs=Array.isArray(v.aiReferences)?v.aiReferences:[];
+    if(!refs.length||refs.some(x=>!docsGuard.scientificSourceUrl(x.url))){
+      await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_INVALID"});
+    }
+    const checked=await classifyReferenceUrls(refs);
+    const eligible=checked.verified.filter(x=>x.wordEligible===true&&docsGuard.scientificSourceUrl(x.url));
+    if(eligible.length!==refs.length||!docsGuard.scientificReferencesVerified(
+      refs.map(x=>({title:x.title,year:x.year||x.publicationYear||x.ano,url:x.url})).filter(x=>x.year),
+      eligible.map(x=>x.url)
+    )&&refs.some(x=>x.year||x.publicationYear||x.ano)){
+      await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_UNVERIFIED"});
+    }
+    const paragraphs=docxParagraphs(file.rows[0].file_data),section=referenceSectionInfo(paragraphs);
+    const bibliography=section?paragraphs.filter(p=>p.index>section.headingIndex&&(section.stopIndex==null||p.index<section.stopIndex)).map(p=>p.text).join(" "):"";
+    if(!section||eligible.some(x=>!bibliography.includes(x.url))){
+      await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_NOT_IN_DOCX"});
+    }
+  }
   const previous=d.versions.find(x=>x.workflow==="Vigente");
   for(const old of d.versions)if(old.workflow==="Vigente")old.workflow="Obsoleto";
   v.workflow="Vigente";v.approver=req.user.u;v.validator=req.user.u;v.validationDate=new Date().toISOString().slice(0,10);
