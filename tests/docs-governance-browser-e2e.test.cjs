@@ -40,6 +40,22 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   await nav.click();
   assert.equal(await page.locator("#view-docs").isVisible(),true);
   assert.match(await page.locator("#view-docs").innerText(),/document|POP|revis/i);
+  // PR #102: real Chromium execution of browser LGPD preflight (including ZIP DOCX).
+  const privacy=await page.evaluate(async()=>({
+   clean:await window.localDocPrivacyCheck("Procedimento institucional de higienização neonatal."),
+   cpf:await window.localDocPrivacyCheck("CPF: 529.982.247-25"),
+   cns:await window.localDocPrivacyCheck("CNS: 123456789012345"),
+   birth:await window.localDocPrivacyCheck("data de nascimento: 01/01/2025"),
+   name:await window.localDocPrivacyCheck("Paciente: Maria Silva")
+  }));
+  assert.deepEqual(privacy.clean,[]);assert.ok(privacy.cpf.includes("CPF"));
+  assert.ok(privacy.cns.includes("CNS"));assert.ok(privacy.birth.includes("NASCIMENTO"));assert.ok(privacy.name.includes("NOME_CLINICO"));
+  // Click the real draft-conciliation controls, ensuring a pending draft is not silently removed.
+  await page.evaluate(()=>{localStorage.setItem("siash_cloud_pending_v1",JSON.stringify({user:SESSION.user,revision:1,state:{docs:[]}}));document.querySelector("#cloud-conflict-panel").hidden=false});
+  await page.locator("#cloud-conflict-close").click();
+  assert.equal(await page.locator("#cloud-conflict-panel").isVisible(),false);
+  assert.equal(await page.evaluate(()=>!!localStorage.getItem("siash_cloud_pending_v1")),true);
+  await page.evaluate(()=>localStorage.removeItem("siash_cloud_pending_v1"));
   const response=await page.evaluate(async token=>{
    const r=await fetch("/api/docs/publish",{method:"POST",headers:{"authorization":"Bearer "+token,"content-type":"application/json"},body:JSON.stringify({doc_id:"nonexistent",revision:"01",base_revision:0,technical_confirmation:false})});
    return {status:r.status,data:await r.json()};
