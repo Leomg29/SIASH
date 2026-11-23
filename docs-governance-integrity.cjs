@@ -15,7 +15,7 @@ function privacyFindings(text){
  if(/\b(?:CNS|cart[aã]o\s+nacional\s+de\s+sa[uú]de)\s*[:#-]?\s*\d{15}\b/i.test(s))hits.push("CNS");
  if(/\b(?:prontu[aá]rio|registro\s+do\s+paciente|n[úu]mero\s+de\s+atendimento)\s*(?:n[ºo.]*)?\s*[:#-]\s*[A-Z0-9-]{4,}\b/i.test(s))hits.push("PRONTUARIO");
  if(/\b(?:data\s+de\s+nascimento|nascid[oa]\s+em|DN)\s*[:#-]\s*\d{2}[/.-]\d{2}[/.-]\d{4}\b/i.test(s))hits.push("NASCIMENTO");
- if(/\b(?:paciente|RN|rec[eé]m[- ]nascido|nome\s+do\s+paciente)\s*[:#-]\s*[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][a-záàâãéêíóôõúç]+(?:\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][a-záàâãéêíóôõúç]+){1,3}\b/.test(s))hits.push("NOME_CLINICO");
+ if(/\b(?:paciente|RN(?:\s+de)?|rec[eé]m[- ]nascido|nome\s+do\s+paciente)\s*[:#-]?\s*[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][a-záàâãéêíóôõúç]+(?:\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][a-záàâãéêíóôõúç]+){1,3}\b/i.test(s))hits.push("NOME_CLINICO");
  return [...new Set(hits)]
 }
 function validateDocsMutation(oldDocs,newDocs){
