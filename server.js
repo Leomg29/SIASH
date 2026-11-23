@@ -651,8 +651,36 @@ app.get("/api/doc/:key",auth,async(req,res)=>{
 const LEGACY_DOC_CONVERT_TIMEOUT_MS=Math.max(30000,Number(process.env.LEGACY_DOC_CONVERT_TIMEOUT_MS||120000));
 function isLegacyBinaryDocName(name=""){return /\.doc$/i.test(String(name||"").trim())&&!/\.docx$/i.test(String(name||"").trim())}
 function hasOleCompoundSignature(buf){return Buffer.isBuffer(buf)&&buf.length>=8&&buf.subarray(0,8).equals(Buffer.from([0xD0,0xCF,0x11,0xE0,0xA1,0xB1,0x1A,0xE1]))}
+function docxCrc32(bytes){
+ let crc=0xffffffff;
+ for(const byte of bytes){crc^=byte;for(let j=0;j<8;j++)crc=(crc>>>1)^((crc&1)?0xedb88320:0)}
+ return (crc^0xffffffff)>>>0;
+}
+function docxXmlWellFormed(xml){
+ if(!xml||!/^\\s*(?:<\\?xml[^>]*\\?>\\s*)?</.test(xml))return false;
+ const stack=[],tokens=xml.match(/<!--[\\s\\S]*?-->|<\\?[^>]*\\?>|<!\\[CDATA\\[[\\s\\S]*?\\]\\]>|<![^>]*>|<[^>]*>/g)||[];
+ for(const token of tokens){
+  if(/^<\\?|^<!/.test(token))continue;
+  if(/^<\\//.test(token)){const name=token.slice(2,-1).trim();if(stack.pop()!==name)return false}
+  else if(!/\\/\\s*>$/.test(token)){const name=(token.match(/^<([^\\s/>]+)/)||[])[1];if(!name)return false;stack.push(name)}
+ }
+ return stack.length===0&&tokens.length>0;
+}
 function validateGeneratedDocx(buf){
-  try{const z=new AdmZip(buf),e=z.getEntry("word/document.xml");return !!(e&&e.getData().length)}catch(_){return false}
+ try{
+  if(!Buffer.isBuffer(buf)||buf.length<100||buf.readUInt32LE(0)!==0x04034b50)return false;
+  const zip=new AdmZip(buf),entries=zip.getEntries();
+  if(!entries.length||entries.length>3000)return false;
+  for(const entry of entries){
+   if(entry.isDirectory)continue;
+   const bytes=entry.getData();
+   if(docxCrc32(bytes)!==(entry.header.crc>>>0))return false;
+  }
+  const types=zip.getEntry("[Content_Types].xml"),document=zip.getEntry("word/document.xml");
+  if(!types||!document)return false;
+  const typesXml=types.getData().toString("utf8"),docXml=document.getData().toString("utf8");
+  return docxXmlWellFormed(typesXml)&&docxXmlWellFormed(docXml)&&/<Types(?:\\s|>)/.test(typesXml)&&/<w:document(?:\\s|>)/.test(docXml)&&/<w:body(?:\\s|>)/.test(docXml);
+ }catch(_){return false}
 }
 async function convertLegacyDocBufferToDocx(inputBuffer,inputName="documento.doc"){
   if(!hasOleCompoundSignature(inputBuffer))throw new Error("O arquivo .doc não possui a assinatura binária esperada do Word antigo; nenhuma conversão foi realizada.");
