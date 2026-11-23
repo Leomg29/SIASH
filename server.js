@@ -604,6 +604,9 @@ app.post("/api/docs/publish",auth,async(req,res)=>{
   const file=await client.query("SELECT file_data FROM siash_documents WHERE doc_key=$1",[v.wordKey]);
   if(!file.rows.length){await client.query("ROLLBACK");return res.status(422).json({error:"DOC_FILE_MISSING"})}
   const digest=docsGuard.hash(file.rows[0].file_data);
+  if(!validateGeneratedDocx(file.rows[0].file_data)){await client.query("ROLLBACK");return res.status(422).json({error:"DOCX_INTEGRITY_INVALID"})}
+  const storedHash=await client.query("SELECT sha256 FROM siash_doc_artifacts WHERE doc_key=$1",[v.wordKey]);
+  if(storedHash.rows.length&&storedHash.rows[0].sha256!==digest){await client.query("ROLLBACK");return res.status(422).json({error:"DOC_ARTIFACT_HASH_MISMATCH"})}
   const previous=d.versions.find(x=>x.workflow==="Vigente");
   for(const old of d.versions)if(old.workflow==="Vigente")old.workflow="Obsoleto";
   v.workflow="Vigente";v.approver=req.user.u;v.validator=req.user.u;v.validationDate=new Date().toISOString().slice(0,10);
