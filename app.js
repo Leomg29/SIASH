@@ -76,6 +76,31 @@ const SIASH_PENDING_KEY="siash_cloud_pending_v1";
 function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
 function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:SIASH_CLOUD.revision,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
 function clearCloudDraft(){try{localStorage.removeItem(SIASH_PENDING_KEY)}catch(e){console.error(e)}}
+// PR #102: deterministic local LGPD gate; same patterns and CPF checksum as docs-governance-integrity.cjs.
+function localCpfValid(value){const d=String(value).replace(/\\D/g,"");if(d.length!==11||/^(\\d)\\1+$/.test(d))return false;for(let t=9;t<11;t++){let sum=0;for(let i=0;i<t;i++)sum+=Number(d[i])*(t+1-i);let check=(sum*10)%11;if(check===10)check=0;if(check!==Number(d[t]))return false}return true}
+function localPrivacyFindings(text){
+ const s=String(text||""),hits=[];
+ if(/\\b\\d{3}[. ]?\\d{3}[. ]?\\d{3}[- ]?\\d{2}\\b/g.test(s)&&[...s.matchAll(/\\b\\d{3}[. ]?\\d{3}[. ]?\\d{3}[- ]?\\d{2}\\b/g)].some(m=>localCpfValid(m[0])))hits.push("CPF");
+ if(/\\b(?:CNS|cart[aã]o\\s+nacional\\s+de\\s+sa[uú]de)\\s*[:#-]?\\s*\\d{15}\\b/i.test(s))hits.push("CNS");
+ if(/\\b(?:prontu[aá]rio|registro\\s+do\\s+paciente|n[úu]mero\\s+de\\s+atendimento)\\s*(?:n[ºo.]*)?\\s*[:#-]\\s*[A-Z0-9-]{4,}\\b/i.test(s))hits.push("PRONTUARIO");
+ if(/\\b(?:data\\s+de\\s+nascimento|nascid[oa]\\s+em|DN)\\s*[:#-]\\s*\\d{2}[/.-]\\d{2}[/.-]\\d{4}\\b/i.test(s))hits.push("NASCIMENTO");
+ if(/\\b(?:paciente|RN|rec[eé]m[- ]nascido|nome\\s+do\\s+paciente)\\s*[:#-]\\s*[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][a-záàâãéêíóôõúç]+(?:\\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ][a-záàâãéêíóôõúç]+){1,3}\\b/.test(s))hits.push("NOME_CLINICO");
+ return [...new Set(hits)];
+}
+async function localDocPrivacyCheck(input){
+ let text=String(input??"");
+ if(input instanceof Blob){
+  if(typeof JSZip==="undefined")throw Error("LGPD: leitor DOCX indisponível; envio bloqueado.");
+  const zip=await JSZip.loadAsync(await input.arrayBuffer(),{checkCRC32:true});
+  const documentXml=zip.file("word/document.xml");if(!documentXml)throw Error("LGPD: documento Word inválido; envio bloqueado.");
+  const xml=await documentXml.async("string");
+  const doc=new DOMParser().parseFromString(xml,"application/xml");
+  if(doc.querySelector("parsererror"))throw Error("LGPD: XML do Word inválido; envio bloqueado.");
+  text=Array.from(doc.getElementsByTagNameNS("http://schemas.openxmlformats.org/wordprocessingml/2006/main","t")).map(x=>x.textContent).join(" ");
+ }
+ return localPrivacyFindings(text);
+}
+window.localDocPrivacyCheck=localDocPrivacyCheck;
 function cloudDraftIsCurrent(pending,remote){return !!(pending&&remote?.exists&&Number.isSafeInteger(pending.revision)&&pending.revision===remote.revision)}
 
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
