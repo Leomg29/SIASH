@@ -6,6 +6,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 const fs = require("fs");
+const crypto=require("node:crypto");
+const docsGuard=require("./docs-governance-integrity.cjs");
 const os = require("os");
 const { execFile } = require("child_process");
 const { promisify } = require("util");
@@ -49,6 +51,36 @@ async function initDb(){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_by TEXT
     );
+    CREATE TABLE IF NOT EXISTS siash_doc_access(
+      username TEXT NOT NULL REFERENCES siash_users(username),
+      sector TEXT NOT NULL,
+      level TEXT NOT NULL CHECK(level IN ('reader','editor','validator')),
+      PRIMARY KEY(username,sector)
+    );
+    CREATE TABLE IF NOT EXISTS siash_doc_artifacts(
+      id UUID PRIMARY KEY,
+      doc_key TEXT UNIQUE NOT NULL REFERENCES siash_documents(doc_key),
+      sha256 TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      predecessor_key TEXT
+    );
+    CREATE TABLE IF NOT EXISTS siash_doc_publication_audit(
+      id UUID PRIMARY KEY,
+      doc_id TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      previous_revision TEXT,
+      file_sha256 TEXT NOT NULL,
+      state_revision BIGINT NOT NULL,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      details JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+    CREATE OR REPLACE FUNCTION siash_docs_audit_no_mutation() RETURNS trigger LANGUAGE plpgsql AS $docaudit$
+    BEGIN RAISE EXCEPTION 'Document publication audit is append-only'; END $docaudit$;
+    DROP TRIGGER IF EXISTS siash_doc_publication_immutable ON siash_doc_publication_audit;
+    CREATE TRIGGER siash_doc_publication_immutable BEFORE UPDATE OR DELETE ON siash_doc_publication_audit
+      FOR EACH ROW EXECUTE FUNCTION siash_docs_audit_no_mutation();
     CREATE TABLE IF NOT EXISTS siash_state_history(
       id BIGSERIAL PRIMARY KEY,
       payload JSONB NOT NULL,
@@ -526,15 +558,57 @@ app.put("/api/state/init",auth,async(req,res)=>{
   res.json({ok:true,revision:Number(created.rows[0].revision)});
 });
 
+async function docPermission(username,role,sector,action,db=pool){
+ if(role==="owner")return true;
+ const q=await db.query("SELECT sector,level FROM siash_doc_access WHERE username=$1 AND (sector=$2 OR sector='*')",[username,sector]);
+ return q.rows.some(row=>docsGuard.allowed(row.level,action,row.sector,sector));
+}
 app.put("/api/doc/:key",auth,async(req,res)=>{
-  const key=req.params.key, fileName=decodeURIComponent(req.headers["x-file-name"]||key), mime=req.headers["content-type"]||"application/octet-stream";
-  if(!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({error:"Arquivo vazio."});
-  await pool.query(`
-    INSERT INTO siash_documents(doc_key,file_name,mime_type,file_data,updated_at,updated_by)
-    VALUES($1,$2,$3,$4,NOW(),$5)
-    ON CONFLICT(doc_key) DO UPDATE SET file_name=EXCLUDED.file_name,mime_type=EXCLUDED.mime_type,file_data=EXCLUDED.file_data,updated_at=NOW(),updated_by=EXCLUDED.updated_by
-  `,[key,fileName,mime,req.body,req.user.u]);
-  res.json({ok:true});
+ const key=req.params.key,fileName=decodeURIComponent(req.headers["x-file-name"]||key),mime=req.headers["content-type"]||"application/octet-stream";
+ if(!Buffer.isBuffer(req.body)||!req.body.length)return res.status(400).json({error:"Arquivo vazio."});
+ const sector=String(req.headers["x-doc-sector"]||"UTIN");
+ if(!(await docPermission(req.user.u,req.user.r,sector,"edit")))return res.status(403).json({error:"Permissão documental insuficiente."});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const existing=await client.query("SELECT file_data FROM siash_documents WHERE doc_key=$1 FOR UPDATE",[key]);
+  if(existing.rows.length){
+   await client.query("ROLLBACK");
+   return res.status(422).json({error:"DOC_ARTIFACT_IMMUTABLE"});
+  }
+  await client.query("INSERT INTO siash_documents(doc_key,file_name,mime_type,file_data,updated_at,updated_by) VALUES($1,$2,$3,$4,NOW(),$5)",[key,fileName,mime,req.body,req.user.u]);
+  const digest=docsGuard.hash(req.body);
+  await client.query("INSERT INTO siash_doc_artifacts(id,doc_key,sha256,created_by) VALUES($1,$2,$3,$4)",[crypto.randomUUID(),key,digest,req.user.u]);
+  await client.query("COMMIT");
+  return res.status(201).json({ok:true,sha256:digest});
+ }catch(e){await client.query("ROLLBACK").catch(()=>{});return res.status(503).json({error:"Falha ao armazenar artefato."})}finally{client.release()}
+});
+app.post("/api/docs/publish",auth,async(req,res)=>{
+ const {doc_id,revision,base_revision,technical_confirmation}=req.body||{};
+ if(technical_confirmation!==true)return res.status(422).json({error:"TECHNICAL_CONFIRMATION_REQUIRED"});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const q=await client.query("SELECT payload,revision FROM siash_state WHERE id=1 FOR UPDATE");
+  if(!q.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"STATE_MISSING"})}
+  const current=Number(q.rows[0].revision);
+  if(!Number.isSafeInteger(Number(base_revision))||current!==Number(base_revision)){await client.query("ROLLBACK");return res.status(409).json({error:"DOC_REVISION_CONFLICT",current_revision:current})}
+  const payload=q.rows[0].payload,docs=payload?.state?.docs||[],d=docs.find(x=>String(x.id)===String(doc_id));
+  if(!d){await client.query("ROLLBACK");return res.status(404).json({error:"DOC_NOT_FOUND"})}
+  if(!(await docPermission(req.user.u,req.user.r,d.sector||"UTIN","approve",client))){await client.query("ROLLBACK");return res.status(403).json({error:"DOC_APPROVER_FORBIDDEN"})}
+  const v=(d.versions||[]).find(x=>String(x.revision)===String(revision));
+  if(!v||v.workflow!=="Aguardando aprovação"||!v.wordKey||!v.publicationPrepared||!v.approvalEmbedded||!v.docxIntegrityValidated){await client.query("ROLLBACK");return res.status(422).json({error:"DOC_NOT_READY"})}
+  if(v.createdBy===req.user.u&&req.user.r!=="owner"){await client.query("ROLLBACK");return res.status(403).json({error:"DOC_SELF_APPROVAL_FORBIDDEN"})}
+  const file=await client.query("SELECT file_data FROM siash_documents WHERE doc_key=$1",[v.wordKey]);
+  if(!file.rows.length){await client.query("ROLLBACK");return res.status(422).json({error:"DOC_FILE_MISSING"})}
+  const digest=docsGuard.hash(file.rows[0].file_data);
+  const previous=d.versions.find(x=>x.workflow==="Vigente");
+  for(const old of d.versions)if(old.workflow==="Vigente")old.workflow="Obsoleto";
+  v.workflow="Vigente";v.approver=req.user.u;v.validator=req.user.u;v.validationDate=new Date().toISOString().slice(0,10);
+  await client.query("UPDATE siash_state SET payload=$1,revision=revision+1,updated_at=NOW(),updated_by=$2 WHERE id=1",[payload,req.user.u]);
+  await client.query("INSERT INTO siash_doc_publication_audit(id,doc_id,revision,actor,previous_revision,file_sha256,state_revision,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",[crypto.randomUUID(),String(doc_id),String(revision),req.user.u,previous?.revision||null,digest,current+1,JSON.stringify({technical_confirmation:true,timezone:"America/Sao_Paulo"})]);
+  await client.query("COMMIT");return res.json({ok:true,revision:current+1,sha256:digest});
+ }catch(e){await client.query("ROLLBACK").catch(()=>{});return res.status(503).json({error:"DOC_PUBLICATION_FAILED"})}finally{client.release()}
 });
 app.get("/api/doc/:key",auth,async(req,res)=>{
   const q=await pool.query("SELECT file_name,mime_type,file_data FROM siash_documents WHERE doc_key=$1",[req.params.key]);
@@ -1766,6 +1840,8 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     if(!doc_code||!file_base64)return res.status(400).json({error:"POP/arquivo não informado."});
     const original=Buffer.from(file_base64,"base64");if(original.length>18*1024*1024)return res.status(413).json({error:"Word acima do limite de 18 MB para revisão automática."});
     const historyCleanup=cleanDuplicateSiashHistoryRows(original),baseDocument=historyCleanup.buffer;
+    const privacy=docsGuard.privacyFindings(docxParagraphs(baseDocument).map(p=>p.text).join("\\n"));
+    if(privacy.length){await audit(req.user.u,"SIASH Docs IA: bloqueio LGPD",{status:"blocked",categories:privacy});return res.status(422).json({error:"DOC_PRIVACY_BLOCKED",categories:privacy})}
     const paragraphs=docxParagraphs(baseDocument);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});const hygieneBefore=bibliographyHygieneState(baseDocument);const latestReferenceYear=latestReferenceYearInDoc(paragraphs);
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text)&&!institutionalStructureProtectedText(p.text));
