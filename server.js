@@ -1426,7 +1426,17 @@ function rankScientificSources(results=[]){
     .filter(r=>r._tier>=0)
     .sort((a,b)=>b._tier-a._tier||a._originalIndex-b._originalIndex);
 }
+const scientificSearchCache=new Map(),scientificQuotaCooldown=new Map();
+const SCIENTIFIC_CACHE_TTL_MS=10*60*1000,SCIENTIFIC_COOLDOWN_MS=5*60*1000;
+function scientificCacheGet(key){const x=scientificSearchCache.get(key);if(!x)return null;if(x.expires<=Date.now()){scientificSearchCache.delete(key);return null}return x.value}
+function scientificCachePut(key,value){if(scientificSearchCache.size>100)scientificSearchCache.delete(scientificSearchCache.keys().next().value);scientificSearchCache.set(key,{value,expires:Date.now()+SCIENTIFIC_CACHE_TTL_MS})}
+function scientificCooling(name){return (scientificQuotaCooldown.get(name)||0)>Date.now()}
+function scientificQuotaError(error){return /(?:\\b429\\b|quota|rate.limit|resource.exhausted|insufficient.credits)/i.test(String(error?.message||error||""))}
+function scientificTrip(name,error){if(scientificQuotaError(error)){scientificQuotaCooldown.set(name,Date.now()+SCIENTIFIC_COOLDOWN_MS);console.warn("[SIASH AI] cooldown quota | provider="+name)}}
 async function tavilySearchRequest(query,extra={}){
+  const cacheKey=JSON.stringify([query,extra]),cached=scientificCacheGet(cacheKey);
+  if(cached)return cached;
+  if(scientificCooling("tavily"))throw new Error("Tavily quota cooldown");
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
   try{
     const response=await fetch("https://api.tavily.com/search",{
@@ -1435,8 +1445,8 @@ async function tavilySearchRequest(query,extra={}){
       body:JSON.stringify({query,search_depth:"basic",topic:"general",max_results:10,include_answer:false,include_raw_content:false,...extra}),
       signal:controller.signal
     });
-    if(!response.ok){const detail=await response.text().catch(()=> "");throw new Error(`Tavily indisponível (${response.status}). ${detail.slice(0,200)}`)}
-    return await response.json();
+    if(!response.ok){const detail=await response.text().catch(()=> "");const error=new Error(`Tavily indisponível (${response.status}). ${detail.slice(0,200)}`);scientificTrip("tavily",error);throw error}
+    const data=await response.json();scientificCachePut(cacheKey,data);return data;
   }finally{clearTimeout(timer)}
 }
 function primaryScientificInstitution(raw=""){
@@ -1654,6 +1664,7 @@ async function runAIRevision(prompt,requested,options={}){
   }
   console.log(`[SIASH AI] início da revisão | ordem=${order.join(">")}`);
   for(const p of order){
+    if(scientificCooling(p)){errors.push(`${p}: quota cooldown`);continue}
     try{
       if(requireWebResearch){
         const webCapable=!!webResearch||(p==="openai"&&!!openaiClient)||(p==="gemini"&&!!GEMINI_API_KEY&&geminiUseSearch());
