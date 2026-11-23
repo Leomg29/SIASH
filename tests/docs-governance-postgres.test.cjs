@@ -22,3 +22,15 @@ test("PR100 isolated PostgreSQL: additive schema, immutable artifact identity an
   assert.equal((await db.query("SELECT COUNT(*)::int n FROM siash_documents")).rows[0].n,existing.rows[0].n);
  }finally{await db.end()}
 });
+
+test("PR100: scientific evidence and legacy document mutation guards",()=>{
+ const {privacyFindings,scientificSourceUrl,scientificReferencesVerified,validateDocsMutation}=require("../docs-governance-integrity.cjs");
+ assert.ok(privacyFindings("CPF: 529.982.247-25").length>0);
+ assert.equal(scientificSourceUrl("https://pubmed.ncbi.nlm.nih.gov.evil.example/123/"),null);
+ const refs=[{title:"Clinical research",year:"2025",url:"https://pubmed.ncbi.nlm.nih.gov/12345/"}];
+ assert.equal(scientificReferencesVerified(refs,refs.map(x=>x.url)),true);
+ assert.equal(scientificReferencesVerified(refs,[]),false);
+ const legacy=[{id:"legacy",versions:[{revision:"01",createdAt:"2024-01-01",workflow:"Vigente",wordKey:"immutable"}]}];
+ assert.equal(validateDocsMutation(legacy,[]).ok,false);
+ assert.equal(validateDocsMutation(legacy,[{id:"legacy",versions:[{...legacy[0].versions[0],workflow:"Obsoleto"}]}]).ok,true);
+});
