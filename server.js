@@ -1485,6 +1485,50 @@ function primaryScientificInstitution(raw=""){
   if(domainMatches(host,"sbp.com.br"))return "SBP";
   return "";
 }
+// Public literature search: no API key and no patient data. Query must be a clinical topic.
+async function researchPublicLiterature(query){
+ const topic=String(query||"").replace(/\\s+/g," ").trim().slice(0,180);
+ if(!topic||docsGuard.privacyFindings(topic).length)throw new Error("Pesquisa pública bloqueada por LGPD ou consulta vazia");
+ const key="public-literature:"+topic.toLowerCase(),cached=scientificCacheGet(key);
+ if(cached)return {...cached,researchMode:"public_literature_cache"};
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+ const sources=[],seen=new Set();
+ function append(title,url,year,institution,content){
+  const canonical=docsGuard.scientificSourceUrl(url);
+  if(!canonical||!title||!/^\\d{4}$/.test(String(year))||seen.has(canonical))return;
+  seen.add(canonical);sources.push({sourceId:"FONTE_"+(sources.length+1),title:String(title).slice(0,350),url:canonical,year:String(year),sourceInstitution:institution,content:String(content||"").slice(0,800)});
+ }
+ try{
+  const pubmedQuery=encodeURIComponent(topic);
+  const esearch=await fetch("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=6&term="+pubmedQuery,{signal:controller.signal});
+  if(esearch.ok){
+   const ids=(await esearch.json())?.esearchresult?.idlist||[];
+   if(ids.length){
+    const summary=await fetch("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&retmode=json&id="+ids.map(encodeURIComponent).join(","),{signal:controller.signal});
+    if(summary.ok){
+     const data=await summary.json();
+     for(const id of ids){const item=data?.result?.[id];if(item)append(item.title,"https://pubmed.ncbi.nlm.nih.gov/"+id+"/",(String(item.pubdate||"").match(/\\b(?:19|20)\\d{2}\\b/)||[])[0],"PubMed / "+String(item.fulljournalname||item.source||""),item.title)}
+    }
+   }
+  }
+ }catch(e){console.warn("[SIASH AI] PubMed unavailable: "+String(e?.message||"network").slice(0,100))}
+ try{
+  const pmc=await fetch("https://www.ebi.ac.uk/europepmc/webservices/rest/search?format=json&pageSize=6&query="+encodeURIComponent(topic),{signal:controller.signal});
+  if(pmc.ok){
+   const data=await pmc.json();
+   for(const item of data?.resultList?.result||[]){
+    const pmid=String(item.pmid||"").trim();
+    // Europe PMC records are cited through canonical PubMed links when PMID exists.
+    if(pmid&&/^\\d+$/.test(pmid))append(item.title,"https://pubmed.ncbi.nlm.nih.gov/"+pmid+"/",item.pubYear,"Europe PMC / "+String(item.journalTitle||""),item.title);
+   }
+  }
+ }catch(e){console.warn("[SIASH AI] Europe PMC unavailable: "+String(e?.message||"network").slice(0,100))}
+ finally{clearTimeout(timer)}
+ if(!sources.length)throw new Error("Nenhuma referência pública científica verificável foi encontrada");
+ const evidence=sources.map(x=>"["+x.sourceId+"]\\nInstituição: "+x.sourceInstitution+"\\nTítulo: "+x.title+"\\nAno: "+x.year+"\\nURL: "+x.url+"\\nConteúdo: "+x.content).join("\\n\\n");
+ const result={sources,evidence,researchMode:"public_literature"};
+ scientificCachePut(key,result);return result;
+}
 async function researchWithTavily(prompt,queryOverride=""){
   if(!TAVILY_API_KEY)throw new Error("TAVILY_API_KEY não configurada no servidor.");
   const query=String(queryOverride||prompt||"").replace(/\s+/g," ").trim().slice(0,400);
