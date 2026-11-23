@@ -1,9 +1,9 @@
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict");
-const {Pool}=require("pg");
 const {hash}=require("../docs-governance-integrity.cjs");
 test("PR100 isolated PostgreSQL: additive schema, immutable artifact identity and hash",{skip:process.env.SIASH_ISOLATED_CI!=="1"},async()=>{
  assert.match(process.env.DATABASE_URL||"",/siash_ci/);
+ const {Pool}=require("pg");
  const db=new Pool({connectionString:process.env.DATABASE_URL,ssl:false});
  try{
   const names=["siash_doc_access","siash_doc_artifacts","siash_doc_publication_audit"];
