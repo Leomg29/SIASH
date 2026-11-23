@@ -1,11 +1,24 @@
 "use strict";
 const test=require("node:test"),assert=require("node:assert/strict");
+const http=require("node:http");
 const {spawn}=require("node:child_process"),{setTimeout:delay}=require("node:timers/promises");
 test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process.env.SIASH_ISOLATED_CI!=="1",timeout:120000},async()=>{
  const {Pool}=require("pg"),{chromium}=require("playwright"),bcrypt=require("bcryptjs");
+
+ const fixture=http.createServer((req,res)=>{
+  const send=(obj,code=200,type="application/json")=>{res.writeHead(code,{"content-type":type});res.end(type==="application/json"?JSON.stringify(obj):obj)};
+  if(req.url.startsWith("/eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"))return send({esearchresult:{idlist:["123456"]}});
+  if(req.url.startsWith("/eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"))return send({result:{"123456":{title:"Neonatal hand hygiene clinical study",pubdate:"2025",fulljournalname:"Clinical Neonatology"}}});
+  if(req.url.startsWith("/www.ebi.ac.uk/europepmc/webservices/rest/search"))return send({resultList:{result:[{pmid:"123456",title:"Neonatal hand hygiene clinical study",pubYear:"2025",journalTitle:"Clinical Neonatology"}]}});
+  if(req.url.startsWith("/pubmed.ncbi.nlm.nih.gov/123456/"))return send("<html><head><title>Neonatal hand hygiene clinical study</title></head><body>Neonatal hand hygiene clinical study 2025</body></html>",200,"text/html");
+  if(req.url.startsWith("/generativelanguage.googleapis.com/"))return send({candidates:[{content:{parts:[{text:JSON.stringify({summary:"Revisão com fonte científica controlada",updates:[{paragraph_index:0,new_text:"Higienização das mãos em neonatologia conforme evidência científica revisada.",reason:"Atualização com fonte rastreável",references:["FONTE_1"]}],references:[]})}]}}]});
+  return send({error:"Fixture not found"},404);
+ });
+ await new Promise(resolve=>fixture.listen(0,"127.0.0.1",resolve));
+ const fixtureOrigin="http://127.0.0.1:"+fixture.address().port;
  const db=new Pool({connectionString:process.env.DATABASE_URL,ssl:false});
  const port=18991,url="http://127.0.0.1:"+port;
- const child=spawn(process.execPath,["server.js"],{env:{...process.env,PORT:String(port),PGSSLMODE:"disable",JWT_SECRET:"siash-pr100-chromium-isolated-secret-2026"},stdio:["ignore","pipe","pipe"]});
+ const child=spawn(process.execPath,["server.js"],{env:{...process.env,PORT:String(port),PGSSLMODE:"disable",JWT_SECRET:"siash-pr100-chromium-isolated-secret-2026",SIASH_PR100_FIXTURE_ORIGIN:fixtureOrigin,GEMINI_API_KEY:"pr100-local-fixture-key",AI_PROVIDER:"gemini",TAVILY_API_KEY:""},stdio:["ignore","pipe","pipe"]});
  let logs="",browser;
  child.stdout.on("data",x=>logs+=x);child.stderr.on("data",x=>logs+=x);
  try{
@@ -92,6 +105,24 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   zip.addFile("word/document.xml",Buffer.from('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>FUNDAÇÃO HOSPITALAR - CONFERÊNCIA TÉCNICA ASSISTIDA</w:t></w:r></w:p><w:p><w:r><w:t>Referências</w:t></w:r></w:p><w:p><w:r><w:t>'+officialUrl+'</w:t></w:r></w:p></w:body></w:document>'));
   const docx=zip.toBuffer();
   assert.equal(new AdmZip(docx).getEntry("word/document.xml").getData().toString("utf8").includes(officialUrl),true);
+
+  // The actual revision route executes public PubMed/Europe PMC research, Gemini-shaped
+  // provider response and OOXML generation against the deterministic local HTTP fixture.
+  const sourceZip=new AdmZip();
+  sourceZip.addFile("[Content_Types].xml",zip.getEntry("[Content_Types].xml").getData());
+  sourceZip.addFile("word/document.xml",Buffer.from('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Higienização das mãos em neonatologia.</w:t></w:r></w:p><w:p><w:r><w:t>Referências</w:t></w:r></w:p></w:body></w:document>'));
+  const generated=await page.evaluate(async ({token,source})=>{
+   const response=await fetch("/api/ai/revise-pop",{method:"POST",headers:{authorization:"Bearer "+token,"content-type":"application/json"},body:JSON.stringify({doc_code:"PR100-CI-TEST",doc_title:"Higienização das mãos em neonatologia",current_revision:"01",next_revision:"02",file_name:"PR100-CI.docx",file_base64:source,provider:"gemini",correction_request:"Atualizar descrição de higienização das mãos com base na fonte científica"})});
+   return {status:response.status,data:await response.json()};
+  },{token,source:sourceZip.toBuffer().toString("base64")});
+  assert.equal(generated.status,200,JSON.stringify(generated.data).slice(0,1000));
+  assert.equal(generated.data.ok,true);
+  const generatedBuffer=Buffer.from(generated.data.file_base64,"base64");
+  const generatedZip=new AdmZip(generatedBuffer);
+  for(const entry of generatedZip.getEntries())if(!entry.isDirectory)assert.ok(entry.getData().length>=0);
+  const generatedXml=generatedZip.getEntry("word/document.xml").getData().toString("utf8");
+  assert.match(generatedXml,/Referências/);
+  assert.ok(generatedXml.includes(officialUrl),"official PubMed URL must be embedded in generated Word bibliography");
   const prior=await db.query("SELECT payload,revision FROM siash_state WHERE id=1");
   if(prior.rows.length){
    const originalPayload=prior.rows[0].payload,originalRevision=prior.rows[0].revision;
@@ -122,5 +153,5 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   }
 
 
- }finally{await browser?.close();child.kill("SIGTERM");await db.end()}
+ }finally{await browser?.close();child.kill("SIGTERM");await db.end();await new Promise(resolve=>fixture.close(resolve))}
 });
