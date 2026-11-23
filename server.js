@@ -1511,6 +1511,7 @@ function primaryScientificInstitution(raw=""){
   if(domainMatches(host,"fiocruz.br"))return "FIOCRUZ";
   if(domainMatches(host,"cofen.gov.br")||host.includes("coren-"))return "COFEN_COREN";
   if(domainMatches(host,"sbp.com.br"))return "SBP";
+  if(domainMatches(host,"pubmed.ncbi.nlm.nih.gov")&&/^\/\d+\/?$/.test(new URL(raw).pathname))return "PUBMED";
   return "";
 }
 // Public literature search: no API key and no patient data. Query must be a clinical topic.
