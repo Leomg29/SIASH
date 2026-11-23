@@ -2109,7 +2109,11 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     // PR #101: validate the prepared DOCX itself; this does NOT approve publication.
     const preparedZip=new AdmZip(revised);
     const requiredParts=["[Content_Types].xml","_rels/.rels","word/document.xml"];
-    const preparedDocxIntegrity={zipCrc32:preparedZip.test()===true,ooxml:requiredParts.every(name=>!!preparedZip.getEntry(name))};
+    // Validate each uncompressed ZIP member against its recorded CRC32. AdmZip.test()
+    // is not reliable for our synthetic OOXML fixtures; getData() also detects corrupt deflate streams.
+    const crc32=data=>{let crc=0xFFFFFFFF;for(const byte of data){crc^=byte;for(let bit=0;bit<8;bit++)crc=(crc>>>1)^((crc&1)?0xEDB88320:0)}return (crc^0xFFFFFFFF)>>>0};
+    const zipCrc32=preparedZip.getEntries().every(entry=>entry.isDirectory||crc32(entry.getData())===(entry.header.crc>>>0));
+    const preparedDocxIntegrity={zipCrc32,ooxml:requiredParts.every(name=>!!preparedZip.getEntry(name))};
     if(!preparedDocxIntegrity.zipCrc32||!preparedDocxIntegrity.ooxml)throw new Error(`DOCX_PREPARED_INTEGRITY_FAILED zip=${preparedDocxIntegrity.zipCrc32} ooxml=${preparedDocxIntegrity.ooxml}`);
     await audit(req.user.u,"SIASH Docs: proposta de revisão gerada pela IA para conferência profissional.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,periodic_review_only:periodicReviewOnly,periodic_review_required:periodicReviewRequired,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:false,requires_professional_review:true,validation_warnings:verification.validationWarnings||[],references_verified:classified.verified.length,references_pending:classified.pending.length});
     res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"sem_pesquisa_externa",docxPreparedIntegrity:preparedDocxIntegrity,summary:validatedSummary,changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
