@@ -119,7 +119,10 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   assert.equal(generated.data.ok,true);
   const generatedBuffer=Buffer.from(generated.data.file_base64,"base64");
   const generatedZip=new AdmZip(generatedBuffer);
-  for(const entry of generatedZip.getEntries())if(!entry.isDirectory)assert.ok(entry.getData().length>=0);
+  function crc32(bytes){let crc=0xffffffff;for(const byte of bytes){crc^=byte;for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0)}return (crc^0xffffffff)>>>0}
+  assert.equal(generatedBuffer.readUInt32LE(0),0x04034b50,"ZIP local file header");
+  for(const entry of generatedZip.getEntries())if(!entry.isDirectory)assert.equal(crc32(entry.getData()),entry.header.crc>>>0,"ZIP CRC32 for "+entry.entryName);
+  assert.ok(generatedZip.getEntry("[Content_Types].xml"),"OOXML content types");
   const generatedXml=generatedZip.getEntry("word/document.xml").getData().toString("utf8");
   assert.match(generatedXml,/Referências/);
   assert.ok(generatedXml.includes(officialUrl),"official PubMed URL must be embedded in generated Word bibliography");
