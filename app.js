@@ -84,7 +84,7 @@ function localPrivacyFindings(text){
  if(/\b(?:CNS|cart[aã]o\s+nacional\s+de\s+sa[uú]de)\s*[:#-]?\s*\d{15}\b/i.test(s))hits.push("CNS");
  if(/\b(?:prontu[aá]rio|registro\s+do\s+paciente|n[úu]mero\s+de\s+atendimento)\s*(?:n[ºo.]*)?\s*[:#-]\s*[A-Z0-9-]{4,}\b/i.test(s))hits.push("PRONTUARIO");
  if(/\b(?:data\s+de\s+nascimento|nascid[oa]\s+em|DN)\s*[:#-]\s*\d{2}[/.-]\d{2}[/.-]\d{4}\b/i.test(s))hits.push("NASCIMENTO");
- if(/\b(?:paciente|RN(?:\s+de)?|rec[eé]m[- ]nascido|nome\s+do\s+paciente)\s*[:#-]?\s*[a-záàâãéêíóôõúç]{2,}(?:\s+[a-záàâãéêíóôõúç]{2,}){1,3}\b/i.test(s))hits.push("NOME_CLINICO");
+ if(/\b(?:paciente|RN(?:\s+de)?|rec[eé]m[- ]nascido|nome\s+do\s+paciente)\s*[:#-]\s*[a-záàâãéêíóôõúç]{2,}(?:\s+[a-záàâãéêíóôõúç]{2,}){1,3}\b/i.test(s))hits.push("NOME_CLINICO");
  return [...new Set(hits)];
 }
 async function localDocPrivacyCheck(input){
@@ -1174,7 +1174,7 @@ window.sendDocToAI=async(i,options={})=>{
    if(!blob)throw new Error(options.correctionRegeneration?"Arquivo Word da revisão proposta não localizado.":"Arquivo Word vigente não localizado.");const buf=await blob.arrayBuffer(),bytes=new Uint8Array(buf);let bin="";for(let o=0;o<bytes.length;o+=0x8000)bin+=String.fromCharCode(...bytes.subarray(o,o+0x8000));
    const revisionStatus=docStatus(d),periodicReviewRequired=!!d.reviewRequired||["review","expired","priority","soon"].includes(revisionStatus.key);
    const periodicReviewReason=periodicReviewRequired?(`Revisão documental ${revisionStatus.text||"programada"}${revisionStatus.next?` · próxima revisão prevista: ${dateBR(revisionStatus.next)}`:""}`):"Atualização técnica solicitada pelo profissional";
-   const privacyCheck=await localDocPrivacyCheck(blob);if(privacyCheck.length)throw new Error("LGPD: identificadores potencialmente sensíveis detectados no Word. Revise e sanitize antes de enviar à IA.");
+   const privacyCheck=await localDocPrivacyCheck(blob);if(privacyCheck.length)throw new Error(`LGPD: identificadores potencialmente sensíveis detectados no Word (categorias: ${privacyCheck.join(", ")}). Revise e sanitize antes de enviar à IA.`);
     const ai=await cloudJson("/api/ai/revise-pop",{method:"POST",body:JSON.stringify({doc_code:d.code,doc_title:d.title,current_revision:options.correctionRegeneration?rev:pub.revision,next_revision:rev,file_name:revisionBase.wordName||pub.wordName||`${d.code}.docx`,file_base64:btoa(bin),provider:S.settings?.aiProvider||"auto",correction_request:((d.versions||[]).find((x,xi)=>xi!==pubI&&String(x.revision)===rev&&x.workflow!=="Obsoleto")?.correctionRequested||""),periodic_review_required:periodicReviewRequired,periodic_review_reason:periodicReviewReason})});
    const out=Uint8Array.from(atob(ai.file_base64),c=>c.charCodeAt(0)),proposalBlob=new Blob([out],{type:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
    let vi=d.versions.findIndex((v,x)=>x!==pubI&&String(v.revision)===rev&&v.workflow!=="Obsoleto"),v=vi>=0?d.versions[vi]:null;if(!v){v={revision:rev,reviewDate:todayISO(),workflow:"Em revisão",createdBy:"SIASH Docs / IA",createdAt:nowBR()};d.versions.push(v);vi=d.versions.length-1}

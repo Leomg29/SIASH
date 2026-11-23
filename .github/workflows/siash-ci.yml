@@ -36,7 +36,7 @@ jobs:
       - name: PR99 shift care integrity unit tests
         run: node --test tests/shift-care-integrity.test.cjs
       - name: PR100 Docs governance unit tests
-        run: node --test tests/docs-governance-integrity.test.cjs
+        run: node --test tests/docs-governance-integrity.test.cjs tests/pr103-lgpd-institutional-false-positive.test.cjs
       - name: Regression suite
         shell: bash
         run: |
