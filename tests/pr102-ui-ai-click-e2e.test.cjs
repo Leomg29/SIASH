@@ -54,7 +54,7 @@ test("PR102 Chromium UI: real AI update click, privacy, metadata, draft reconcil
   const code="PR102-UI-"+Date.now(),key="pr102-source-"+Date.now();
   await page.evaluate(async ({code,key,bytes})=>{
    SIASH_CLOUD.conflict=true;
-   S.docs.push({id:code,code,title:"Higienização das mãos em neonatologia",sector:"UTIN",period:24,seed:true,versions:[{revision:"01",workflow:"Vigente",reviewDate:"2026-01-01",wordKey:key,wordName:"PR102-CI.docx"}]});
+   S.docs.push({id:code,code,title:"Higienização das mãos em neonatologia",sector:"UTIN",period:24,reviewRequired:true,seed:true,versions:[{revision:"01",workflow:"Vigente",reviewDate:"2026-01-01",wordKey:key,wordName:"PR102-CI.docx"}]});
    const db=await docsDb();
    await new Promise((resolve,reject)=>{const tx=db.transaction(DOCS_DB_STORE,"readwrite");tx.objectStore(DOCS_DB_STORE).put(new Blob([Uint8Array.from(atob(bytes),c=>c.charCodeAt(0))]),key);tx.oncomplete=()=>{db.close();resolve()};tx.onerror=()=>reject(tx.error)});
    renderDocs();
