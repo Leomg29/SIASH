@@ -734,7 +734,6 @@ const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || "";
 const CLOUDFLARE_AI_MODEL = process.env.CLOUDFLARE_AI_MODEL || "@cf/zai-org/glm-4.7-flash";
 // v0.14.22 — prioriza o modelo gratuito que concluiu com sucesso o fluxo Tavily no ambiente real.
 const CLOUDFLARE_FREE_MODEL_FALLBACKS = [
-  "@cf/nvidia/nemotron-3-120b-a12b",
   "@cf/zai-org/glm-4.7-flash",
   "@cf/google/gemma-4-26b-a4b-it"
 ];
@@ -1383,14 +1382,16 @@ function extractCloudflareText(data){
 }
 function cloudflareModelCandidates(){
   const configured=String(CLOUDFLARE_AI_MODEL||"").trim();
+  const deprecated=new Set(["@cf/nvidia/nemotron-3-120b-a12b"]);
+  // Avoid a confirmed retired model even when still selected in Render configuration.
   const ordered=CLOUDFLARE_KNOWN_PAID_MODELS.has(configured)
     ? [...CLOUDFLARE_FREE_MODEL_FALLBACKS]
     : [configured,...CLOUDFLARE_FREE_MODEL_FALLBACKS];
-  return [...new Set(ordered.filter(Boolean))];
+  return [...new Set(ordered.filter(model=>model&&!deprecated.has(model)))];
 }
 function cloudflareModelRetryable(e){
   const msg=String(e?.message||"").toLowerCase();
-  return e?.httpStatus===403||e?.httpStatus===404||e?.httpStatus===429||e?.cloudflareEmptyContent===true||e?.modelJsonParseFailure===true||msg.includes("tempo limite")||msg.includes("workers free plan")||msg.includes("not available")||msg.includes("out of capacity")||msg.includes("5035")||msg.includes("3040")||msg.includes("não retornou conteúdo utilizável");
+  return e?.httpStatus===403||e?.httpStatus===404||e?.httpStatus===429||msg.includes("deprecated")||msg.includes("decommissioned")||e?.cloudflareEmptyContent===true||e?.modelJsonParseFailure===true||msg.includes("tempo limite")||msg.includes("workers free plan")||msg.includes("not available")||msg.includes("out of capacity")||msg.includes("5035")||msg.includes("3040")||msg.includes("não retornou conteúdo utilizável");
 }
 async function reviseWithCloudflare(prompt){
   if(!CLOUDFLARE_API_TOKEN||!CLOUDFLARE_ACCOUNT_ID)throw new Error("Cloudflare Workers AI ainda não configurada no servidor.");
@@ -2105,8 +2106,13 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
   :periodicReviewOnly
     ?"Revisão periódica concluída sem alteração técnico-científica do conteúdo. O documento segue para conferência e aprovação profissional."
     :"Revisão concluída: nenhuma alteração técnico-científica ou bibliográfica necessária. O POP vigente foi preservado.";
+    // PR #101: validate the prepared DOCX itself; this does NOT approve publication.
+    const preparedZip=new AdmZip(revised);
+    const requiredParts=["[Content_Types].xml","_rels/.rels","word/document.xml"];
+    const preparedDocxIntegrity={zipCrc32:preparedZip.test()===true,ooxml:requiredParts.every(name=>!!preparedZip.getEntry(name))};
+    if(!preparedDocxIntegrity.zipCrc32||!preparedDocxIntegrity.ooxml)throw new Error("DOCX_PREPARED_INTEGRITY_FAILED");
     await audit(req.user.u,"SIASH Docs: proposta de revisão gerada pela IA para conferência profissional.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,periodic_review_only:periodicReviewOnly,periodic_review_required:periodicReviewRequired,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:false,requires_professional_review:true,validation_warnings:verification.validationWarnings||[],references_verified:classified.verified.length,references_pending:classified.pending.length});
-    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"provider_default",summary:validatedSummary,changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
+    res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"sem_pesquisa_externa",docxPreparedIntegrity:preparedDocxIntegrity,summary:validatedSummary,changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
   }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 
