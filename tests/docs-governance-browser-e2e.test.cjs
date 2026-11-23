@@ -138,7 +138,7 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
     ]});
     const uploaded=await page.evaluate(async ({token,key,bytes})=>{
      const binary=Uint8Array.from(atob(bytes),c=>c.charCodeAt(0));
-     const response=await fetch("/api/doc/"+encodeURIComponent(key),{method:"PUT",headers:{authorization:"Bearer "+token,"content-type":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","x-file-name":"pr100.docx","x-doc-sector":"UTIN"},body:binary});
+     const response=await fetch("/api/doc/"+encodeURIComponent(key),{method:"PUT",headers:{authorization:"Bearer "+token,"content-type":"application/octet-stream","x-file-name":"pr100.docx","x-doc-sector":"UTIN"},body:binary});
      return {status:response.status,data:await response.json()};
     },{token,key,bytes:generated.data.file_base64});
     assert.equal(uploaded.status,201,JSON.stringify(uploaded.data));
