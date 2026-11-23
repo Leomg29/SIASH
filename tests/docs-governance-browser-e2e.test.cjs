@@ -52,6 +52,36 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   assert.equal(conflictResult.status,409);
   assert.equal(conflictResult.unchanged,true);
   assert.match(await page.locator("body").innerText(),/document|POP|revis/i);
+  // Genuine server-side concurrency: two Chromium sessions retain the same revision.
+  // The first session commits the unchanged state; the second submits its stale revision.
+  const second=await browser.newPage();
+  try{
+   await second.goto(url,{waitUntil:"domcontentloaded"});
+   const baseline=await page.evaluate(async token=>{
+    const r=await fetch("/api/state",{headers:{authorization:"Bearer "+token}});
+    return {status:r.status,data:await r.json()};
+   },token);
+   assert.equal(baseline.status,200);
+   if(baseline.data.exists){
+    const snapshot=JSON.stringify(baseline.data.payload);
+    await second.evaluate(({snapshot})=>{
+     localStorage.setItem("siash_pr100_pending_document",snapshot);
+    },{snapshot});
+    const first=await page.evaluate(async ({token,baseline})=>{
+     const r=await fetch("/api/state",{method:"PUT",headers:{authorization:"Bearer "+token,"content-type":"application/json"},body:JSON.stringify({payload:baseline.payload,base_revision:baseline.revision})});
+     return {status:r.status,data:await r.json()};
+    },{token,baseline:baseline.data});
+    assert.equal(first.status,200,"first Chromium session must commit state successfully");
+    const stale=await second.evaluate(async ({token,baseline})=>{
+     const r=await fetch("/api/docs/publish",{method:"POST",headers:{authorization:"Bearer "+token,"content-type":"application/json"},body:JSON.stringify({doc_id:"pr100-concurrent",revision:"01",base_revision:baseline.revision,technical_confirmation:true})});
+     return {status:r.status,data:await r.json(),draft:localStorage.getItem("siash_pr100_pending_document")};
+    },{token,baseline:baseline.data});
+    assert.equal(stale.status,409,"second Chromium session must receive a real server 409");
+    assert.equal(stale.data.error,"DOC_REVISION_CONFLICT");
+    assert.equal(stale.draft,snapshot,"second session's local draft must remain intact");
+   }
+  }finally{await second.close()}
+
 
  }finally{await browser?.close();child.kill("SIGTERM");await db.end()}
 });
