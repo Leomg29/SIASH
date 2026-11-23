@@ -116,7 +116,7 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
     assert.equal(versions[1].workflow,"Vigente");
    }finally{
     await db.query("UPDATE siash_state SET payload=$1,revision=revision+1 WHERE id=1",[originalPayload]);
-    await db.query("DELETE FROM siash_doc_publication_audit WHERE doc_id=$1",[docId]);
+    // Publication audit is intentionally append-only. CI uses an ephemeral database; never delete audit rows.
     await db.query("DELETE FROM siash_documents WHERE doc_key=$1",[key]);
    }
   }
