@@ -870,7 +870,7 @@ async function classifyReferenceUrls(refs){
       const c=new AbortController(),t=setTimeout(()=>c.abort(),9000);
       const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.6 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
       if(!resp.ok){pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});continue;}
-      const finalUrl=resp.url||url,ct=String(resp.headers.get("content-type")||"").toLowerCase();
+      const finalUrl=(PR100_FIXTURE_ORIGIN&&String(resp.url||"").startsWith(PR100_FIXTURE_ORIGIN+"/"))?url:(resp.url||url),ct=String(resp.headers.get("content-type")||"").toLowerCase();
       if(isGenericReferenceUrl(finalUrl)){pending.push({title,url:finalUrl,status:"pending",reason:"O redirecionamento terminou em página institucional genérica; a publicação específica não foi confirmada."});continue;}
       let evidence="",htmlTitle="";
       if(ct.includes("text/html")){
