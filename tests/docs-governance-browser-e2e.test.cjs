@@ -11,7 +11,7 @@ test("PR100 Chromium: authenticated owner navigates to SIASH Docs",{skip:process
   if(req.url.startsWith("/eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"))return send({result:{"123456":{title:"Neonatal hand hygiene clinical study",pubdate:"2025",fulljournalname:"Clinical Neonatology"}}});
   if(req.url.startsWith("/www.ebi.ac.uk/europepmc/webservices/rest/search"))return send({resultList:{result:[{pmid:"123456",title:"Neonatal hand hygiene clinical study",pubYear:"2025",journalTitle:"Clinical Neonatology"}]}});
   if(req.url.startsWith("/pubmed.ncbi.nlm.nih.gov/123456/"))return send("<html><head><title>Neonatal hand hygiene clinical study</title></head><body>Neonatal hand hygiene clinical study 2025</body></html>",200,"text/html");
-  if(req.url.startsWith("/generativelanguage.googleapis.com/"))return send({candidates:[{content:{parts:[{text:JSON.stringify({summary:"Revisão com fonte científica controlada",updates:[{paragraph_index:0,new_text:"Higienização das mãos em neonatologia conforme evidência científica revisada.",reason:"Atualização com fonte rastreável",references:["FONTE_1"]}],references:[]})}]}}]});
+  if(req.url.startsWith("/generativelanguage.googleapis.com/"))return send({candidates:[{content:{parts:[{text:JSON.stringify({summary:"Revisão com fonte científica controlada",updates:[{paragraph_index:0,new_text:"Higienização das mãos em neonatologia conforme evidência científica revisada.",reason:"Atualização com fonte rastreável",references:["https://pubmed.ncbi.nlm.nih.gov/123456/"]}],references:[]})}]}}]});
   return send({error:"Fixture not found"},404);
  });
  await new Promise(resolve=>fixture.listen(0,"127.0.0.1",resolve));
