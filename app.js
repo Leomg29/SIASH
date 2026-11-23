@@ -1340,7 +1340,7 @@ async function finalizePreparedApprovedWord(d,v,confirmedPages){
    const approved=await zip.generateAsync({type:"blob",mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document",compression:"DEFLATE"});
    const after=await validateDocxBlobIntegrity(approved);if(!after.ok){console.error("Publicação bloqueada: DOCX final inválido",after.reason);return {updated:false,reason:"docx-final-validation-failed",detail:after.reason}}
    const backupKey=`${v.wordKey}|pre-finalize-${Date.now()}`;await putDocBlob(backupKey,blob);v.preFinalizationBackupKey=backupKey;v.preFinalizationBackupAt=nowBR();
-   await putDocBlob(v.wordKey,approved);
+   const previousKey=v.wordKey;v.wordKey=`${d.id}|${v.revision}|word|final-${crypto.randomUUID()}`;await putDocBlob(v.wordKey,approved);v.previousWordKey=previousKey;
    v.approvalEmbedded=true;v.approvalEmbeddedAt=nowBR();v.institutionalRevision=v.preparedInstitutionalRevision;v.institutionalRevisionDate=todayISO();v.confirmedFinalPages=Number(pages);v.docxIntegrityValidated=true;v.docxIntegrityValidatedAt=nowBR();return {updated:true,institutionalRevision:v.preparedInstitutionalRevision,validity:v.institutionalValidity||"",pages:Number(pages)};
  }catch(err){console.error("Falha ao confirmar paginação do Word preparado",err);return {updated:false,reason:"docx-page-confirmation-failed",detail:err.message}}
 }
@@ -1371,7 +1371,24 @@ window.finalizePreparedPublication=async(i,vi)=>{
  const confirmedPages=(prompt("Informe o NÚMERO TOTAL DE PÁGINAS do Word FINAL que você acabou de conferir:",v.confirmedFinalPages?String(v.confirmedFinalPages):"")||"").trim();if(!/^\d{1,3}$/.test(confirmedPages)||Number(confirmedPages)<1)return alert("Publicação interrompida: informe o número total de páginas do Word final preparado.");
  if(!confirm(`Publicar a revisão ${v.revision} como VIGENTE com ${confirmedPages} página(s)?\n\nA versão vigente anterior será marcada como obsoleta somente após esta confirmação.`))return;
  const finalization=await finalizePreparedApprovedWord(d,v,confirmedPages);if(!finalization.updated)return alert(`Publicação BLOQUEADA: a SIASH não conseguiu registrar a paginação no Word preparado (${finalization.reason}). A versão vigente anterior foi preservada.`);
- completePublication(i,vi,d,v,validator,finalization);
+ // Only the authenticated server may publish. The browser never marks a version Vigente.
+ v.workflow="Aguardando aprovação";
+ preserveCloudDraft("Publicação documental aguardando confirmação transacional");
+ try{
+  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token||!Number.isSafeInteger(SIASH_CLOUD.revision))throw new Error("Sessão Cloud não sincronizada.");
+  const stored=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:cloudPayload(),base_revision:SIASH_CLOUD.revision})});
+  SIASH_CLOUD.revision=stored.revision;
+  const result=await cloudJson("/api/docs/publish",{method:"POST",body:JSON.stringify({doc_id:d.id,revision:v.revision,base_revision:SIASH_CLOUD.revision,technical_confirmation:true})});
+  SIASH_CLOUD.revision=result.revision;
+  const remote=await cloudJson("/api/state");
+  if(remote?.payload?.state){S=remote.payload.state;cloudSetBase(S);localStorage.setItem(STORE,JSON.stringify(S));}
+  updateCloudBadge("Sincronizado com PostgreSQL");
+  showToast("Publicação transacional confirmada pelo servidor",3500);renderDocs();
+ }catch(e){
+  preserveCloudDraft("Conflito ou bloqueio na publicação documental");
+  updateCloudBadge("Publicação pendente · rascunho preservado",true);
+  alert("Publicação não concluída no servidor. Rascunho preservado. "+(e.message||"Verifique permissões e revisão."));
+ }
 }
 window.requestDocCorrection=async(i,vi)=>{if(!requireProposalContext(i,vi))return;const d=S.docs[i],v=d?.versions?.[vi];if(!d||!v)return;const reason=(prompt("Descreva resumidamente o que precisa ser corrigido na proposta:")||"").trim();if(!reason)return;v.workflow="Em revisão";v.publicationPrepared=false;v.publicationPreparedAt="";v.publicationPreparedBy="";v.preparedInstitutionalRevision="";v.correctionRequested=reason;v.updatedAt=nowBR();save();renderDocs();openProposalWorkspace(i,vi);const status=$("doc-update-status");status.textContent=`Correção registrada para a revisão ${v.revision}. Regenerando a mesma proposta com IA...`;auditAdmin(`SIASH Docs: correção profissional solicitada para ${d.code} revisão ${v.revision}; regeneração automática iniciada.`);try{const result=await sendDocToAI(i,{skipConfirm:true,correctionRegeneration:true,expectedRevision:String(v.revision)});if(result?.ok){showToast(`Correção da revisão ${v.revision} concluída e pronta para conferência`,3500);alert(`Correção concluída na mesma revisão ${v.revision}. Abra o Word atualizado e confira antes de validar/publicar.`)}else{status.textContent="Correção registrada, mas a regeneração automática não foi concluída. A revisão anterior foi preservada.";showToast("Correção não concluída — proposta anterior preservada",3500)}}catch(e){console.error(e);status.textContent="Correção registrada, mas a regeneração automática não foi concluída. A revisão anterior foi preservada.";alert(e.message||"A correção não foi concluída.")}};
 window.deleteDoc=i=>{if(!requireOwner("a exclusão de documentos do SIASH Docs"))return;const d=S.docs[i];if(d.seed)return alert("Os POPs institucionais incorporados à base não podem ser excluídos. Crie uma nova revisão para substituí-los.");if(confirm(`Excluir o cadastro ${d.code}? O histórico documental será removido desta instalação.`)){auditAdmin(`SIASH Docs: documento ${d.code} excluído.`);S.docs.splice(i,1);save()}}
