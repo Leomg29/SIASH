@@ -6,6 +6,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const path = require("path");
 const fs = require("fs");
+const crypto=require("node:crypto");
+const docsGuard=require("./docs-governance-integrity.cjs");
 const os = require("os");
 const { execFile } = require("child_process");
 const { promisify } = require("util");
@@ -49,6 +51,36 @@ async function initDb(){
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_by TEXT
     );
+    CREATE TABLE IF NOT EXISTS siash_doc_access(
+      username TEXT NOT NULL REFERENCES siash_users(username),
+      sector TEXT NOT NULL,
+      level TEXT NOT NULL CHECK(level IN ('reader','editor','validator')),
+      PRIMARY KEY(username,sector)
+    );
+    CREATE TABLE IF NOT EXISTS siash_doc_artifacts(
+      id UUID PRIMARY KEY,
+      doc_key TEXT UNIQUE NOT NULL REFERENCES siash_documents(doc_key),
+      sha256 TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      predecessor_key TEXT
+    );
+    CREATE TABLE IF NOT EXISTS siash_doc_publication_audit(
+      id UUID PRIMARY KEY,
+      doc_id TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      actor TEXT NOT NULL,
+      previous_revision TEXT,
+      file_sha256 TEXT NOT NULL,
+      state_revision BIGINT NOT NULL,
+      occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      details JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+    CREATE OR REPLACE FUNCTION siash_docs_audit_no_mutation() RETURNS trigger LANGUAGE plpgsql AS $docaudit$
+    BEGIN RAISE EXCEPTION 'Document publication audit is append-only'; END $docaudit$;
+    DROP TRIGGER IF EXISTS siash_doc_publication_immutable ON siash_doc_publication_audit;
+    CREATE TRIGGER siash_doc_publication_immutable BEFORE UPDATE OR DELETE ON siash_doc_publication_audit
+      FOR EACH ROW EXECUTE FUNCTION siash_docs_audit_no_mutation();
     CREATE TABLE IF NOT EXISTS siash_state_history(
       id BIGSERIAL PRIMARY KEY,
       payload JSONB NOT NULL,
@@ -422,6 +454,8 @@ app.put("/api/state",auth,async(req,res)=>{
     if(!cur.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"Estado central não encontrado. Recarregue os dados.",conflict:true});}
     const current=Number(cur.rows[0].revision);
     if(current!==base){await client.query("ROLLBACK");return res.status(409).json({error:"Outro profissional salvou alterações antes de você. Seus dados locais foram preservados; não atualize a página antes de exportar ou conferir seus lançamentos.",conflict:true,current_revision:current});}
+    const docsVerdict=docsGuard.validateDocsMutation(cur.rows[0].payload?.state?.docs||[],payload?.state?.docs||[]);
+    if(!docsVerdict.ok){await client.query("ROLLBACK");return res.status(422).json({error:docsVerdict.code});}
     const {validateShiftMutation,stampShiftMutation}=require("./shift-care-integrity.cjs");
     const shiftVerdict=validateShiftMutation(cur.rows[0].payload,payload);
     if(!shiftVerdict.ok){await client.query("ROLLBACK");return res.status(422).json({error:shiftVerdict.code,path:shiftVerdict.path});}
@@ -526,15 +560,80 @@ app.put("/api/state/init",auth,async(req,res)=>{
   res.json({ok:true,revision:Number(created.rows[0].revision)});
 });
 
+async function docPermission(username,role,sector,action,db=pool){
+ if(role==="owner")return true;
+ const q=await db.query("SELECT sector,level FROM siash_doc_access WHERE username=$1 AND (sector=$2 OR sector='*')",[username,sector]);
+ return q.rows.some(row=>docsGuard.allowed(row.level,action,row.sector,sector));
+}
 app.put("/api/doc/:key",auth,async(req,res)=>{
-  const key=req.params.key, fileName=decodeURIComponent(req.headers["x-file-name"]||key), mime=req.headers["content-type"]||"application/octet-stream";
-  if(!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({error:"Arquivo vazio."});
-  await pool.query(`
-    INSERT INTO siash_documents(doc_key,file_name,mime_type,file_data,updated_at,updated_by)
-    VALUES($1,$2,$3,$4,NOW(),$5)
-    ON CONFLICT(doc_key) DO UPDATE SET file_name=EXCLUDED.file_name,mime_type=EXCLUDED.mime_type,file_data=EXCLUDED.file_data,updated_at=NOW(),updated_by=EXCLUDED.updated_by
-  `,[key,fileName,mime,req.body,req.user.u]);
-  res.json({ok:true});
+ const key=req.params.key,fileName=decodeURIComponent(req.headers["x-file-name"]||key),mime=req.headers["content-type"]||"application/octet-stream";
+ if(!Buffer.isBuffer(req.body)||!req.body.length)return res.status(400).json({error:"Arquivo vazio."});
+ const sector=String(req.headers["x-doc-sector"]||"UTIN");
+ if(!(await docPermission(req.user.u,req.user.r,sector,"edit")))return res.status(403).json({error:"Permissão documental insuficiente."});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const existing=await client.query("SELECT file_data FROM siash_documents WHERE doc_key=$1 FOR UPDATE",[key]);
+  if(existing.rows.length){
+   await client.query("ROLLBACK");
+   return res.status(422).json({error:"DOC_ARTIFACT_IMMUTABLE"});
+  }
+  await client.query("INSERT INTO siash_documents(doc_key,file_name,mime_type,file_data,updated_at,updated_by) VALUES($1,$2,$3,$4,NOW(),$5)",[key,fileName,mime,req.body,req.user.u]);
+  const digest=docsGuard.hash(req.body);
+  await client.query("INSERT INTO siash_doc_artifacts(id,doc_key,sha256,created_by) VALUES($1,$2,$3,$4)",[crypto.randomUUID(),key,digest,req.user.u]);
+  await client.query("COMMIT");
+  return res.status(201).json({ok:true,sha256:digest});
+ }catch(e){await client.query("ROLLBACK").catch(()=>{});return res.status(503).json({error:"Falha ao armazenar artefato."})}finally{client.release()}
+});
+app.post("/api/docs/publish",auth,async(req,res)=>{
+ const {doc_id,revision,base_revision,technical_confirmation}=req.body||{};
+ if(technical_confirmation!==true)return res.status(422).json({error:"TECHNICAL_CONFIRMATION_REQUIRED"});
+ const client=await pool.connect();
+ try{
+  await client.query("BEGIN");
+  const q=await client.query("SELECT payload,revision FROM siash_state WHERE id=1 FOR UPDATE");
+  if(!q.rows.length){await client.query("ROLLBACK");return res.status(409).json({error:"STATE_MISSING"})}
+  const current=Number(q.rows[0].revision);
+  if(!Number.isSafeInteger(Number(base_revision))||current!==Number(base_revision)){await client.query("ROLLBACK");return res.status(409).json({error:"DOC_REVISION_CONFLICT",current_revision:current})}
+  const payload=q.rows[0].payload,docs=payload?.state?.docs||[],d=docs.find(x=>String(x.id)===String(doc_id));
+  if(!d){await client.query("ROLLBACK");return res.status(404).json({error:"DOC_NOT_FOUND"})}
+  if(!(await docPermission(req.user.u,req.user.r,d.sector||"UTIN","approve",client))){await client.query("ROLLBACK");return res.status(403).json({error:"DOC_APPROVER_FORBIDDEN"})}
+  const v=(d.versions||[]).find(x=>String(x.revision)===String(revision));
+  if(!v||v.workflow!=="Aguardando aprovação"||!v.wordKey||!v.publicationPrepared||!v.approvalEmbedded||!v.docxIntegrityValidated){await client.query("ROLLBACK");return res.status(422).json({error:"DOC_NOT_READY"})}
+  if(v.createdBy===req.user.u&&req.user.r!=="owner"){await client.query("ROLLBACK");return res.status(403).json({error:"DOC_SELF_APPROVAL_FORBIDDEN"})}
+  const file=await client.query("SELECT file_data FROM siash_documents WHERE doc_key=$1",[v.wordKey]);
+  if(!file.rows.length){await client.query("ROLLBACK");return res.status(422).json({error:"DOC_FILE_MISSING"})}
+  const digest=docsGuard.hash(file.rows[0].file_data);
+  if(!validateGeneratedDocx(file.rows[0].file_data)){await client.query("ROLLBACK");return res.status(422).json({error:"DOCX_INTEGRITY_INVALID"})}
+  const storedHash=await client.query("SELECT sha256 FROM siash_doc_artifacts WHERE doc_key=$1",[v.wordKey]);
+  if(storedHash.rows.length&&storedHash.rows[0].sha256!==digest){await client.query("ROLLBACK");return res.status(422).json({error:"DOC_ARTIFACT_HASH_MISMATCH"})}
+  // AI drafts remain consultative; server independently rechecks sources at publication.
+  if(v.aiProvider||Array.isArray(v.aiReferences)||Array.isArray(v.aiChanges)){
+    const refs=Array.isArray(v.aiReferences)?v.aiReferences:[];
+    if(!refs.length||refs.some(x=>!docsGuard.scientificSourceUrl(x.url))){
+      await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_INVALID"});
+    }
+    const checked=await classifyReferenceUrls(refs);
+    const eligible=checked.verified.filter(x=>x.wordEligible===true&&docsGuard.scientificSourceUrl(x.url));
+    if(eligible.length!==refs.length||!docsGuard.scientificReferencesVerified(
+      refs.map(x=>({title:x.title,year:x.year||x.publicationYear||x.ano,url:x.url})).filter(x=>x.year),
+      eligible.map(x=>x.url)
+    )&&refs.some(x=>x.year||x.publicationYear||x.ano)){
+      await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_UNVERIFIED"});
+    }
+    const paragraphs=docxParagraphs(file.rows[0].file_data),section=referenceSectionInfo(paragraphs);
+    const bibliography=section?paragraphs.filter(p=>p.index>section.headingIndex&&(section.stopIndex==null||p.index<section.stopIndex)).map(p=>p.text).join(" "):"";
+    if(!section||eligible.some(x=>!bibliography.includes(x.url))){
+      await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_NOT_IN_DOCX"});
+    }
+  }
+  const previous=d.versions.find(x=>x.workflow==="Vigente");
+  for(const old of d.versions)if(old.workflow==="Vigente")old.workflow="Obsoleto";
+  v.workflow="Vigente";v.approver=req.user.u;v.validator=req.user.u;v.validationDate=new Date().toISOString().slice(0,10);
+  await client.query("UPDATE siash_state SET payload=$1,revision=revision+1,updated_at=NOW(),updated_by=$2 WHERE id=1",[payload,req.user.u]);
+  await client.query("INSERT INTO siash_doc_publication_audit(id,doc_id,revision,actor,previous_revision,file_sha256,state_revision,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",[crypto.randomUUID(),String(doc_id),String(revision),req.user.u,previous?.revision||null,digest,current+1,JSON.stringify({technical_confirmation:true,timezone:"America/Sao_Paulo"})]);
+  await client.query("COMMIT");return res.json({ok:true,revision:current+1,sha256:digest});
+ }catch(e){await client.query("ROLLBACK").catch(()=>{});return res.status(503).json({error:"DOC_PUBLICATION_FAILED"})}finally{client.release()}
 });
 app.get("/api/doc/:key",auth,async(req,res)=>{
   const q=await pool.query("SELECT file_name,mime_type,file_data FROM siash_documents WHERE doc_key=$1",[req.params.key]);
@@ -552,8 +651,36 @@ app.get("/api/doc/:key",auth,async(req,res)=>{
 const LEGACY_DOC_CONVERT_TIMEOUT_MS=Math.max(30000,Number(process.env.LEGACY_DOC_CONVERT_TIMEOUT_MS||120000));
 function isLegacyBinaryDocName(name=""){return /\.doc$/i.test(String(name||"").trim())&&!/\.docx$/i.test(String(name||"").trim())}
 function hasOleCompoundSignature(buf){return Buffer.isBuffer(buf)&&buf.length>=8&&buf.subarray(0,8).equals(Buffer.from([0xD0,0xCF,0x11,0xE0,0xA1,0xB1,0x1A,0xE1]))}
+function docxCrc32(bytes){
+ let crc=0xffffffff;
+ for(const byte of bytes){crc^=byte;for(let j=0;j<8;j++)crc=(crc>>>1)^((crc&1)?0xedb88320:0)}
+ return (crc^0xffffffff)>>>0;
+}
+function docxXmlWellFormed(xml){
+ if(!xml||!/^\s*(?:<\?xml[^>]*\?>\s*)?</.test(xml))return false;
+ const stack=[],tokens=xml.match(/<!--[\s\S]*?-->|<\?[^>]*\?>|<!\[CDATA\[[\s\S]*?\]\]>|<![^>]*>|<[^>]*>/g)||[];
+ for(const token of tokens){
+  if(/^<\?|^<!/.test(token))continue;
+  if(/^<\//.test(token)){const name=token.slice(2,-1).trim();if(stack.pop()!==name)return false}
+  else if(!/\/\s*>$/.test(token)){const name=(token.match(/^<([^\s/>]+)/)||[])[1];if(!name)return false;stack.push(name)}
+ }
+ return stack.length===0&&tokens.length>0;
+}
 function validateGeneratedDocx(buf){
-  try{const z=new AdmZip(buf),e=z.getEntry("word/document.xml");return !!(e&&e.getData().length)}catch(_){return false}
+ try{
+  if(!Buffer.isBuffer(buf)||buf.length<100||buf.readUInt32LE(0)!==0x04034b50)return false;
+  const zip=new AdmZip(buf),entries=zip.getEntries();
+  if(!entries.length||entries.length>3000)return false;
+  for(const entry of entries){
+   if(entry.isDirectory)continue;
+   const bytes=entry.getData();
+   if(docxCrc32(bytes)!==(entry.header.crc>>>0))return false;
+  }
+  const types=zip.getEntry("[Content_Types].xml"),document=zip.getEntry("word/document.xml");
+  if(!types||!document)return false;
+  const typesXml=types.getData().toString("utf8"),docXml=document.getData().toString("utf8");
+  return docxXmlWellFormed(typesXml)&&docxXmlWellFormed(docXml)&&/<Types(?:\s|>)/.test(typesXml)&&/<w:document(?:\s|>)/.test(docXml)&&/<w:body(?:\s|>)/.test(docXml);
+ }catch(_){return false}
 }
 async function convertLegacyDocBufferToDocx(inputBuffer,inputName="documento.doc"){
   if(!hasOleCompoundSignature(inputBuffer))throw new Error("O arquivo .doc não possui a assinatura binária esperada do Word antigo; nenhuma conversão foi realizada.");
@@ -743,7 +870,7 @@ async function classifyReferenceUrls(refs){
       const c=new AbortController(),t=setTimeout(()=>c.abort(),9000);
       const resp=await fetch(url,{method:"GET",redirect:"follow",signal:c.signal,headers:{"User-Agent":"SIASH-Docs/0.13.6 reference-check","Accept":"text/html,application/pdf;q=0.9,*/*;q=0.5"}});clearTimeout(t);
       if(!resp.ok){pending.push({title,url,status:"pending",reason:`Fonte respondeu HTTP ${resp.status}; requer conferência profissional.`});continue;}
-      const finalUrl=resp.url||url,ct=String(resp.headers.get("content-type")||"").toLowerCase();
+      const finalUrl=(PR100_FIXTURE_ORIGIN&&String(resp.url||"").startsWith(PR100_FIXTURE_ORIGIN+"/"))?url:(resp.url||url),ct=String(resp.headers.get("content-type")||"").toLowerCase();
       if(isGenericReferenceUrl(finalUrl)){pending.push({title,url:finalUrl,status:"pending",reason:"O redirecionamento terminou em página institucional genérica; a publicação específica não foi confirmada."});continue;}
       let evidence="",htmlTitle="";
       if(ct.includes("text/html")){
@@ -1290,12 +1417,36 @@ async function reviseWithOpenAI(prompt){
 }
 function cloudflareConfigured(){return !!(CLOUDFLARE_API_TOKEN&&CLOUDFLARE_ACCOUNT_ID)}
 function availableAIProviders(){const cfCandidates=cloudflareModelCandidates(),cfEffective=cfCandidates[0]||CLOUDFLARE_AI_MODEL;return {gemini:{configured:!!GEMINI_API_KEY,model:GEMINI_MODEL,searchMode:geminiUseSearch()?"google_search":"off"},cloudflare:{configured:cloudflareConfigured(),model:cfEffective,configuredModel:CLOUDFLARE_AI_MODEL,configuredModelIgnored:!!CLOUDFLARE_AI_MODEL&&cfEffective!==CLOUDFLARE_AI_MODEL,freeModelFallbacks:CLOUDFLARE_FREE_MODEL_FALLBACKS,searchMode:"off"},openai:{configured:!!openaiClient,model:OPENAI_MODEL}}}
+// Optional OpenAI-compatible free-tier providers. No outbound call without a configured key.
+const GROQ_API_KEY=String(process.env.GROQ_API_KEY||"").trim();
+const GROQ_MODEL=String(process.env.GROQ_MODEL||"llama-3.3-70b-versatile");
+const OPENROUTER_API_KEY=String(process.env.OPENROUTER_API_KEY||"").trim();
+const OPENROUTER_MODEL=String(process.env.OPENROUTER_MODEL||"openrouter/free");
+const HUGGINGFACE_API_KEY=String(process.env.HUGGINGFACE_API_KEY||"").trim();
+const HUGGINGFACE_MODEL=String(process.env.HUGGINGFACE_MODEL||"");
+async function reviseWithCompatibleProvider(provider,prompt){
+ const configs={
+  groq:{key:GROQ_API_KEY,model:GROQ_MODEL,url:"https://api.groq.com/openai/v1/chat/completions"},
+  openrouter:{key:OPENROUTER_API_KEY,model:OPENROUTER_MODEL,url:"https://openrouter.ai/api/v1/chat/completions"},
+  huggingface:{key:HUGGINGFACE_API_KEY,model:HUGGINGFACE_MODEL,url:"https://router.huggingface.co/v1/chat/completions"}
+ };
+ const cfg=configs[provider];if(!cfg?.key||!cfg.model)throw new Error(provider+" não configurado");
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);
+ try{
+  const response=await fetch(cfg.url,{method:"POST",signal:controller.signal,headers:{"Content-Type":"application/json",Authorization:"Bearer "+cfg.key},body:JSON.stringify({model:cfg.model,messages:[{role:"system",content:"Retorne somente JSON com summary, updates e references. Nunca invente referências; utilize apenas identificadores FONTE_N fornecidos."},{role:"user",content:prompt}],temperature:0})});
+  if(!response.ok)throw new Error(provider+" HTTP "+response.status);
+  const payload=await response.json(),raw=payload?.choices?.[0]?.message?.content;
+  if(typeof raw!=="string")throw new Error(provider+" resposta vazia");
+  const clean=raw.trim().replace(/^\x60\x60\x60(?:json)?\s*/i,"").replace(/\s*\x60\x60\x60$/,"");
+  const parsed=JSON.parse(clean);
+  if(!parsed||!Array.isArray(parsed.updates)||!Array.isArray(parsed.references)||typeof parsed.summary!=="string")throw new Error(provider+" contrato JSON inválido");
+  return {result:parsed,sources:[],model:cfg.model,provider,researchMode:"external_evidence_only"};
+ }finally{clearTimeout(timer)}
+}
 function providerOrder(requested){
-  const p=String(requested||AI_DEFAULT_PROVIDER||"auto").toLowerCase();
-  if(p==="gemini")return ["gemini","cloudflare","openai"];
-  if(p==="cloudflare")return ["cloudflare","gemini","openai"];
-  if(p==="openai")return ["openai","cloudflare","gemini"];
-  return ["gemini","cloudflare","openai"];
+ const preferred=String(requested||AI_DEFAULT_PROVIDER||"auto").toLowerCase();
+ const base=["gemini","cloudflare","groq","openrouter","huggingface","openai"];
+ return base.includes(preferred)?[preferred,...base.filter(p=>p!==preferred)]:base;
 }
 
 // v0.14.33 — governança científica das fontes: prioriza fontes primárias/oficiais e rejeita redes sociais.
@@ -1327,7 +1478,17 @@ function rankScientificSources(results=[]){
     .filter(r=>r._tier>=0)
     .sort((a,b)=>b._tier-a._tier||a._originalIndex-b._originalIndex);
 }
+const scientificSearchCache=new Map(),scientificQuotaCooldown=new Map();
+const SCIENTIFIC_CACHE_TTL_MS=10*60*1000,SCIENTIFIC_COOLDOWN_MS=5*60*1000;
+function scientificCacheGet(key){const x=scientificSearchCache.get(key);if(!x)return null;if(x.expires<=Date.now()){scientificSearchCache.delete(key);return null}return x.value}
+function scientificCachePut(key,value){if(scientificSearchCache.size>100)scientificSearchCache.delete(scientificSearchCache.keys().next().value);scientificSearchCache.set(key,{value,expires:Date.now()+SCIENTIFIC_CACHE_TTL_MS})}
+function scientificCooling(name){return (scientificQuotaCooldown.get(name)||0)>Date.now()}
+function scientificQuotaError(error){return /(?:\\b429\\b|quota|rate.limit|resource.exhausted|insufficient.credits)/i.test(String(error?.message||error||""))}
+function scientificTrip(name,error){if(scientificQuotaError(error)){scientificQuotaCooldown.set(name,Date.now()+SCIENTIFIC_COOLDOWN_MS);console.warn("[SIASH AI] cooldown quota | provider="+name)}}
 async function tavilySearchRequest(query,extra={}){
+  const cacheKey=JSON.stringify([query,extra]),cached=scientificCacheGet(cacheKey);
+  if(cached)return cached;
+  if(scientificCooling("tavily"))throw new Error("Tavily quota cooldown");
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
   try{
     const response=await fetch("https://api.tavily.com/search",{
@@ -1336,8 +1497,8 @@ async function tavilySearchRequest(query,extra={}){
       body:JSON.stringify({query,search_depth:"basic",topic:"general",max_results:10,include_answer:false,include_raw_content:false,...extra}),
       signal:controller.signal
     });
-    if(!response.ok){const detail=await response.text().catch(()=> "");throw new Error(`Tavily indisponível (${response.status}). ${detail.slice(0,200)}`)}
-    return await response.json();
+    if(!response.ok){const detail=await response.text().catch(()=> "");const error=new Error(`Tavily indisponível (${response.status}). ${detail.slice(0,200)}`);scientificTrip("tavily",error);throw error}
+    const data=await response.json();scientificCachePut(cacheKey,data);return data;
   }finally{clearTimeout(timer)}
 }
 function primaryScientificInstitution(raw=""){
@@ -1350,7 +1511,66 @@ function primaryScientificInstitution(raw=""){
   if(domainMatches(host,"fiocruz.br"))return "FIOCRUZ";
   if(domainMatches(host,"cofen.gov.br")||host.includes("coren-"))return "COFEN_COREN";
   if(domainMatches(host,"sbp.com.br"))return "SBP";
+  if(domainMatches(host,"pubmed.ncbi.nlm.nih.gov")&&/^\/\d+\/?$/.test(new URL(raw).pathname))return "PUBMED";
   return "";
+}
+// Public literature search: no API key and no patient data. Query must be a clinical topic.
+// Strictly isolated CI: local fixture transport for public scientific APIs and AI provider.
+const PR100_FIXTURE_ORIGIN=process.env.SIASH_ISOLATED_CI==="1"&&/^http:\/\/127\.0\.0\.1:\d+$/.test(process.env.SIASH_PR100_FIXTURE_ORIGIN||"")?process.env.SIASH_PR100_FIXTURE_ORIGIN:"";
+if(PR100_FIXTURE_ORIGIN){
+ const nativeFetch=globalThis.fetch;
+ globalThis.fetch=(input,init)=>{
+  const raw=typeof input==="string"?input:input?.url||"";
+  const u=new URL(raw,"http://localhost");
+  const allow=["eutils.ncbi.nlm.nih.gov","www.ebi.ac.uk","pubmed.ncbi.nlm.nih.gov","generativelanguage.googleapis.com"];
+  if(u.protocol==="https:"&&allow.includes(u.hostname)){
+   return nativeFetch(PR100_FIXTURE_ORIGIN+"/"+u.hostname+u.pathname+u.search,init);
+  }
+  return nativeFetch(input,init);
+ };
+}
+async function researchPublicLiterature(query){
+ const topic=String(query||"").replace(/\s+/g," ").trim().slice(0,180);
+ if(!topic||docsGuard.privacyFindings(topic).length)throw new Error("Pesquisa pública bloqueada por LGPD ou consulta vazia");
+ const key="public-literature:"+topic.toLowerCase(),cached=scientificCacheGet(key);
+ if(cached)return {...cached,researchMode:"public_literature_cache"};
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+ const sources=[],seen=new Set();
+ function append(title,url,year,institution,content){
+  const canonical=docsGuard.scientificSourceUrl(url);
+  if(!canonical||!title||!/^\d{4}$/.test(String(year))||seen.has(canonical))return;
+  seen.add(canonical);sources.push({sourceId:"FONTE_"+(sources.length+1),title:String(title).slice(0,350),url:canonical,year:String(year),sourceInstitution:institution,content:String(content||"").slice(0,800)});
+ }
+ try{
+  const pubmedQuery=encodeURIComponent(topic);
+  const esearch=await fetch("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=6&term="+pubmedQuery,{signal:controller.signal});
+  if(esearch.ok){
+   const ids=(await esearch.json())?.esearchresult?.idlist||[];
+   if(ids.length){
+    const summary=await fetch("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&retmode=json&id="+ids.map(encodeURIComponent).join(","),{signal:controller.signal});
+    if(summary.ok){
+     const data=await summary.json();
+     for(const id of ids){const item=data?.result?.[id];if(item)append(item.title,"https://pubmed.ncbi.nlm.nih.gov/"+id+"/",(String(item.pubdate||"").match(/\b(?:19|20)\d{2}\b/)||[])[0],"PubMed / "+String(item.fulljournalname||item.source||""),item.title)}
+    }
+   }
+  }
+ }catch(e){console.warn("[SIASH AI] PubMed unavailable: "+String(e?.message||"network").slice(0,100))}
+ try{
+  const pmc=await fetch("https://www.ebi.ac.uk/europepmc/webservices/rest/search?format=json&pageSize=6&query="+encodeURIComponent(topic),{signal:controller.signal});
+  if(pmc.ok){
+   const data=await pmc.json();
+   for(const item of data?.resultList?.result||[]){
+    const pmid=String(item.pmid||"").trim();
+    // Europe PMC records are cited through canonical PubMed links when PMID exists.
+    if(pmid&&/^\d+$/.test(pmid))append(item.title,"https://pubmed.ncbi.nlm.nih.gov/"+pmid+"/",item.pubYear,"Europe PMC / "+String(item.journalTitle||""),item.title);
+   }
+  }
+ }catch(e){console.warn("[SIASH AI] Europe PMC unavailable: "+String(e?.message||"network").slice(0,100))}
+ finally{clearTimeout(timer)}
+ if(!sources.length)throw new Error("Nenhuma referência pública científica verificável foi encontrada");
+ const evidence=sources.map(x=>"["+x.sourceId+"]\nInstituição: "+x.sourceInstitution+"\nTítulo: "+x.title+"\nAno: "+x.year+"\nURL: "+x.url+"\nConteúdo: "+x.content).join("\n\n");
+ const result={sources,evidence,researchMode:"public_literature"};
+ scientificCachePut(key,result);return result;
 }
 async function researchWithTavily(prompt,queryOverride=""){
   if(!TAVILY_API_KEY)throw new Error("TAVILY_API_KEY não configurada no servidor.");
@@ -1531,7 +1751,7 @@ async function runAIRevision(prompt,requested,options={}){
   const clinicalRejections=[];
   let webResearch=null;
   let revisionPrompt=prompt;
-  if(requireWebResearch&&TAVILY_API_KEY){
+  if(requireWebResearch&&TAVILY_API_KEY&&!scientificCooling("tavily")){
     try{
       webResearch=await researchWithTavily(prompt,options?.researchQuery||"");
       revisionPrompt=[
@@ -1553,8 +1773,17 @@ async function runAIRevision(prompt,requested,options={}){
       console.warn(`[SIASH AI] Tavily indisponível | motivo=${msg}`);
     }
   }
+  if(requireWebResearch&&!webResearch){
+    try{
+      webResearch=await researchPublicLiterature(options?.researchQuery||"");
+      revisionPrompt=[prompt,"","PESQUISA CIENTÍFICA PÚBLICA (PubMed/Europe PMC):",webResearch.evidence,
+        "Use exclusivamente as fontes FONTE_N acima. Nunca invente títulos, anos ou URLs; referências ausentes devem permanecer pendentes."].join("\n");
+      console.log("[SIASH AI] pesquisa pública habilitada | fontes="+webResearch.sources.length);
+    }catch(e){errors.push("public_literature: "+String(e?.message||"indisponível").slice(0,200))}
+  }
   console.log(`[SIASH AI] início da revisão | ordem=${order.join(">")}`);
   for(const p of order){
+    if(scientificCooling(p)){errors.push(`${p}: quota cooldown`);continue}
     try{
       if(requireWebResearch){
         const webCapable=!!webResearch||(p==="openai"&&!!openaiClient)||(p==="gemini"&&!!GEMINI_API_KEY&&geminiUseSearch());
@@ -1569,6 +1798,9 @@ async function runAIRevision(prompt,requested,options={}){
       if(p==="gemini"&&GEMINI_API_KEY)ai=await reviseWithGemini(revisionPrompt);
       else if(p==="cloudflare"&&cloudflareConfigured())ai=await reviseWithCloudflare(revisionPrompt);
       else if(p==="openai"&&openaiClient)ai=await reviseWithOpenAI(revisionPrompt);
+      else if(p==="groq"&&GROQ_API_KEY)ai=await reviseWithCompatibleProvider(p,revisionPrompt);
+      else if(p==="openrouter"&&OPENROUTER_API_KEY)ai=await reviseWithCompatibleProvider(p,revisionPrompt);
+      else if(p==="huggingface"&&HUGGINGFACE_API_KEY&&HUGGINGFACE_MODEL)ai=await reviseWithCompatibleProvider(p,revisionPrompt);
       else {errors.push(`${p}: não configurado`);console.log(`[SIASH AI] provedor ignorado | provider=${p} | motivo=não_configurado`);continue}
       if(webResearch){
         const tavilyById=new Map((webResearch.sources||[]).map(s=>[String(s.sourceId||"").toUpperCase(),s]));
@@ -1602,6 +1834,7 @@ async function runAIRevision(prompt,requested,options={}){
       console.log(`[SIASH AI${diagnostic?" TEST":""}] proposta concluída | provider=${ai.provider} | model=${ai.model} | researchMode=${ai.researchMode||"provider_default"}`);
       return ai;
     }catch(e){
+      scientificTrip(p,e);
       const msg=String(e?.message||"falha").replace(/\s+/g," ").slice(0,500);
       if(e?.code==="SCIENTIFIC_BINDING_REJECTED"||e?.code==="CLINICAL_SEQUENCE_INTEGRITY_REJECTED"){
         const validationKind=e.code==="SCIENTIFIC_BINDING_REJECTED"?"rastreabilidade científica":"integridade clínica";
@@ -1766,6 +1999,8 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     if(!doc_code||!file_base64)return res.status(400).json({error:"POP/arquivo não informado."});
     const original=Buffer.from(file_base64,"base64");if(original.length>18*1024*1024)return res.status(413).json({error:"Word acima do limite de 18 MB para revisão automática."});
     const historyCleanup=cleanDuplicateSiashHistoryRows(original),baseDocument=historyCleanup.buffer;
+    const privacy=docsGuard.privacyFindings(docxParagraphs(baseDocument).map(p=>p.text).join("\\n"));
+    if(privacy.length){await audit(req.user.u,"SIASH Docs IA: bloqueio LGPD",{status:"blocked",categories:privacy});return res.status(422).json({error:"DOC_PRIVACY_BLOCKED",categories:privacy})}
     const paragraphs=docxParagraphs(baseDocument);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});const hygieneBefore=bibliographyHygieneState(baseDocument);const latestReferenceYear=latestReferenceYearInDoc(paragraphs);
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
     const editable=paragraphs.filter(p=>!protectedRx.test(p.text)&&!institutionalStructureProtectedText(p.text));
@@ -1791,7 +2026,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
       "ANVISA Ministério da Saúde Fiocruz IFF Fundação Oswaldo Cruz SBP WHO OPAS diretriz manual recomendação atual"
     ].filter(Boolean).join(" | ");
     const ai=await runAIRevision(prompt,provider,{requireWebResearch:requiresCurrentWebResearch,researchQuery,editableParagraphs:editable});
-    if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
+    if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search","public_literature","public_literature_cache"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
     const correctionNoop=correctionRequested&&!effective.length;
@@ -1804,14 +2039,16 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
       console.log(`[SIASH AI] auditoria obrigatória | code=${doc_code} | updates_recebidos=${Array.isArray(result.updates)?result.updates.length:0} | alteracoes_reais=${effective.length} | achados=${scientificAudit.findings.length}`);
       if(!effective.length){result.validationWarnings=[...(result.validationWarnings||[]),"A auditoria científica indica revisão necessária, mas a IA não produziu novo delta textual neste ciclo. Conferência profissional obrigatória."];result.requiresProfessionalReview=true;}
     }
+    // Rascunhos com rastreabilidade incompleta permanecem consultivos; a publicação exige validação independente.
     if(effective.some(x=>!Array.isArray(x.references)||!x.references.length)){result.validationWarnings=[...(result.validationWarnings||[]),"Há alteração proposta sem referência específica vinculada. Conferir a rastreabilidade antes da publicação."];result.requiresProfessionalReview=true;}
     const candidateSources=[...(result.references||[]),...(ai.sources||[])].filter(x=>x&&(x.title||x.url));
     const norm=s=>normalizedText(s).toLowerCase();
     const sourceKeys=candidateSources.flatMap(x=>[norm(x.title),norm(x.url)]).filter(Boolean);
     const unlinked=effective.filter(ch=>!(ch.references||[]).some(ref=>{const n=norm(ref);return sourceKeys.some(k=>k===n||k.includes(n)||n.includes(k))}));
-    if(unlinked.length){result.validationWarnings=[...(result.validationWarnings||[]),`Há referência citada sem correspondência bibliográfica rastreável nos parágrafos: ${unlinked.map(x=>x.paragraph_index).join(", ")}. Conferir antes da publicação.`];result.requiresProfessionalReview=true;}
+    if(unlinked.length){result.validationWarnings=[...(result.validationWarnings||[]),"As alterações não obtiveram vínculo bibliográfico elegível automático. Conferência profissional obrigatória antes da publicação.",`Há referência citada sem correspondência bibliográfica rastreável nos parágrafos: ${unlinked.map(x=>x.paragraph_index).join(", ")}. Conferir antes da publicação.`];result.requiresProfessionalReview=true;}
     const classified=candidateSources.length?await classifyReferenceUrls(candidateSources):{verified:[],pending:[]};
-    const references=[...classified.verified,...classified.pending];
+    const references=classified.verified.filter(x=>x.wordEligible===true);
+    if(effective.length&&!references.length)throw new Error("Pesquisa científica bloqueada: nenhuma fonte verificável e elegível encontrada.");
     const eligibleReferenceCount=references.filter(x=>x?.wordEligible===true).length;
     const officialEligibleReferenceCount=references.filter(x=>x?.wordEligible===true&&isOfficialScientificReference(x)).length;
     let traceable=[],excludedChanges=[];
@@ -1819,8 +2056,9 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
       if(!references.length){result.validationWarnings=[...(result.validationWarnings||[]),"A proposta contém alterações sem referências bibliográficas identificáveis. Conferência profissional obrigatória."];result.requiresProfessionalReview=true;}
       traceable=effective.filter(ch=>(ch.references||[]).some(ref=>references.some(src=>src.wordEligible===true&&sourceMatchesChangeReference(ref,src))));
       excludedChanges=effective.filter(ch=>!traceable.includes(ch));
-      if(!traceable.length&&effective.length){traceable=effective;result.validationWarnings=[...(result.validationWarnings||[]),"As alterações não obtiveram vínculo bibliográfico elegível automático. Foram preservadas na proposta para conferência profissional; não publicar sem revisar as fontes."];result.requiresProfessionalReview=true;}
+      if(!traceable.length&&effective.length)throw new Error("Pesquisa científica bloqueada: alterações sem fonte verificável.");
     }
+    if(requiresCurrentWebResearch&&!references.length)throw new Error("Pesquisa científica bloqueada: nenhuma fonte científica verificada.");
     if(periodicReviewRequired&&!traceable.length&&(eligibleReferenceCount<2||officialEligibleReferenceCount<1)){result.validationWarnings=[...(result.validationWarnings||[]),`Revisão periódica com referências insuficientes para validação automática: ${eligibleReferenceCount} elegível(is), ${officialEligibleReferenceCount} oficial(is). Conferir profissionalmente.`];result.requiresProfessionalReview=true;}
     // v0.14.6 — separa revisão documental periódica de alteração técnico-científica.
     // Se o POP precisa renovar a vigência, a ausência de mudança técnica NÃO é falha: cria-se uma

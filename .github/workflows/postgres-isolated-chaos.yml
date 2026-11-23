@@ -57,9 +57,11 @@ jobs:
         run: node --test tests/pipa-postgres-isolated.test.cjs
       - name: PR99 shift care PostgreSQL isolated transactional tests
         run: node --test tests/shift-care-postgres.test.cjs
+      - name: PR100 Docs PostgreSQL transactional tests
+        run: node --test tests/docs-governance-postgres.test.cjs
       - name: Install Chromium for isolated browser E2E
         run: |
           npm install --no-save --ignore-scripts --no-audit --no-fund playwright
           npx playwright install --with-deps chromium
       - name: Run real browser clinical conflict E2E
-        run: node --test tests/browser-isolated-e2e.test.cjs && node --test tests/browser-pr81-auth-census.test.cjs && node --test tests/census-late-browser-e2e.test.cjs && node --test tests/clinical-supervisor-browser-e2e.test.cjs && node --test tests/bed-movement-browser-e2e.test.cjs && node --test tests/picc-lifecycle-browser-e2e.test.cjs && node --test tests/pipa-browser-e2e.test.cjs && node --test tests/shift-care-browser-e2e.test.cjs
+        run: node --test tests/browser-isolated-e2e.test.cjs && node --test tests/browser-pr81-auth-census.test.cjs && node --test tests/census-late-browser-e2e.test.cjs && node --test tests/clinical-supervisor-browser-e2e.test.cjs && node --test tests/bed-movement-browser-e2e.test.cjs && node --test tests/picc-lifecycle-browser-e2e.test.cjs && node --test tests/pipa-browser-e2e.test.cjs && node --test tests/shift-care-browser-e2e.test.cjs && node --test tests/docs-governance-browser-e2e.test.cjs
