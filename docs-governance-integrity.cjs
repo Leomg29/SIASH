@@ -43,4 +43,26 @@ function validateDocsMutation(oldDocs,newDocs){
  if(newDocs.some(d=>!oldDocs.some(x=>String(x?.id||x?.code||"")===String(d?.id||d?.code||""))&&d.versions?.some(v=>v.workflow==="Vigente")))return {ok:false,code:"DOC_INITIAL_PUBLICATION_REQUIRES_SERVER"};
  return {ok:true};
 }
-module.exports={allowed,periodicity,hash,cpfValid,privacyFindings,validateDocsMutation};
+
+// Only exact trusted hosts and their subdomains; lookalike domains are rejected.
+const SCIENTIFIC_HOSTS=Object.freeze(["fiocruz.br","iff.fiocruz.br","sbp.com.br","who.int","cofen.gov.br","scielo.br","bvsalud.org","pubmed.ncbi.nlm.nih.gov"]);
+function scientificSourceUrl(raw){
+ try{
+  const u=new URL(String(raw||"").trim());
+  if(u.protocol!=="https:"||u.username||u.password||u.port)return null;
+  const host=u.hostname.toLowerCase().replace(/\.$/,"");
+  const institutional=SCIENTIFIC_HOSTS.some(domain=>host===domain||host.endsWith("."+domain));
+  const government=host==="gov.br"||host.endsWith(".gov.br");
+  if(!institutional&&!government)return null;
+  if(government&&!(/^\/saude(?:\/|$)/.test(u.pathname)||/^\/anvisa(?:\/|$)/.test(u.pathname)||host==="saude.gov.br"||host==="anvisa.gov.br"))return null;
+  return u.toString();
+ }catch{return null}
+}
+function scientificReferencesVerified(refs,observedUrls){
+ const observed=new Set((observedUrls||[]).map(scientificSourceUrl).filter(Boolean));
+ return Array.isArray(refs)&&refs.length>0&&refs.every(r=>{
+  const url=scientificSourceUrl(r?.url);
+  return Boolean(url&&observed.has(url)&&String(r?.title||"").trim()&&/^\d{4}$/.test(String(r?.year||"")));
+ });
+}
+module.exports={allowed,periodicity,hash,cpfValid,privacyFindings,validateDocsMutation,scientificSourceUrl,scientificReferencesVerified};
