@@ -1514,6 +1514,20 @@ function primaryScientificInstitution(raw=""){
   return "";
 }
 // Public literature search: no API key and no patient data. Query must be a clinical topic.
+// Strictly isolated CI: local fixture transport for public scientific APIs and AI provider.
+const PR100_FIXTURE_ORIGIN=process.env.SIASH_ISOLATED_CI==="1"&&/^http:\/\/127\.0\.0\.1:\d+$/.test(process.env.SIASH_PR100_FIXTURE_ORIGIN||"")?process.env.SIASH_PR100_FIXTURE_ORIGIN:"";
+if(PR100_FIXTURE_ORIGIN){
+ const nativeFetch=globalThis.fetch;
+ globalThis.fetch=(input,init)=>{
+  const raw=typeof input==="string"?input:input?.url||"";
+  const u=new URL(raw,"http://localhost");
+  const allow=["eutils.ncbi.nlm.nih.gov","www.ebi.ac.uk","pubmed.ncbi.nlm.nih.gov","generativelanguage.googleapis.com"];
+  if(u.protocol==="https:"&&allow.includes(u.hostname)){
+   return nativeFetch(PR100_FIXTURE_ORIGIN+"/"+u.hostname+u.pathname+u.search,init);
+  }
+  return nativeFetch(input,init);
+ };
+}
 async function researchPublicLiterature(query){
  const topic=String(query||"").replace(/\s+/g," ").trim().slice(0,180);
  if(!topic||docsGuard.privacyFindings(topic).length)throw new Error("Pesquisa pública bloqueada por LGPD ou consulta vazia");
@@ -2011,7 +2025,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
       "ANVISA Ministério da Saúde Fiocruz IFF Fundação Oswaldo Cruz SBP WHO OPAS diretriz manual recomendação atual"
     ].filter(Boolean).join(" | ");
     const ai=await runAIRevision(prompt,provider,{requireWebResearch:requiresCurrentWebResearch,researchQuery,editableParagraphs:editable});
-    if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
+    if(requiresCurrentWebResearch&&!(["web_search","google_search","tavily_search","public_literature","public_literature_cache"].includes(String(ai.researchMode||""))))throw new Error("Esta revisão exige pesquisa web atual. Nenhum provedor com pesquisa web verificável concluiu a análise; o POP vigente permanece inalterado.");
     const result=ai.result||{},allowed=new Set(editable.map(p=>p.index));
     const effective=effectiveAIUpdates(paragraphs,result.updates||[],allowed);
     const correctionNoop=correctionRequested&&!effective.length;
