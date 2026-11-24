@@ -288,6 +288,8 @@ test("A referência é inserida na célula do título em tabela aninhada", () =>
   const inner = table(para("Referências"));
   const xml = documentXml(table(inner + para("Texto fora da célula interna")));
   const result = append(makeZip(xml), [fixtureReference]);
+  assert.equal(result.referencePlacement, "bibliography_section_verified");
+  assert.ok(readXml(result.buffer).includes(fixtureReference.url));
   assert.ok(readXml(result.buffer).indexOf(fixtureReference.url) < readXml(result.buffer).indexOf("</w:tc>"));
 });
 test("Marcador em rodapé com nome personalizado é inspecionado pela relação OPC", async () => {
@@ -331,6 +333,223 @@ test("Limpeza não remove quebras de seção incorporadas a parágrafos", () => 
   assert.throws(() => append(bibliography, [fixtureReference]), /DOCX_BIBLIOGRAPHY_PROTECTED_STRUCTURE/);
 });
 
+const previousCitation = para("3. Instituto Sintético. Manual documental de segurança e integridade. 2021.");
+const secondCitation = para("7. Comissão de Testes. Auditoria de documentos institucionais para exemplo. 2022.");
+const twoCells = (left, right) => `<w:tbl><w:tr><w:tc>${left}</w:tc><w:tc>${right}</w:tc></w:tr></w:tbl>`;
+
+test("Escopo continua na tabela consecutiva com citações independentes e preserva os bytes institucionais", () => {
+  const title = table(para("4-REFERÊNCIAS BIBLIOGRÁFICAS"));
+  const fragment = "<w:p>" + run("5. Editora de Teste. Estudos sintéticos sobre ") + run("integridade documental. 2023.") + "</w:p>";
+  const payload = title + table(previousCitation + fragment + secondCitation);
+  const original = makeZip(documentXml(payload + "<w:sectPr/>"));
+  const result = append(original, [fixtureReference]);
+  const xml = readXml(result.buffer);
+  assert.ok(xml.includes(title + "<w:tbl><w:tr><w:tc>" + previousCitation + fragment + secondCitation));
+  assert.ok(xml.indexOf(fixtureReference.url) > xml.indexOf(secondCitation));
+  assert.ok(xml.includes("8. " + fixtureReference.title));
+  assert.equal(runtime.verifiedReferencePlacement(result, result.buffer), "bibliography_section_verified");
+  const section = runtime.referenceSectionInfo(runtime.docxParagraphs(result.buffer, { includeEmpty: true }));
+  assert.equal(section.spansTables, true);
+  assert.deepEqual(append(result.buffer, [fixtureReference]).buffer, result.buffer);
+  assert.equal(readXml(original), documentXml(payload + "<w:sectPr/>"));
+});
+
+test("Tabela bibliográfica aninhada imediatamente após o título na mesma célula", () => {
+  const title = para("4-REFERÊNCIAS BIBLIOGRÁFICAS");
+  const nested = table(previousCitation + secondCitation);
+  const signature = para("Assinatura e carimbo");
+  const original = makeZip(documentXml(twoCells(title + nested + "<w:p/>", signature)));
+  const result = append(original, [fixtureReference]);
+  const xml = readXml(result.buffer);
+  assert.ok(xml.indexOf(fixtureReference.url) > xml.indexOf(secondCitation));
+  assert.ok(xml.indexOf(fixtureReference.url) < xml.indexOf("</w:tbl>"));
+  assert.ok(xml.includes("</w:tbl><w:p/></w:tc><w:tc>" + signature));
+  const section = runtime.referenceSectionInfo(runtime.docxParagraphs(result.buffer, { includeEmpty: true }));
+  assert.equal(section.spansTables, true);
+  assert.equal(runtime.verifiedReferencePlacement(result, result.buffer), "bibliography_section_verified");
+});
+
+test("Células irmãs contíguas podem compor uma única bibliografia", () => {
+  const left = para("Referências");
+  const original = makeZip(documentXml(twoCells(left, previousCitation)));
+  const result = append(original, [fixtureReference]);
+  const xml = readXml(result.buffer);
+  assert.ok(xml.indexOf(fixtureReference.url) > xml.indexOf(previousCitation));
+  assert.ok(xml.includes(left + "</w:tc><w:tc>" + previousCitation));
+  const section = runtime.referenceSectionInfo(runtime.docxParagraphs(result.buffer));
+  assert.equal(section.spansCells, true);
+  assert.equal(section.spansTables, false);
+});
+
+test("Tabela consecutiva mista, texto não bibliográfico ou separador estrutural não autorizam extensão", () => {
+  const title = table(para("Referências"));
+  const unrelated = para("Campo administrativo sem material bibliográfico");
+  for (const next of [table(unrelated), table(previousCitation + unrelated), "<w:p/>" + table(previousCitation),
+    table(para("Campo administrativo para revisão da equipe responsável em 2024.")), table(para("https://example.test/support"))]) {
+    const sourceXml = documentXml(title + next + "<w:sectPr/>");
+    const original = makeZip(sourceXml);
+    const result = append(original, [fixtureReference]);
+    assert.equal(result.referencePlacement, "bibliography_pending_review");
+    assert.ok(readXml(result.buffer).includes(title + next));
+    assert.ok(!readXml(result.buffer).includes(fixtureReference.url));
+    assert.deepEqual(append(result.buffer, [fixtureReference]).buffer, result.buffer);
+  }
+});
+
+test("Limites aprovados preservam assinatura, anexos, histórico e a quebra institucional", () => {
+  const prefix = para("Referências") + previousCitation;
+  for (const block of [
+    para("9. Assinatura e carimbo"), para("IX. Anexos"), para("Controle Histórico"),
+    "<w:p><w:pPr><w:sectPr/></w:pPr>" + run("Fim da seção") + "</w:p>"
+  ]) {
+    const tail = block + secondCitation;
+    const result = append(makeZip(documentXml(prefix + tail)), [fixtureReference]);
+    const xml = readXml(result.buffer);
+    assert.ok(xml.includes(tail));
+    assert.ok(xml.indexOf(fixtureReference.url) < xml.indexOf(tail));
+    assert.ok(xml.includes(previousCitation));
+  }
+});
+
+test("Deduplicação na tabela contígua e numeração Word preservam a obra e o numPr", () => {
+  const numProps = '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="7"/></w:numPr>';
+  const institutional = "<w:p><w:pPr>" + numProps + "</w:pPr>" +
+    run(fixtureReference.title + ". Disponível em: " + fixtureReference.url) + "</w:p>";
+  const original = makeZip(documentXml(table(para("Bibliografia")) + table(institutional)));
+  const same = append(original, [fixtureReference]);
+  assert.deepEqual(same.buffer, original);
+  assert.equal(same.representedByInstitutional, 1);
+  const next = { ...fixtureReference, title: "Outra publicação de validação técnica", url: "https://example.test/works/another" };
+  const result = append(original, [fixtureReference, next]);
+  assert.ok(readXml(result.buffer).includes(institutional));
+  assert.equal(readXml(result.buffer).split(numProps).length, 3);
+  assert.deepEqual(append(result.buffer, [fixtureReference, next]).buffer, result.buffer);
+});
+
+test("AlternateContent apenas com runs vazias é preservado; ramos incertos e conflitantes permanecem bloqueados", async () => {
+  const ac = (choice, fallback, requires = "w") =>
+    '<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">' +
+    '<mc:Choice Requires="' + requires + '">' + choice + "</mc:Choice><mc:Fallback>" +
+    fallback + "</mc:Fallback></mc:AlternateContent>";
+  const inert = ac("<w:r/>", "<w:r/>");
+  const header = `<w:hdr xmlns:w="${namespace}">${para("Cabeçalho sintético")}</w:hdr>`;
+  const footer = `<w:ftr xmlns:w="${namespace}">${para("Rodapé sintético")}</w:ftr>`;
+  const original = makeZip(documentXml("<w:p>" + inert + "</w:p>" + para("Referências")),
+    { "word/header1.xml": header, "word/footer1.xml": footer });
+  assert.equal(runtime.inspectPublicationBibliography(original).pending, false);
+  const result = append(original, [fixtureReference]);
+  assert.equal(result.referencePlacement, "bibliography_section_verified");
+  assert.ok(readXml(result.buffer).includes(inert));
+  const revised = new AdmZip(result.buffer);
+  assert.equal(revised.readAsText("word/header1.xml"), header);
+  assert.equal(revised.readAsText("word/footer1.xml"), footer);
+  assert.equal(revised.readAsText("_rels/.rels"), new AdmZip(original).readAsText("_rels/.rels"));
+  for (const fragment of [ac("<w:r/>", "<w:r/>", "unknown"), ac(run("Referências"), run("Material de apoio"))]) {
+    const input = makeZip(documentXml("<w:p>" + fragment + "</w:p>" + para("Referências")));
+    assert.equal(append(input, [fixtureReference]).referencePlacement, "bibliography_pending_review");
+    assertPublicationBlocked(await publish(input), "DOC_BIBLIOGRAPHY_UNREADABLE");
+  }
+});
+
+test("Rótulo misturado a citação e títulos Heading1 qualificados não selecionam falso positivo", () => {
+  for (const text of ["Referências bibliográficas: Editora de Teste, 2024.", "Referências e material de apoio"]) {
+    assert.equal(locate(para(text, "Heading1")).status, "not_found");
+    const original = makeZip(documentXml(para(text, "Heading1")));
+    const result = append(original, [fixtureReference]);
+    assert.equal(result.referencePlacement, "bibliography_pending_review");
+    assert.ok(readXml(result.buffer).includes(para(text, "Heading1")));
+  }
+});
+
+test("Bibliografia excessiva ou fonte institucional genérica mantém o Word pendente e intacto", () => {
+  for (const payload of [previousCitation.repeat(257), para("Obra institucional. Disponível em: https://example.test/")]) {
+    const original = makeZip(documentXml(para("Referências") + payload));
+    const result = append(original, [fixtureReference]);
+    assert.equal(result.referencePlacement, "bibliography_pending_review");
+    assert.ok(readXml(result.buffer).includes(payload));
+    assert.ok(!readXml(result.buffer).includes(fixtureReference.url));
+  }
+});
+
+const historicalLabel = "[REQUER CONFERÊNCIA PROFISSIONAL]";
+const legitimateLegacy = historicalLabel + " Publicação sintética do acervo documental. Disponível em: https://example.test/works/legacy";
+const historyBlock = row => table(para("Controle Histórico") + row);
+
+test("Rótulo no histórico em múltiplas runs preserva todo o XML e sinaliza pendência idempotente", () => {
+  const row = "<w:p>" + run("Registro sintético [REQUER ") + run("CONFERÊNCIA PROFISSIONAL]") + "</w:p>";
+  const signature = table(para("Assinatura e carimbo") + para("Aprovação da versão sintética"));
+  const annex = table(para("Anexos") + para("Anexo sintético intacto"));
+  const prefix = para("Referências") + previousCitation + historyBlock(row) + signature + annex;
+  const xml = documentXml(prefix + "<w:sectPr/>");
+  const extras = {
+    "word/header1.xml": `<w:hdr xmlns:w="${namespace}">${para("Cabeçalho sintético")}</w:hdr>`,
+    "word/footer1.xml": `<w:ftr xmlns:w="${namespace}">${para("Rodapé sintético")}</w:ftr>`,
+    "docProps/custom.xml": '<Properties version="synthetic"/>'
+  };
+  const original = makeZip(xml, extras);
+  const sha = crypto.createHash("sha256").update(original).digest("hex");
+  const result = append(original, [fixtureReference]);
+  assert.equal(result.referencePlacement, "bibliography_pending_review");
+  assert.equal(JSON.parse(logs.at(-1)).reason, "legacy_reference_outside_bibliography");
+  const marker = runtime.bibliographyParagraph(references.MARCADOR, namespace);
+  assert.equal(readXml(result.buffer), xml.replace("<w:sectPr/>", marker + "<w:sectPr/>"));
+  const before = new AdmZip(original), after = new AdmZip(result.buffer);
+  for (const entry of before.getEntries().filter(e => e.entryName !== documentPart)) {
+    assert.deepEqual(entry.getData(), after.getEntry(entry.entryName).getData(), entry.entryName);
+  }
+  assert.deepEqual(append(result.buffer, [fixtureReference]).buffer, result.buffer);
+  assert.equal(runtime.verifiedReferencePlacement(result, result.buffer), "bibliography_pending_review");
+  assert.equal(crypto.createHash("sha256").update(original).digest("hex"), sha);
+});
+
+test("Rótulos iguais em bibliografia e histórico permanecem intactos enquanto a migração está pendente", () => {
+  const legacy = para(legitimateLegacy);
+  const xml = documentXml(para("Referências") + legacy + historyBlock(legacy));
+  const original = makeZip(xml);
+  const result = append(original, [fixtureReference]);
+  assert.equal(result.referencePlacement, "bibliography_pending_review");
+  assert.equal(result.moved, 0);
+  assert.equal(readXml(result.buffer).split(legacy).length, 3);
+  assert.ok(!readXml(result.buffer).includes(fixtureReference.url));
+});
+
+test("Migração legitima dentro da bibliografia preserva as outras partes e rejeita perda posterior do histórico", () => {
+  const heading = para("Referências");
+  const history = historyBlock(para("Registro histórico sintético"));
+  const xml = documentXml(heading + para(legitimateLegacy) + history);
+  const original = makeZip(xml, { "docProps/custom.xml": "<Meta/>" });
+  const result = append(original);
+  assert.equal(result.referencePlacement, "bibliography_section_verified");
+  assert.equal(result.labelsRemoved, 1);
+  assert.equal(result.moved, 0);
+  const clean = runtime.bibliographyParagraph(legitimateLegacy.slice(historicalLabel.length + 1), namespace);
+  assert.equal(readXml(result.buffer), documentXml(heading + clean + history));
+  assert.deepEqual(append(result.buffer).buffer, result.buffer);
+  assert.equal(runtime.verifiedReferencePlacement(result, result.buffer), "bibliography_section_verified");
+  const zip = new AdmZip(result.buffer);
+  zip.updateFile(documentPart, Buffer.from(readXml(result.buffer).replace(history, "")));
+  assert.throws(() => runtime.verifiedReferencePlacement(result, zip.toBuffer()), /DOCX_BIBLIOGRAPHY_OUTSIDE_SCOPE_CHANGED/);
+  assert.throws(() => runtime.writeBibliographyEdits(original, new AdmZip(original), xml,
+    readXml(result.buffer).replace(history, ""), []), /DOCX_BIBLIOGRAPHY_OUTSIDE_SCOPE_CHANGED/);
+});
+
+test("Rótulo em rodapé ou com proveniência incerta na bibliografia não autoriza remoção", () => {
+  const footer = `<w:ftr xmlns:w="${namespace}">${para(legitimateLegacy)}</w:ftr>`;
+  const clean = makeZip(documentXml(para("Referências") + previousCitation), { "word/footer1.xml": footer });
+  const result = append(clean);
+  assert.equal(runtime.bibliographyHygieneState(clean).needsHygiene, true);
+  assert.equal(result.referencePlacement, "bibliography_pending_review");
+  assert.equal(new AdmZip(result.buffer).readAsText("word/footer1.xml"), footer);
+  assert.throws(() => runtime.patchDocx(makeZip(documentXml(para(legitimateLegacy))),
+    [{ paragraph_index: 0, new_text: "Alteração indevida" }]), /DOCX_PARAGRAPH_NOT_EDITABLE/);
+  for (const suspect of ["Trecho " + legitimateLegacy, historicalLabel + " anotação sem fonte"]) {
+    const file = makeZip(documentXml(para("Referências") + para(suspect)));
+    const pending = append(file, [fixtureReference]);
+    assert.equal(pending.referencePlacement, "bibliography_pending_review");
+    assert.ok(readXml(pending.buffer).includes(para(suspect)));
+  }
+});
+
 test("Nenhuma chamada a provedores externos", () => assert.equal(providerCalls, 0));
 
 test("API real e PostgreSQL isolado: rollback para pendência e arquivo não inspecionável", {
@@ -370,13 +589,19 @@ test("API real e PostgreSQL isolado: rollback para pendência e arquivo não ins
     const validKey = key + "|valid";
     const invalidKey = key + "|invalid";
     const bareKey = key + "|bare";
+    const historyKey = key + "|history";
     const versions = [
       { revision: "01", workflow: "Vigente", wordKey: validKey },
       { revision: "02", workflow: "Aguardando aprovação", wordKey, publicationPrepared: true,
         approvalEmbedded: true, docxIntegrityValidated: true, createdBy: "editor",
         aiVerification: { referencePlacement: "bibliography_section_verified" } }
     ];
+    const preservedHistory = historyBlock("<w:p>" + run("Registro [REQUER CONFERÊNCIA ") + run("PROFISSIONAL]") + "</w:p>");
+    const historical = append(makeZip(documentXml(para("Referências") + previousCitation + preservedHistory)), [fixtureReference]);
+    assert.equal(historical.referencePlacement, "bibliography_pending_review");
+    assert.ok(readXml(historical.buffer).includes(preservedHistory));
     const cases = [
+      [historyKey, historical.buffer, "DOC_BIBLIOGRAPHY_PENDING"],
       [wordKey, makeZip(documentXml("<w:p>" + run("[REFERÊN") + run("CIAS A CONFERIR]") + "</w:p>")), "DOC_BIBLIOGRAPHY_PENDING"],
       [invalidKey, makeZip(documentXml('<w:p unknown:attribute="1"/>')), "DOC_BIBLIOGRAPHY_UNREADABLE"],
       [bareKey, makeZip(documentXml(para("Referências") + para("Obra sintética sem fonte"))), "DOC_SCIENTIFIC_REFERENCES_NOT_IN_DOCX"]
