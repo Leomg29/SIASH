@@ -607,11 +607,24 @@ app.post("/api/docs/publish",auth,async(req,res)=>{
   if(!validateGeneratedDocx(file.rows[0].file_data)){await client.query("ROLLBACK");return res.status(422).json({error:"DOCX_INTEGRITY_INVALID"})}
   const storedHash=await client.query("SELECT sha256 FROM siash_doc_artifacts WHERE doc_key=$1",[v.wordKey]);
   if(storedHash.rows.length&&storedHash.rows[0].sha256!==digest){await client.query("ROLLBACK");return res.status(422).json({error:"DOC_ARTIFACT_HASH_MISMATCH"})}
+  let bibliographyInspection;
+  try{bibliographyInspection=inspectPublicationBibliography(file.rows[0].file_data)}
+  catch{await client.query("ROLLBACK");return res.status(422).json({error:"Não foi possível inspecionar com segurança a bibliografia do DOCX.",code:"DOC_BIBLIOGRAPHY_UNREADABLE"})}
+  if(bibliographyInspection.pending){
+    await client.query("ROLLBACK");return res.status(422).json({error:"Publicação bloqueada: confira a bibliografia e remova o marcador [REFERÊNCIAS A CONFERIR] do Word revisado.",code:"DOC_BIBLIOGRAPHY_PENDING"});
+  }
   // AI drafts remain consultative; server independently rechecks sources at publication.
   if(v.aiProvider||Array.isArray(v.aiReferences)||Array.isArray(v.aiChanges)){
     const refs=Array.isArray(v.aiReferences)?v.aiReferences:[];
     if(!refs.length||refs.some(x=>!docsGuard.scientificSourceUrl(x.url))){
       await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_INVALID"});
+    }
+    const {paragraphs}=bibliographyInspection,section=referenceSectionInfo(paragraphs);
+    const bibliography=section?paragraphs.filter(p=>inReferenceSection(p,section)).map(p=>p.text).join(" "):"";
+    const observedUrls=new Set((bibliography.match(/https:\/\/[^\s<>"']+/gi)||[])
+      .map(url=>docsGuard.scientificSourceUrl(url.replace(/[),.;]+$/,""))).filter(Boolean));
+    if(!section||refs.some(x=>!observedUrls.has(docsGuard.scientificSourceUrl(x.url)))){
+      await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_NOT_IN_DOCX"});
     }
     const checked=await classifyReferenceUrls(refs);
     const eligible=checked.verified.filter(x=>x.wordEligible===true&&docsGuard.scientificSourceUrl(x.url));
@@ -621,9 +634,7 @@ app.post("/api/docs/publish",auth,async(req,res)=>{
     )&&refs.some(x=>x.year||x.publicationYear||x.ano)){
       await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_UNVERIFIED"});
     }
-    const paragraphs=docxParagraphs(file.rows[0].file_data),section=referenceSectionInfo(paragraphs);
-    const bibliography=section?paragraphs.filter(p=>p.index>section.headingIndex&&(section.stopIndex==null||p.index<section.stopIndex)).map(p=>p.text).join(" "):"";
-    if(!section||eligible.some(x=>!bibliography.includes(x.url))){
+    if(eligible.some(x=>!observedUrls.has(docsGuard.scientificSourceUrl(x.url)))){
       await client.query("ROLLBACK");return res.status(422).json({error:"DOC_SCIENTIFIC_REFERENCES_NOT_IN_DOCX"});
     }
   }
@@ -670,7 +681,7 @@ function validateGeneratedDocx(buf){
  try{
   if(!Buffer.isBuffer(buf)||buf.length<100||buf.readUInt32LE(0)!==0x04034b50)return false;
   const zip=new AdmZip(buf),entries=zip.getEntries();
-  if(!entries.length||entries.length>3000)return false;
+  if(!entries.length||entries.length>3000||entries.reduce((bytes,entry)=>bytes+(entry.isDirectory?0:entry.header.size),0)>128*1024*1024)return false;
   for(const entry of entries){
    if(entry.isDirectory)continue;
    const bytes=entry.getData();
@@ -721,6 +732,7 @@ app.post("/api/docs/convert-legacy-word",auth,async(req,res)=>{
 // --- SIASH Docs IA: revisão técnico-científica com preservação do OOXML ---
 const OpenAI = require("openai");
 const AdmZip = require("adm-zip");
+const {MARCADOR,XML_ERROR,headingLabel,inspectWordXml,isReferenceHeading,locateInParagraphs,applyParagraphStyles,hasPendingMarker}=require("./lib/referencias");
 const openaiClient = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
@@ -748,40 +760,127 @@ const CLOUDFLARE_MAX_COMPLETION_TOKENS = Math.max(1000, Number(process.env.CLOUD
 const CLOUDFLARE_REASONING_EFFORT = String(process.env.CLOUDFLARE_REASONING_EFFORT || "low").toLowerCase();
 function xmlDecode(s=""){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&amp;/g,"&")}
 function xmlEncode(s=""){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&apos;")}
-function docxParagraphs(buf){
-  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)throw new Error("DOCX sem word/document.xml.");
-  const xml=entry.getData().toString("utf8"), blocks=[...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)];
-  return blocks.map((m,index)=>({index,text:[...m[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(x=>xmlDecode(x[1])).join("").trim()})).filter(x=>x.text);
+function readWordPart(entry){
+  if(!entry||entry.header.size>32*1024*1024)throw new Error(XML_ERROR);
+  try{return new TextDecoder("utf-8",{fatal:true}).decode(entry.getData())}
+  catch{throw new Error(XML_ERROR)}
+}
+function wordStoryParts(zip){
+  const entries=new Map();
+  for(const entry of zip.getEntries()){
+    if(entry.isDirectory)continue;
+    if(entries.has(entry.entryName))throw new Error(XML_ERROR);
+    entries.set(entry.entryName,entry);
+  }
+  const rootRels=entries.get("_rels/.rels");
+  if(rootRels){
+    const mainParts=inspectWordXml(readWordPart(rootRels),"Relationships").relationships
+      .filter(rel=>rel.type.endsWith("/officeDocument"));
+    if(mainParts.length>1||mainParts.some(rel=>(rel.mode&&rel.mode!=="Internal")||
+      !["word/document.xml","/word/document.xml"].includes(rel.target)))throw new Error(XML_ERROR);
+  }
+  const names=new Map([["word/document.xml","document"]]);
+  for(const name of entries.keys()){
+    if(/^word\/header[^/]*\.xml$/i.test(name))names.set(name,"hdr");
+    if(/^word\/footer[^/]*\.xml$/i.test(name))names.set(name,"ftr");
+    if(/^word\/(?:footnotes|endnotes|comments)\.xml$/.test(name))names.set(name,path.posix.basename(name,".xml"));
+  }
+  const rels=entries.get("word/_rels/document.xml.rels");
+  let styleName;
+  if(rels){
+    for(const {type,target,mode} of inspectWordXml(readWordPart(rels),"Relationships").relationships){
+      const kind=type.split("/").at(-1);
+      const parts={header:"hdr",footer:"ftr",styles:"styles",footnotes:"footnotes",endnotes:"endnotes",comments:"comments"};
+      const part=Object.hasOwn(parts,kind)?parts[kind]:null;
+      if(!part)continue;
+      if(mode&&mode!=="Internal")throw new Error(XML_ERROR);
+      let decoded;
+      try{decoded=decodeURIComponent(target)}catch{throw new Error(XML_ERROR)}
+      if(!decoded||/[\\?#:\u0000]/.test(decoded))throw new Error(XML_ERROR);
+      const name=decoded.startsWith("/")?path.posix.normalize(decoded).slice(1):path.posix.normalize("word/"+decoded);
+      if(!entries.has(name))throw new Error(XML_ERROR);
+      if(part==="styles"){
+        if(styleName&&styleName!==name)throw new Error(XML_ERROR);
+        styleName=name;
+      }else{
+        if(names.has(name)&&names.get(name)!==part)throw new Error(XML_ERROR);
+        names.set(name,part);
+      }
+    }
+  }
+  const stories=[...names].map(([name,part])=>[entries.get(name),part]);
+  const stylesEntry=entries.get(styleName||"word/styles.xml");
+  if(stories.length>256||stories.reduce((size,[entry])=>size+(entry?.header.size||0),stylesEntry?.header.size||0)>64*1024*1024){
+    throw new Error(XML_ERROR);
+  }
+  return {stories,stylesEntry};
+}
+function inspectDocxDocument(zip,xml,stylesEntry=wordStoryParts(zip).stylesEntry){
+  const inspected=inspectWordXml(xml);
+  const styles=stylesEntry?inspectWordXml(readWordPart(stylesEntry),"styles"):undefined;
+  if(styles?.unsupportedLayout){
+    inspected.unsupportedLayout=true;
+    for(const p of inspected.paragraphs)p.unsupportedLayout=true;
+  }
+  applyParagraphStyles(inspected.paragraphs,styles);
+  return inspected;
+}
+function docxParagraphs(buf,{includeEmpty=false}={}){
+  const zip=new AdmZip(buf);
+  return inspectDocxDocument(zip,readWordPart(zip.getEntry("word/document.xml"))).paragraphs.filter(p=>includeEmpty||p.text);
+}
+function editWordXml(xml,edits){
+  let cursor=0;
+  const chunks=[];
+  for(const {start,end,text} of edits.sort((a,b)=>a.start-b.start||a.end-b.end)){
+    if(start<cursor||end<start||end>xml.length)throw new Error(XML_ERROR);
+    chunks.push(xml.slice(cursor,start),text);
+    cursor=end;
+  }
+  return chunks.length?chunks.join("")+xml.slice(cursor):xml;
+}
+function replaceParagraphText(paragraph,text){
+  if(!paragraph.ranges.length)throw new Error("DOCX_PARAGRAPH_NOT_EDITABLE");
+  return paragraph.ranges.map(({start,end},i)=>({start,end,text:i?"":xmlEncode(text)}));
 }
 function patchDocx(buf,updates){
-  const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)throw new Error("DOCX sem word/document.xml.");
-  const xml=entry.getData().toString("utf8");
-  const map=new Map((updates||[]).map(u=>[Number(u.paragraph_index),String(u.new_text||"")]));let idx=-1;
-  const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
-    idx++;if(!map.has(idx))return p;
-    const replacement=map.get(idx);let first=true,found=false;
-    const out=p.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{found=true;if(first){first=false;return a+xmlEncode(replacement)+c}return a+c});
-    if(!found)throw new Error(`Parágrafo ${idx} não possui trecho de texto editável no OOXML.`);
-    return out;
+  const zip=new AdmZip(buf),xml=readWordPart(zip.getEntry("word/document.xml"));
+  const {paragraphs}=inspectDocxDocument(zip,xml);
+  const map=new Map((updates||[]).map(u=>[Number(u.paragraph_index),String(u.new_text||"")]));
+  const edits=paragraphs.filter(p=>map.has(p.index)).flatMap(p=>{
+    if(!p.body||p.toc||p.hasDeletedContent||p.hasNestedParagraph||institutionalStructureProtectedText(p.text))throw new Error("DOCX_PARAGRAPH_NOT_EDITABLE");
+    return replaceParagraphText(p,map.get(p.index));
   });
+  const patched=editWordXml(xml,edits);
+  inspectWordXml(patched);
   zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return zip.toBuffer();
 }
 function normalizedText(s=""){return String(s||"").replace(/\s+/g," ").trim()}
 function normalizeComparableText(s=""){return normalizedText(s).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/^[✓✔•·\-–—\s]+/,"").replace(/\s*([;,.])\s*/g,"$1")}
 function removeDocxParagraphs(buf,indexes=[]){
   const remove=new Set((indexes||[]).map(Number)),zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry||!remove.size)return buf;
-  let idx=-1;const xml=entry.getData().toString("utf8"),patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{idx++;return remove.has(idx)?"":p;});
+  const xml=readWordPart(entry),{paragraphs}=inspectWordXml(xml);
+  const patched=editWordXml(xml,paragraphs.filter(p=>p.body&&!p.hasNestedParagraph&&!p.retainOnCleanup&&remove.has(p.index)).map(removeWordParagraph));
+  inspectWordXml(patched);
   zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));return zip.toBuffer();
+}
+function removeWordParagraph(p){
+  return {start:p.start,end:p.end,text:p.inCell?`<w:p xmlns:w="${p.uri}"/>`:""};
 }
 function orphanCheckmarkParagraphIndexes(buf){
   const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)return [];
-  const blocks=[...entry.getData().toString("utf8").matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map((m,index)=>({index,xml:m[0],text:[...m[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(x=>xmlDecode(x[1])).join("").replace(/\s+/g," ").trim(),numbered:/<w:numPr>[\s\S]*?<w:numId\s+w:val="\d+"\s*\/>[\s\S]*?<\/w:numPr>/.test(m[0])}));
+  const xml=readWordPart(entry);
+  const blocks=inspectWordXml(xml).paragraphs.filter(p=>p.body&&!p.toc&&!p.hasNestedParagraph&&!p.retainOnCleanup).map(p=>({
+    index:p.index,text:p.text.replace(/\s+/g," ").trim(),
+    numbered:/<w:numPr>[\s\S]*?<w:numId\s+w:val="\d+"\s*\/>[\s\S]*?<\/w:numPr>/.test(xml.slice(p.start,p.end))
+  }));
   const section5=blocks.find(p=>/^5\s*[-.)]?\s*descri[cç][aã]o do procedimento/i.test(p.text)),section6=blocks.find(p=>/^6\s*[-.)]?\s*procedimentos essenciais/i.test(p.text)),section7=blocks.find(p=>/^7\s*[-.)]?\s*n[aã]o conformidade/i.test(p.text));
   const inTargetScope=index=>(section5&&section6&&index>section5.index&&index<section6.index)||(section6&&section7&&index>section6.index&&index<section7.index);
   return blocks.filter(p=>inTargetScope(p.index)&&p.numbered&&!p.text).map(p=>p.index);
 }
 function targetedFinalWordCleanup(buf){
-  const paragraphs=docxParagraphs(buf),removeIndexes=new Set(),repairs=[];
+  if(hasPendingMarker(docxParagraphs(buf)))return {buffer:buf,repairs:[]};
+  const paragraphs=docxParagraphs(buf).filter(p=>p.body&&!p.toc&&!p.hasNestedParagraph&&!p.retainOnCleanup),removeIndexes=new Set(),repairs=[];
   const sectionStart=paragraphs.findIndex(p=>/^(?:6\s*[-.)]?\s*)?procedimentos essenciais/i.test(String(p.text||"").trim())),sectionEnd=paragraphs.findIndex((p,i)=>i>sectionStart&&/^7\s*[-.)]?\s*/.test(String(p.text||"").trim()));
   if(sectionStart>=0){
     const scope=paragraphs.slice(sectionStart,sectionEnd>sectionStart?sectionEnd:paragraphs.length),complete=scope.find(p=>/antes de tocar o paciente/i.test(p.text)&&/antes de realizar procedimento limpo/i.test(p.text)&&/ap[oó]s risco de exposi[cç][aã]o a fluidos/i.test(p.text)&&/ap[oó]s tocar o paciente/i.test(p.text)&&/ap[oó]s tocar superf[ií]cies pr[oó]ximas/i.test(p.text));
@@ -885,36 +984,23 @@ async function classifyReferenceUrls(refs){
   const dedup=a=>[...new Map(a.map(x=>[(x.url||x.title).toLowerCase(),x])).values()].map(decorate);
   return {verified:dedup(verified),pending:dedup(pending)};
 }
-function normalizeReferenceHeadingText(text=""){
-  return normalizedText(text)
-    .replace(/\u00a0/g," ")
-    .replace(/[\u200B-\u200D\uFEFF]/g,"")
-    .replace(/^[\s\u2022\u25CF\u25AA\u25E6\-–—]+/,"")
-    .replace(/\s+/g," ")
-    .trim();
+function referenceSectionInfo(paragraphs,location=locateInParagraphs(paragraphs)){
+  if(location.status!=="found")return null;
+  const headingIndex=location.indice;
+  const heading=paragraphs.find(p=>p.index===headingIndex);
+  const after=paragraphs.filter(p=>p.body&&!p.toc&&!p.unknownStyle&&!p.hasDeletedContent&&p.index>headingIndex);
+  const boundary=after.find(p=>heading.inCell&&p.cell!==heading.cell);
+  const scope=boundary?after.filter(p=>p.index<boundary.index):after;
+  const stop=scope.find(p=>/^(?:assinatura(?: e carimbo)?|carimbo|anexos?|controle historico)$/.test(headingLabel(p.text)));
+  const end=stop||boundary;
+  const section=scope.filter(p=>!end||p.index<end.index);
+  return {headingIndex,stopIndex:end?.index??null,lastSectionIndex:section.at(-1)?.index??headingIndex};
 }
-function isReferenceHeading(text=""){
-  const t=normalizeReferenceHeadingText(text);
-  // Aceita variações institucionais comuns sem aceitar frases de conteúdo.
-  // Exemplos: "8. REFERÊNCIAS", "8 - REFERÊNCIAS BIBLIOGRÁFICAS",
-  // "REFERÊNCIAS:", "REFERÊNCIAS BIBLIOGRÁFICAS" e "BIBLIOGRAFIA".
-  return /^(?:\d{1,2}(?:\.\d{1,2})*\s*(?:[-–—.):]|\.)?\s*)?(?:refer[eê]ncias?(?:\s+(?:bibliogr[aá]ficas?|t[eé]cnicas?|normativas?))?|bibliografia)\s*[:.;-]?\s*$/i.test(t);
-}
-
-function referenceSectionInfo(paragraphs){
-  const headings = paragraphs.filter(p=>isReferenceHeading(p.text));
-  if(headings.length !== 1) return null;
-  const heading = headings[0];
-  const after=paragraphs.filter(p=>p.index>heading.index);
-  const stop=after.find(p=>/^\s*(assinatura(?:\s+e\s+carimbo)?|carimbo|anexo(?:s)?|controle\s+hist[oó]rico)\s*:?\s*$/i.test(normalizedText(p.text)));
-  const sectionParas=paragraphs.filter(p=>p.index>heading.index&&(!stop||p.index<stop.index));
-  return {headingIndex:heading.index,stopIndex:stop?stop.index:null,lastSectionIndex:sectionParas.length?sectionParas[sectionParas.length-1].index:heading.index};
+function inReferenceSection(p,section){
+  return p.body&&!p.toc&&!p.unknownStyle&&!p.hasDeletedContent&&p.index>section.headingIndex&&(section.stopIndex==null||p.index<section.stopIndex);
 }
 function isManagedReferenceText(text=""){
   return /\[(?:FONTE ELETRONICAMENTE VERIFICADA|REQUER CONFERÊNCIA PROFISSIONAL)\]/i.test(normalizedText(text));
-}
-function paragraphTextFromXml(p=""){
-  return [...p.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)].map(x=>xmlDecode(x[1])).join("").trim();
 }
 function extractManagedReferenceTexts(text=""){
   const t=normalizedText(text);if(!isManagedReferenceText(t))return [];
@@ -1004,28 +1090,18 @@ function appendReviewedReferences(buf,refs,options={}){
   const wordRefs=(refs||[]).filter(r=>r?.wordEligible===true);
   if(!wordRefs.length&&!allowHygieneOnly)throw new Error("Nenhuma fonte bibliográfica específica e elegível foi confirmada para o Word. Páginas institucionais genéricas ficam apenas na auditoria da SIASH; a proposta foi bloqueada.");
   const zip=new AdmZip(buf),entry=zip.getEntry("word/document.xml");if(!entry)throw new Error("DOCX sem word/document.xml.");
-  const xml=entry.getData().toString("utf8");
-  const blocks=[...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);
-  const texts=blocks.map(paragraphTextFromXml);
-  const headingCandidates=texts.map((text,index)=>({index,text})).filter(p=>isReferenceHeading(p.text));
-  if(headingCandidates.length !== 1){
-  throw new Error(
-    headingCandidates.length === 0
-      ? "A seção de Referências não foi localizada de forma inequívoca no Word. A proposta foi bloqueada para preservar a estrutura institucional."
-      : "Foram localizadas múltiplas seções possíveis de Referências no Word. A proposta foi bloqueada para preservar a estrutura institucional."
-  );
-}
-const heading = headingCandidates[0];
-  const stopRx=/^\s*(assinatura(?:\s+e\s+carimbo)?|carimbo|anexo(?:s)?|controle\s+hist[oó]rico)\s*:?\s*$/i;
-  const stopIndex=texts.findIndex((t,i)=>i>heading.index&&stopRx.test(normalizedText(t)));
-  const inSection=(i)=>i>heading.index&&(stopIndex<0||i<stopIndex);
-
-  // Referências institucionais já existentes permanecem como fonte primária da bibliografia.
-  const genericBibliography=texts.map((text,index)=>({text:normalizedText(text),index})).filter(x=>inSection(x.index)&&x.text&&!!referenceUrlFromText(x.text)&&isGenericReferenceUrl(referenceUrlFromText(x.text)));
-  const genericIndexes=new Set(genericBibliography.map(x=>x.index));
-  // A proposta limpa referências que apontam apenas para homepages/portais genéricos. O vigente original não é alterado.
-  const institutional=texts.map((text,index)=>({text:normalizedText(text),index})).filter(x=>inSection(x.index)&&x.text&&!isManagedReferenceText(x.text)&&!genericIndexes.has(x.index));
-  const managedLegacy=blocks.map((xmlBlock,index)=>({xmlBlock,index,text:texts[index]})).filter(x=>isManagedReferenceText(x.text));
+  const xml=readWordPart(entry),{paragraphs,body}=inspectDocxDocument(zip,xml);
+  const location=locateInParagraphs(paragraphs);
+  const section=referenceSectionInfo(paragraphs,location);
+  if(!section||hasPendingMarker(paragraphs)){
+    return pendingBibliography(buf,zip,xml,body,paragraphs,section?"existing_marker":location.status);
+  }
+  const inSection=index=>inReferenceSection(paragraphs[index],section);
+  const editable=paragraphs.filter(p=>p.body&&!p.toc&&!p.hasNestedParagraph&&!p.hasDeletedContent&&!isReferenceHeading(p.text));
+  const genericBibliography=editable.filter(p=>inSection(p.index)&&referenceUrlFromText(p.text)&&isGenericReferenceUrl(referenceUrlFromText(p.text)));
+  const genericIndexes=new Set(genericBibliography.map(p=>p.index));
+  const institutional=editable.filter(p=>inSection(p.index)&&p.text&&!isManagedReferenceText(p.text)&&!genericIndexes.has(p.index));
+  const managedLegacy=editable.filter(p=>isManagedReferenceText(p.text));
   const candidates=[];
   // Legado SIASH é limpo e migrado, mas passa pela MESMA regra de elegibilidade das fontes atuais.
   // Correção v0.13.5: versões antigas podiam guardar, em um único parágrafo fora da bibliografia,
@@ -1056,51 +1132,42 @@ const heading = headingCandidates[0];
     }else finalManaged.push(c);
   }
   const existingNumbers=institutional.map(x=>{const m=x.text.match(/^\s*(\d+)\s*[.)-]/);return m?Number(m[1]):0}).filter(Boolean);
-  const numberedStyle=existingNumbers.length>0;let nextNumber=numberedStyle?Math.max(...existingNumbers)+1:0;
+  const numberedStyle=existingNumbers.length>0;let nextNumber=existingNumbers.length+1;
   const managedTexts=finalManaged.map(x=>numberedStyle?`${nextNumber++}. ${x.text}`:x.text);
   // Se a bibliografia usa numeração nativa do Word (w:numPr), replica o pPr da última referência institucional.
   // Assim o Word continua automaticamente 3, 4... sem gravar números artificiais no texto.
   const lastInstitutional=institutional.length?institutional[institutional.length-1]:null;
-  const lastInstitutionalBlock=lastInstitutional?blocks[lastInstitutional.index]:"";
+  const lastInstitutionalBlock=lastInstitutional?xml.slice(lastInstitutional.start,lastInstitutional.end):"";
   const pPrMatch=lastInstitutionalBlock.match(/<w:pPr(?:\s[^>]*)?>[\s\S]*?<\/w:pPr>/i);
-  const bibliographyPPr=pPrMatch&&/<w:numPr[\s>]/i.test(pPrMatch[0])?pPrMatch[0]:"";
-  const managedParagraphs=managedTexts.map(text=>`<w:p>${bibliographyPPr}<w:r><w:t xml:space="preserve">${xmlEncode(text)}</w:t></w:r></w:p>`).join("");
-
-  let rawIndex=-1,inserted=false;
-  const patched=xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
-    rawIndex++;const text=paragraphTextFromXml(p);
-    if(isManagedReferenceText(text))return ""; // remove todo legado rotulado, em qualquer posição
-    if(genericIndexes.has(rawIndex))return ""; // remove homepage genérica da bibliografia somente na proposta
-    if(!inserted&&stopIndex>=0&&rawIndex===stopIndex){inserted=true;return managedParagraphs+p;}
-    if(!inserted&&stopIndex<0&&rawIndex===blocks.length-1){inserted=true;return p+managedParagraphs;}
-    return p;
-  });
-  if(!inserted)throw new Error("Não foi possível posicionar as referências dentro da seção bibliográfica do Word.");
-  zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));
-  // Se a bibliografia usa números gravados como texto, renumera sequencialmente após remover fontes genéricas.
-  // Isso evita lacunas como 1, 2, 4 quando uma referência imprópria (ex.: homepage) é retirada da proposta.
-  let normalizedXml=zip.getEntry("word/document.xml").getData().toString("utf8");
-  const normBlocks=[...normalizedXml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map(m=>m[0]);
-  const normTexts=normBlocks.map(paragraphTextFromXml);
-  const normHeadings=normTexts.map((text,index)=>({text,index})).filter(x=>isReferenceHeading(x.text));
-  const normHeading=normHeadings[normHeadings.length-1];
-  if(normHeading){
-    const normStop=normTexts.findIndex((t,i)=>i>normHeading.index&&stopRx.test(normalizedText(t)));
-    const refIndexes=normTexts.map((t,i)=>({t,i})).filter(x=>x.i>normHeading.index&&(normStop<0||x.i<normStop)&&/^\s*\d+\s*[.)-]\s*/.test(x.t)).map(x=>x.i);
-    if(refIndexes.length>=2){
-      const numberMap=new Map(refIndexes.map((idx,pos)=>[idx,pos+1]));let nidx=-1;
-      normalizedXml=normalizedXml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g,p=>{
-        nidx++;if(!numberMap.has(nidx))return p;const n=numberMap.get(nidx);let changed=false;
-        return p.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,(all,a,b,c)=>{if(changed)return all;const decoded=xmlDecode(b);if(!/^\s*\d+\s*[.)-]\s*/.test(decoded))return all;changed=true;const replaced=decoded.replace(/^\s*\d+\s*[.)-]\s*/,`${n}. `);return a+xmlEncode(replaced)+c});
-      });
-      zip.updateFile("word/document.xml",Buffer.from(normalizedXml,"utf8"));
-    }
+  // Copy only numbering properties. A section break in pPr must not be duplicated.
+  const numPr=pPrMatch?.[0].match(/<w:numPr(?:\s[^>]*)?>[\s\S]*?<\/w:numPr>/i)?.[0];
+  const anchor=paragraphs[section.lastSectionIndex];
+  const managedParagraphs=managedTexts.map(text=>bibliographyParagraph(text,anchor.uri,numPr)).join("");
+  const removed=new Map([...genericBibliography,...managedLegacy].map(p=>[p.index,p]));
+  if([...removed.values()].some(p=>p.retainOnCleanup))throw new Error("DOCX_BIBLIOGRAPHY_PROTECTED_STRUCTURE");
+  const edits=[...removed.values()].map(removeWordParagraph);
+  if(managedParagraphs)edits.push({start:anchor.end,end:anchor.end,text:managedParagraphs});
+  const numbered=institutional.filter(p=>/^\s*\d+\s*[.)-]\s*/.test(p.text));
+  if(numbered.length+managedTexts.length>=2){
+    numbered.forEach((p,i)=>{
+      const first=p.ranges[0];
+      if(!first)return;
+      const old=xml.slice(first.start,first.end);
+      const next=old.replace(/^\s*\d+\s*[.)-]\s*/, `${i+1}. `);
+      if(next!==old)edits.push({...first,text:next});
+    });
   }
-  const out=zip.toBuffer(),outParas=docxParagraphs(out),outSec=referenceSectionInfo(outParas);
+  const patched=editWordXml(xml,edits);
+  const outParas=inspectDocxDocument(zip,patched).paragraphs,outSec=referenceSectionInfo(outParas);
   if(!outSec)throw new Error("Falha de integridade: a seção bibliográfica deixou de ser identificável após a normalização.");
-  const outTexts=outParas.map(p=>p.text);
-  if(outTexts.some(isManagedReferenceText))throw new Error("Falha de integridade: rótulo interno de auditoria permaneceu no Word institucional.");
-  const insertedParas=outParas.filter(p=>p.index>outSec.headingIndex&&(outSec.stopIndex==null||p.index<outSec.stopIndex));
+  const relocatedHeading=paragraphs[section.headingIndex];
+  const headingOffset=relocatedHeading.start+edits.filter(e=>e.end<=relocatedHeading.start)
+    .reduce((delta,e)=>delta+e.text.length-(e.end-e.start),0);
+  if(outParas[outSec.headingIndex].start!==headingOffset)throw new Error("Falha de integridade: o título bibliográfico selecionado mudou após a montagem.");
+  if(outParas.some(p=>p.body&&!p.toc&&!p.hasNestedParagraph&&isManagedReferenceText(p.text)))throw new Error("Falha de integridade: rótulo interno de auditoria permaneceu no Word institucional.");
+  const insertedParas=outParas.filter(p=>inReferenceSection(p,outSec));
+  zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));
+  const out=zip.toBuffer();
   for(const text of managedTexts){if(!insertedParas.some(p=>sameBibliographicWork(text,p.text)))throw new Error("Falha de integridade: referência limpa não foi localizada dentro da seção bibliográfica.");}
   // Auditoria final de duplicidade semântica dentro da bibliografia.
   const bib=insertedParas.map(p=>p.text).filter(Boolean);
@@ -1117,12 +1184,53 @@ const heading = headingCandidates[0];
   if(uncovered.length)throw new Error("Falha de integridade: uma ou mais fontes da revisão não ficaram representadas na seção bibliográfica do Word.");
   const genericRemaining=insertedParas.filter(p=>!!referenceUrlFromText(p.text)&&isGenericReferenceUrl(referenceUrlFromText(p.text)));
   if(genericRemaining.length)throw new Error("Falha de integridade: referência com URL institucional genérica permaneceu na bibliografia do Word.");
-  return {buffer:out,added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length,coverage,representedByInstitutional:representedByInstitutional.length,genericReferencesRemoved:genericBibliography.length+legacyRejected.length,semanticDuplicateReferences:semanticDuplicatePairs.length,legacyGenericReferencesRejected:legacyRejected.length,wordEligibleReferences:wordRefs.length};
+  return {buffer:out,referencePlacement:"bibliography_section_verified",added:managedTexts.length,moved:managedLegacy.filter(x=>!inSection(x.index)).length,sectionHeadingIndex:outSec.headingIndex,labelsRemoved:managedLegacy.length,coverage,representedByInstitutional:representedByInstitutional.length,genericReferencesRemoved:genericBibliography.length+legacyRejected.length,semanticDuplicateReferences:semanticDuplicatePairs.length,legacyGenericReferencesRejected:legacyRejected.length,wordEligibleReferences:wordRefs.length};
+}
+function bibliographyParagraph(text,uri,numPr){
+  return `<w:p xmlns:w="${uri}">${numPr?`<w:pPr>${numPr}</w:pPr>`:""}<w:r><w:t xml:space="preserve">${xmlEncode(text)}</w:t></w:r></w:p>`;
+}
+function pendingBibliography(buffer,zip,xml,body,paragraphs,reason){
+  console.warn(JSON.stringify({event:"docx_bibliography_pending_review",reason}));
+  if(!hasPendingMarker(paragraphs.filter(p=>p.body).map(({text})=>({text})))){
+    const at=body.finalSection??body.end;
+    const patched=xml.slice(0,at)+bibliographyParagraph(MARCADOR,body.uri)+xml.slice(at);
+    inspectWordXml(patched);
+    zip.updateFile("word/document.xml",Buffer.from(patched,"utf8"));
+    buffer=zip.toBuffer();
+  }
+  return {buffer,added:0,moved:0,coverage:[],referencePlacement:"bibliography_pending_review"};
+}
+function inspectPublicationBibliography(buffer){
+  const zip=new AdmZip(buffer),{stories,stylesEntry}=wordStoryParts(zip);
+  let paragraphs, pending=false, unsupported=false;
+  for(const [entry,part] of stories){
+    const xml=readWordPart(entry);
+    const inspected=part==="document"?inspectDocxDocument(zip,xml,stylesEntry):inspectWordXml(xml,part);
+    if(part==="document")paragraphs=inspected.paragraphs;
+    unsupported=unsupported||inspected.unsupportedLayout;
+    pending=hasPendingMarker(inspected.paragraphs)||pending;
+  }
+  if(unsupported&&!pending)throw new Error(XML_ERROR);
+  if(!paragraphs)throw new Error(XML_ERROR);
+  return {paragraphs,pending};
+}
+function verifiedReferencePlacement(result,finalBuffer){
+  if(result.referencePlacement==="bibliography_pending_review"){
+    if(!hasPendingMarker(docxParagraphs(finalBuffer).filter(p=>p.body)))throw new Error("DOCX_BIBLIOGRAPHY_MARKER_LOST");
+    return result.referencePlacement;
+  }
+  if(result.referencePlacement!=="bibliography_section_verified")return "bibliography_pending_review";
+  const paragraphs=docxParagraphs(finalBuffer,{includeEmpty:true}),section=referenceSectionInfo(paragraphs);
+  if(!section||hasPendingMarker(paragraphs)||result.coverage.some(ref=>
+    !paragraphs.some(p=>inReferenceSection(p,section)&&sameBibliographicWork(ref.reference,p.text)))){
+    throw new Error("DOCX_BIBLIOGRAPHY_FINAL_VALIDATION_FAILED");
+  }
+  return result.referencePlacement;
 }
 function bibliographyHygieneState(buf){
   try{
-    const paras=docxParagraphs(buf),sec=referenceSectionInfo(paras);if(!sec)return {needsHygiene:false,generic:0,managed:0};
-    const generic=paras.filter(p=>p.index>sec.headingIndex&&(sec.stopIndex==null||p.index<sec.stopIndex)&&!!referenceUrlFromText(p.text)&&isGenericReferenceUrl(referenceUrlFromText(p.text))).length;
+    const paras=docxParagraphs(buf,{includeEmpty:true}),sec=referenceSectionInfo(paras);if(!sec)return {needsHygiene:false,generic:0,managed:0};
+    const generic=paras.filter(p=>inReferenceSection(p,sec)&&!!referenceUrlFromText(p.text)&&isGenericReferenceUrl(referenceUrlFromText(p.text))).length;
     const managed=paras.filter(p=>isManagedReferenceText(p.text)).length;
     return {needsHygiene:(generic+managed)>0,generic,managed};
   }catch{return {needsHygiene:false,generic:0,managed:0}}
@@ -1130,7 +1238,8 @@ function bibliographyHygieneState(buf){
 function institutionalStructureProtectedText(text=""){
   const t=normalizedText(text);
   if(!t)return false;
-  if(/^(?:\\d+\\s*[-.)–—:]\\s*)?(?:resultados? esperados?|refer[eê]ncias?|objetivo|finalidade|abrang[eê]ncia|responsabilidades?|defini[cç][oõ]es?|materiais?|procedimentos?|descri[cç][aã]o|registros?|indicadores?|anexos?)\\s*:?$/i.test(t))return true;
+  if(isReferenceHeading(t)||hasPendingMarker([{text:t}]))return true;
+  if(/^(?:resultados? esperados?|objetivo|finalidade|abrangencia|responsabilidades?|definicoes?|materiais?|procedimentos?|descricao|registros?|indicadores?|anexos?)$/.test(headingLabel(t)))return true;
   return /^(?:FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i.test(t);
 }
 function comparisonNormalizedText(text=""){
@@ -1999,12 +2108,18 @@ app.post("/api/ai/revise-pop",auth,async(req,res)=>{
     const requiresCurrentWebResearch=correctionRequested||periodicReviewRequired||scientificAudit?.status==="review"||scientificAudit?.status==="adjust";
     if(!doc_code||!file_base64)return res.status(400).json({error:"POP/arquivo não informado."});
     const original=Buffer.from(file_base64,"base64");if(original.length>18*1024*1024)return res.status(413).json({error:"Word acima do limite de 18 MB para revisão automática."});
-    const historyCleanup=cleanDuplicateSiashHistoryRows(original),baseDocument=historyCleanup.buffer;
-    const privacy=docsGuard.privacyFindings(docxParagraphs(baseDocument).map(p=>p.text).join("\\n"));
+    const {stories}=wordStoryParts(new AdmZip(original));
+    const sourceText=stories.flatMap(([entry,part])=>{
+      const inspected=inspectWordXml(readWordPart(entry),part);
+      if(inspected.hasExternalContent)throw new Error(XML_ERROR);
+      return inspected.paragraphs.flatMap(p=>p.text===p.markerText?[p.text]:[p.text,p.markerText]);
+    });
+    const privacy=docsGuard.privacyFindings(sourceText.join("\n"));
     if(privacy.length){await audit(req.user.u,"SIASH Docs IA: bloqueio LGPD",{status:"blocked",categories:privacy});return res.status(422).json({error:"DOC_PRIVACY_BLOCKED",categories:privacy})}
-    const paragraphs=docxParagraphs(baseDocument);if(!paragraphs.length)return res.status(400).json({error:"Não foi possível extrair o texto do Word."});const hygieneBefore=bibliographyHygieneState(baseDocument);const latestReferenceYear=latestReferenceYearInDoc(paragraphs);
+    const historyCleanup=cleanDuplicateSiashHistoryRows(original),baseDocument=historyCleanup.buffer;
+    const paragraphs=docxParagraphs(baseDocument,{includeEmpty:true});if(!paragraphs.some(p=>p.text))return res.status(400).json({error:"Não foi possível extrair o texto do Word."});const hygieneBefore=bibliographyHygieneState(baseDocument);const latestReferenceYear=latestReferenceYearInDoc(paragraphs);
     const protectedRx=/(FUNDAÇÃO HOSPITALAR|PROCEDIMENTO OPERACIONAL PADRÃO|CÓDIGO|REGISTRO|REVISÃO|ELABORAÇÃO|VERIFICAÇÃO|APROVAÇÃO|ASSINATURA|HISTÓRICO)/i;
-    const editable=paragraphs.filter(p=>!protectedRx.test(p.text)&&!institutionalStructureProtectedText(p.text));
+    const editable=paragraphs.filter(p=>p.text&&p.body&&!p.toc&&!p.hasDeletedContent&&!p.hasNestedParagraph&&!protectedRx.test(p.text)&&!institutionalStructureProtectedText(p.text));
     const prompt=`Você atua como revisor técnico-científico de POP hospitalar neonatal. Revise ${doc_code} — ${doc_title}, revisão atual ${current_revision}, para proposta ${next_revision}.\nREGRAS OBRIGATÓRIAS:\n1) Priorize referências oficiais e tecnicamente reconhecidas (ANVISA, Ministério da Saúde, Fundação Oswaldo Cruz/FIOCRUZ — especialmente IFF/Fiocruz quando pertinente à neonatologia —, COFEN/COREN, SBP, OMS/WHO, OPAS/PAHO, CDC e literatura revisada por pares quando pertinente). Não invente referências, URLs, normas ou recomendações.\n2) Não altere cabeçalho, identidade institucional, código, tabelas administrativas, histórico, campos de elaboração/verificação/aprovação/assinatura.\n3) Se não houver base suficiente para uma mudança, mantenha o texto.\n4) A saída é apenas PROPOSTA e nunca publicação automática.\n5) Retorne somente alterações técnico-científicas realmente necessárias. Cada paragraph_index deve existir na lista fornecida. Para cada alteração, preencha references com os títulos e/ou URLs das fontes que sustentam aquela alteração; use [] quando não houver fonte específica confiável.\n6) Preserve o sentido e a função de cada parágrafo; não mova seções.\n7) Nunca inclua dados de pacientes.\n8) Toda referência deve ser tratada como apoio à conferência humana; a validação profissional é obrigatória antes da publicação.\n9) NÃO mantenha, crie ou altere periodicidade, concentração, diluição, tempo de contato, compatibilidade de equipamento ou outra recomendação operacional específica sem fonte rastreável que sustente exatamente essa afirmação. Se a fonte disponível não sustentar o detalhe, mantenha o texto vigente e sinalize isso no summary.\n10) Cada alteração proposta DEVE possuir pelo menos uma referência específica em references. As referências gerais devem conter título e URL completos e rastreáveis. Não invente URL.\n11) As referências efetivamente utilizadas serão incorporadas pelo SIASH à seção de Referências Bibliográficas do Word, preservando as referências institucionais anteriores.
 12) NUNCA use homepage, portal inicial ou raiz institucional (ex.: gov.br/anvisa/pt-br, sbp.com.br/) como referência bibliográfica. Informe a URL da publicação, diretriz, manual, nota técnica, resolução, artigo ou documento específico. Se não souber a URL específica, não proponha a alteração sustentada apenas por essa homepage.\n13) Se houver PEDIDO DE CORREÇÃO DO PROFISSIONAL abaixo, ele tem prioridade dentro destas regras e deve ser atendido sem criar alterações técnicas não solicitadas. Em modo de correção, compare o pedido diretamente com os PARÁGRAFOS EDITÁVEIS desta proposta e devolva updates para cada erro corrigível sustentado pelas fontes. Não trate a proposta existente como automaticamente correta apenas por já ser uma revisão gerada pela IA.
 14) REVISÃO PERIÓDICA / VIGÊNCIA: se o conteúdo técnico permanecer adequado e não houver alteração técnico-científica necessária, NÃO invente mudança apenas para criar uma revisão. Informe isso claramente no summary. A SIASH poderá registrar uma revisão documental periódica sem mudança de conteúdo, sempre com validação humana e sem publicação automática.
@@ -2069,8 +2184,15 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     let contentRevised=baseDocument,verification={verified:true,actualChanges:0};
     if(traceable.length){contentRevised=patchDocx(baseDocument,traceable);verification=verifyDocxRevision(baseDocument,contentRevised,traceable)}
     let withRefs={buffer:contentRevised,added:0,moved:0,coverage:[],representedByInstitutional:0,genericReferencesRemoved:0,legacyLabelsRemoved:0,wordEligibleReferences:0};
-    if(traceable.length||hygieneBefore.needsHygiene||(periodicReviewRequired&&eligibleReferenceCount>0)){
+    if(traceable.length||hygieneBefore.needsHygiene||periodicReviewRequired||hasPendingMarker(paragraphs)){
       withRefs=appendReviewedReferences(contentRevised,references,{allowHygieneOnly:!traceable.length});
+    }
+    if(withRefs.referencePlacement==="bibliography_section_verified"&&(!eligibleReferenceCount||classified.pending.length||
+       (periodicReviewRequired&&!traceable.length&&(eligibleReferenceCount<2||officialEligibleReferenceCount<1)))){
+      const zip=new AdmZip(withRefs.buffer),xml=readWordPart(zip.getEntry("word/document.xml"));
+      const inspected=inspectWordXml(xml);
+      const pending=pendingBibliography(withRefs.buffer,zip,xml,inspected.body,inspected.paragraphs,"unverified_sources");
+      withRefs={...withRefs,buffer:pending.buffer,referencePlacement:pending.referencePlacement};
     }
     const hygieneChanges=Number(withRefs.genericReferencesRemoved||0)+Number(withRefs.labelsRemoved||0);
     const periodicReviewOnly=periodicReviewRequired&&!traceable.length&&hygieneChanges<1;
@@ -2095,8 +2217,12 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     if(periodicReviewOnly&&withRefs.coverage?.some(x=>!x.represented)){appendVerificationWarnings(verification,{ok:false,warnings:["Há referência da revisão periódica pendente de consolidação no Word. Conferir antes da publicação."]});}
     verification.referencesAdded=withRefs.added;
     verification.referencesVerified=classified.verified.length;
-    verification.referencesPending=classified.pending.length;verification.referencePlacement="bibliography_section_verified";
-    const validatedSummary=traceable.length
+    verification.referencesPending=classified.pending.length;
+    verification.referencePlacement=verifiedReferencePlacement(withRefs,revised);
+    if(verification.referencePlacement==="bibliography_pending_review"&&(withRefs.referencePlacement||traceable.length)){
+      appendVerificationWarnings(verification,{ok:false,warnings:["A proposta necessita de conferência bibliográfica antes da publicação."]});
+    }
+    let validatedSummary=traceable.length
   ?`PROPOSTA de revisão — alterações técnico-científicas aplicadas no Word e pendentes de validação profissional: ${traceable.map((ch,i)=>{
       const before=String(ch.before_text||"").trim();
       const after=String(ch.new_text||"").trim();
@@ -2106,6 +2232,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
   :periodicReviewOnly
     ?"Revisão periódica concluída sem alteração técnico-científica do conteúdo. O documento segue para conferência e aprovação profissional."
     :"Revisão concluída: nenhuma alteração técnico-científica ou bibliográfica necessária. O POP vigente foi preservado.";
+    if(withRefs.referencePlacement==="bibliography_pending_review")validatedSummary+=" A proposta permanece em revisão e necessita de conferência bibliográfica.";
     // PR #101: validate the prepared DOCX itself; this does NOT approve publication.
     const preparedZip=new AdmZip(revised);
     const requiredParts=["[Content_Types].xml","_rels/.rels","word/document.xml"];
@@ -2117,7 +2244,7 @@ AUDITORIA CIENTÍFICA SIASH: ${scientificAudit?`${scientificAudit.label}: ${scie
     if(!preparedDocxIntegrity.zipCrc32||!preparedDocxIntegrity.ooxml)throw new Error(`DOCX_PREPARED_INTEGRITY_FAILED zip=${preparedDocxIntegrity.zipCrc32} ooxml=${preparedDocxIntegrity.ooxml}`);
     await audit(req.user.u,"SIASH Docs: proposta de revisão gerada pela IA para conferência profissional.",{doc_code,current_revision,next_revision,provider:ai.provider,model:ai.model,changes:traceable.length,periodic_review_only:periodicReviewOnly,periodic_review_required:periodicReviewRequired,bibliography_hygiene_changes:Number(verification.bibliographyHygieneChanges||0),history_rows_cleaned:Number(historyCleanup.removed||0),changes_excluded_unqualified_sources:excludedChanges.length,verified:false,requires_professional_review:true,validation_warnings:verification.validationWarnings||[],references_verified:classified.verified.length,references_pending:classified.pending.length});
     res.json({ok:true,provider:ai.provider,model:ai.model,researchMode:ai.researchMode||"sem_pesquisa_externa",docxPreparedIntegrity:preparedDocxIntegrity,summary:validatedSummary,changes:traceable,excludedChanges,references,verification,file_name:String(file_name||`${doc_code}_Rev${next_revision}_PROPOSTA_IA.docx`).replace(/\.docx$/i,"")+"_IA.docx",file_base64:revised.toString("base64")});
-  }catch(e){console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
+  }catch(e){if(e.message===XML_ERROR)return res.status(422).json({error:"O DOCX contém XML inválido ou incompatível.",code:XML_ERROR});console.error("AI revise POP:",e);res.status(500).json({error:"Falha ao gerar proposta com IA: "+(e?.message||"erro interno")})}
 });
 
 app.get("/api/admin/audit",auth,async(req,res)=>{
