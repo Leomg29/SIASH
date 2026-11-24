@@ -59,6 +59,8 @@ jobs:
         run: node --test tests/shift-care-postgres.test.cjs
       - name: PR100 Docs PostgreSQL transactional tests
         run: node --test tests/docs-governance-postgres.test.cjs
+      - name: PR104 bibliography PostgreSQL transactional rollback
+        run: node --test tests/referencias.test.js
       - name: Install Chromium for isolated browser E2E
         run: |
           npm install --no-save --ignore-scripts --no-audit --no-fund playwright
