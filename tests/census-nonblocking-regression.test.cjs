@@ -144,3 +144,17 @@ test("login recovery retries only verified unchanged base, preserving real diver
   assert.equal(pending.state.daily[0].internados,8);
  }
 });
+
+test("legacy draft summary identifies changed records without exposing contents",()=>{
+ const vm=require("node:vm");
+ const source=mergeSource.slice(mergeSource.indexOf("function cloudStatesEqual("),mergeSource.indexOf("function cloudHeaders("));
+ const ctx=vm.runInNewContext(source+";({cloudDraftDifferenceSummary,cloudStatesEqual})");
+ const local={beds:[{n:1,rn:"synthetic A"},{n:2,rn:"synthetic B"}],daily:[{date:"2026-11-25",internados:7}]};
+ const remote={beds:[{n:1,rn:"synthetic C"},{n:3,rn:"synthetic D"}],daily:[{date:"2026-11-25",internados:9}]};
+ const result=JSON.parse(JSON.stringify(ctx.cloudDraftDifferenceSummary(local,remote)));
+ assert.deepEqual(result[0].records,[{id:"1",status:"conteúdo diferente"},{id:"2",status:"somente local"},{id:"3",status:"somente servidor"}]);
+ assert.equal(result[1].records[0].id,"2026-11-25");
+ assert.equal(JSON.stringify(result).includes("synthetic"),false);
+ assert.equal(ctx.cloudDraftDifferenceSummary(local,local).length,0);
+ assert.equal(ctx.cloudDraftDifferenceSummary({beds:[{n:1},{n:1}]},{beds:[]})[0].records,null);
+});
