@@ -49,3 +49,14 @@ test("duplicate dates block automatic reconciliation",()=>{
  const result=mergeDaily([], [row,row],[{...row,internados:8}]);
  assert.equal(result.conflicts.length,1);
 });
+
+for(const scenario of [{name:"clean handoff",pending:false,syncing:false,conflict:false,exit:true,retry:false},{name:"inflight save",pending:true,syncing:true,conflict:false,exit:false,retry:false},{name:"offline pending",pending:true,syncing:false,conflict:false,exit:false,retry:true},{name:"protected conflict",pending:true,syncing:false,conflict:true,exit:false,retry:false}]){
+ test("shift logout: "+scenario.name,()=>{
+  const vm=require("node:vm");let handler,retries=0,removed=0,timers=0;
+  const element={addEventListener:(event,fn)=>{handler=fn},classList:{add(){},remove(){}},reset(){}};
+  const ctx={$:()=>element,SIASH_CLOUD:{token:"test",syncing:scenario.syncing,conflict:scenario.conflict},SESSION:{user:"night",authenticated:true},cloudPending:()=>scenario.pending,scheduleCloudSave:()=>{retries++},alert:()=>{},clearTimeout:()=>{timers++},cloudSaveTimer:1,cloudRetryTimer:2,sessionStorage:{removeItem(){removed++}},initSecurityUI(){}};
+  const line=mergeSource.split("\n").find(x=>x.startsWith('$("logout-btn").addEventListener'));
+  assert.ok(line);vm.runInNewContext(line,ctx);handler();
+  assert.equal(ctx.SIASH_CLOUD.token==="",scenario.exit);assert.equal(retries,Number(scenario.retry));assert.equal(removed,Number(scenario.exit));assert.equal(timers,scenario.exit?2:0);
+ });
+}
