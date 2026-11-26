@@ -683,7 +683,7 @@ function registerCensusConference(date,responsible){
  const count=Number(daily.internados);
  if(!Number.isSafeInteger(count)||count<0||count>(S.settings.beds||10))return {ok:false,reason:"Confira o total de pacientes e a capacidade de leitos antes de registrar."};
  if(daily.censusConference){daily.censusConferenceHistory=[...(Array.isArray(daily.censusConferenceHistory)?daily.censusConferenceHistory:[]),daily.censusConference];}
- daily.censusConference={referenceDate:date,registeredAt:new Date().toISOString(),responsible:String(responsible).trim(),registeredBy:SESSION.user||null,count,bedOccupancyAtRegistration:S.beds.filter(b=>b.status==="Ocupado").length};
+ daily.censusConference={referenceDate:date,registeredAt:new Date().toISOString(),responsible:String(responsible).trim(),registeredBy:SESSION.user||null,count,countSource:"manual_reference_date",bedOccupancyAtRegistration:S.beds.filter(b=>b.status==="Ocupado").length};
  return {ok:true};
 }
 async function refreshMidnightCensusStatus(){
@@ -831,7 +831,7 @@ function renderCensusConference(date){
    const historyCount=Array.isArray(daily.censusConferenceHistory)?daily.censusConferenceHistory.length:0;
    const historyNote=historyCount?` Histórico preservado: ${historyCount} conferência(s) anterior(es).`:"";
    closure.textContent=(record&&record.count===census
-     ?`Conferência registrada por ${record.responsible} em ${new Date(record.registeredAt).toLocaleString("pt-BR")} (referência ${dateBR(record.referenceDate)}; ${record.count} RN). Ocupação do mapa naquele registro: ${record.bedOccupancyAtRegistration}. Registro manual, não valida automaticamente o horário da meia-noite.`
+     ?`Conferência registrada por ${record.responsible} em ${new Date(record.registeredAt).toLocaleString("pt-BR")} (referência ${dateBR(record.referenceDate)}; ${record.count} RN). Ocupação atual no momento do registro (não corresponde necessariamente à meia-noite): ${record.bedOccupancyAtRegistration??"não informada"}. Contagem da referência declarada manualmente pelo responsável.`
      :record?"Conferência anterior desatualizada: o censo foi alterado. Registre nova conferência.":"Sem conferência registrada para esta data.")+historyNote;
  }
  count.textContent=census;
