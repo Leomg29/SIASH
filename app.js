@@ -86,16 +86,9 @@ function cloudThreeWayMerge(base,local,server){
  return {state:merge(base,local,server,""),conflicts};
 }
 const SIASH_PENDING_KEY="siash_cloud_pending_v1";
-function cloudDraftKey(user=SESSION.user){return user?SIASH_PENDING_KEY+":"+encodeURIComponent(user):SIASH_PENDING_KEY}
-function cloudPending(){try{
- const key=cloudDraftKey(),own=localStorage.getItem(key);
- if(own)return JSON.parse(own);
- const legacy=JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null");
- if(legacy&&SESSION.user&&legacy.user===SESSION.user){localStorage.setItem(key,JSON.stringify(legacy));localStorage.removeItem(SIASH_PENDING_KEY);return legacy;}
- return legacy&&!legacy.user?legacy:null;
-}catch(e){console.error("Rascunho local indisponível",e);return null}}
-function preserveCloudDraft(reason){try{localStorage.setItem(cloudDraftKey(),JSON.stringify({user:SESSION.user||null,reason,revision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:SIASH_CLOUD.revision,baseRevision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:null,baseState:cloudBaseUser===SESSION.user?cloudBaseSnapshot:null,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
-function clearCloudDraft(){try{localStorage.removeItem(cloudDraftKey())}catch(e){console.error(e)}}
+function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
+function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:SIASH_CLOUD.revision,baseRevision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:null,baseState:cloudBaseUser===SESSION.user?cloudBaseSnapshot:null,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
+function clearCloudDraft(){try{localStorage.removeItem(SIASH_PENDING_KEY)}catch(e){console.error(e)}}
 // PR #102: deterministic local LGPD gate; same patterns and CPF checksum as docs-governance-integrity.cjs.
 function localCpfValid(value){const d=String(value).replace(/\D/g,"");if(d.length!==11||/^(\d)\1+$/.test(d))return false;for(let t=9;t<11;t++){let sum=0;for(let i=0;i<t;i++)sum+=Number(d[i])*(t+1-i);let check=(sum*10)%11;if(check===10)check=0;if(check!==Number(d[t]))return false}return true}
 function localPrivacyFindings(text){
@@ -144,8 +137,23 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
 function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()}}
+function parkCloudDraft(){
+ const pending=cloudPending();
+ if(!pending||!SESSION.user||pending.user!==SESSION.user||!cloudStatesEqual(pending.state,S))return false;
+ const key=SIASH_PENDING_KEY+":parked:"+encodeURIComponent(SESSION.user);
+ try{if(localStorage.getItem(key))return false;const raw=JSON.stringify(pending);localStorage.setItem(key,raw);if(localStorage.getItem(key)!==raw)return false;clearCloudDraft();return !cloudPending();}catch(e){return false;}
+}
+function restoreParkedCloudDraft(){
+ if(!SESSION.user||cloudPending())return;
+ const key=SIASH_PENDING_KEY+":parked:"+encodeURIComponent(SESSION.user);
+ const raw=localStorage.getItem(key);if(!raw)return;
+ const pending=JSON.parse(raw);if(pending.user!==SESSION.user)throw new Error("Autoria do rascunho inválida.");
+ localStorage.setItem(SIASH_PENDING_KEY,raw);
+ if(localStorage.getItem(SIASH_PENDING_KEY)===raw)localStorage.removeItem(key);
+}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
+ restoreParkedCloudDraft();
  const pending=cloudPending();
  if(pending){
    if(pending.user&&pending.user!==SESSION.user)throw new Error("Existe um rascunho pendente de outro usuário neste navegador. Acesse com o usuário original para conciliar os dados.");
@@ -1610,7 +1618,7 @@ $("owner-create-btn").addEventListener("click",async()=>{
  }catch(e){alert(e.message||"Falha na configuração Cloud.")}
 })
 $("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}rememberLogin(SESSION.user||user);$("login-view").classList.add("hidden");$("app-view").classList.remove("hidden");$("logged-user").textContent=SESSION.user;applyPermissions();if(role==="owner")auditAdmin("Login do Administrador Proprietário.");renderAll();refreshMidnightCensusStatus();if(role==="owner")setTimeout(()=>migrateLegacyWordDocsIfNeeded().catch(e=>console.error("Migração automática .doc",e)),700)}catch(e){$("login-feedback").textContent=e.message||"Falha no login."}})
-$("logout-btn").addEventListener("click",()=>{if(SIASH_CLOUD.syncing||cloudPending()){if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict&&SIASH_CLOUD.token)scheduleCloudSave({retry:true});alert(SIASH_CLOUD.conflict?"Há um rascunho protegido deste usuário. Concilie antes da troca de plantão.":"Aguarde a confirmação do salvamento antes de sair. Depois, clique novamente em Sair.");return;}clearTimeout(cloudSaveTimer);clearTimeout(cloudRetryTimer);SIASH_CLOUD.token="";sessionStorage.removeItem("siash_cloud_token");SESSION={authenticated:false,role:null,user:null};$("change-password-panel")?.classList.add("hidden");$("change-password-form")?.reset();$("app-view").classList.add("hidden");$("login-view").classList.remove("hidden");initSecurityUI()})
+$("logout-btn").addEventListener("click",()=>{if(SIASH_CLOUD.syncing){alert("Aguarde o envio em andamento.");return;}if(cloudPending()&&!(confirm("Há dados não sincronizados. Preservar rascunho neste navegador e sair? O próximo plantão não verá estes dados até a recuperação pelo autor.")&&parkCloudDraft())){if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict&&SIASH_CLOUD.token)scheduleCloudSave({retry:true});alert(SIASH_CLOUD.conflict?"Há um rascunho protegido deste usuário. Concilie antes da troca de plantão.":"Aguarde a confirmação do salvamento antes de sair. Depois, clique novamente em Sair.");return;}clearTimeout(cloudSaveTimer);clearTimeout(cloudRetryTimer);SIASH_CLOUD.token="";sessionStorage.removeItem("siash_cloud_token");SESSION={authenticated:false,role:null,user:null};$("change-password-panel")?.classList.add("hidden");$("change-password-form")?.reset();$("app-view").classList.add("hidden");$("login-view").classList.remove("hidden");initSecurityUI()})
 $("refresh-dashboard").addEventListener("click",renderAll)
 $("close-shift").addEventListener("click",()=>{if(S.shiftClosed)return alert("Plantão já encerrado; inicie o próximo.");const a=shiftAlerts();if(!confirm(`Encerrar plantão? Checklist pendente: ${a.pending}; pendências críticas abertas: ${a.critical}. Nenhuma tarefa será concluída automaticamente.`))return;S.shiftId=S.shiftId||shiftUid();S.shiftHistory.push({shiftId:S.shiftId,startedAt:S.shiftStarted,closedAt:"Aguardando servidor",checklist:structuredClone(S.checklist),events:structuredClone(S.events),care:structuredClone(S.care)});S.shiftClosed=true;save()});
 $("reset-shift").addEventListener("click",()=>{if(!S.shiftClosed)return alert("Encerre o plantão atual antes de iniciar outro.");if(!confirm("Iniciar novo plantão com checklist pendente? O histórico anterior permanecerá consultável."))return;S.shiftId=shiftUid();S.shiftClosed=false;S.checklist=CHECKS.map(x=>({text:x,status:"Pendente"}));S.events=[];S.shiftStarted=new Date().toISOString();save()})
