@@ -86,9 +86,16 @@ function cloudThreeWayMerge(base,local,server){
  return {state:merge(base,local,server,""),conflicts};
 }
 const SIASH_PENDING_KEY="siash_cloud_pending_v1";
-function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
-function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:SIASH_CLOUD.revision,baseRevision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:null,baseState:cloudBaseUser===SESSION.user?cloudBaseSnapshot:null,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
-function clearCloudDraft(){try{localStorage.removeItem(SIASH_PENDING_KEY)}catch(e){console.error(e)}}
+function cloudDraftKey(user=SESSION.user){return user?SIASH_PENDING_KEY+":"+encodeURIComponent(user):SIASH_PENDING_KEY}
+function cloudPending(){try{
+ const key=cloudDraftKey(),own=localStorage.getItem(key);
+ if(own)return JSON.parse(own);
+ const legacy=JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null");
+ if(legacy&&SESSION.user&&legacy.user===SESSION.user){localStorage.setItem(key,JSON.stringify(legacy));localStorage.removeItem(SIASH_PENDING_KEY);return legacy;}
+ return legacy&&!legacy.user?legacy:null;
+}catch(e){console.error("Rascunho local indisponível",e);return null}}
+function preserveCloudDraft(reason){try{localStorage.setItem(cloudDraftKey(),JSON.stringify({user:SESSION.user||null,reason,revision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:SIASH_CLOUD.revision,baseRevision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:null,baseState:cloudBaseUser===SESSION.user?cloudBaseSnapshot:null,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
+function clearCloudDraft(){try{localStorage.removeItem(cloudDraftKey())}catch(e){console.error(e)}}
 // PR #102: deterministic local LGPD gate; same patterns and CPF checksum as docs-governance-integrity.cjs.
 function localCpfValid(value){const d=String(value).replace(/\D/g,"");if(d.length!==11||/^(\d)\1+$/.test(d))return false;for(let t=9;t<11;t++){let sum=0;for(let i=0;i<t;i++)sum+=Number(d[i])*(t+1-i);let check=(sum*10)%11;if(check===10)check=0;if(check!==Number(d[t]))return false}return true}
 function localPrivacyFindings(text){
