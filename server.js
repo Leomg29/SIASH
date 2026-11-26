@@ -480,8 +480,14 @@ app.put("/api/state",auth,async(req,res)=>{
     const removalAudit=detectDailyRecordRemoval(oldDaily,newDaily);
     if(removalAudit.blocked){await client.query("ROLLBACK");return res.status(422).json({error:"CLINICAL_RECORD_REMOVAL_BLOCKED",message:removalAudit.reason,date:removalAudit.date||null});}
     if(!Array.isArray(newDaily)){await client.query("ROLLBACK");return res.status(422).json({error:"Lançamentos diários inválidos."});}
-    // Proteção transacional: nenhuma conferência nova fora da janela oficial,
-    // nem substituição ou remoção de conferências históricas existentes.
+    // Reject newly introduced duplicate dates; preserve existing legacy rows.
+    const dateCounts=rows=>{const counts=new Map();for(const row of rows){if(typeof row?.date==="string")counts.set(row.date,(counts.get(row.date)||0)+1);}return counts;};
+    const oldDateCounts=dateCounts(oldDaily);
+    for(const [date,count] of dateCounts(newDaily)){
+      if(count>1&&count>(oldDateCounts.get(date)||0)){await client.query("ROLLBACK");return res.status(422).json({error:"CENSUS_DUPLICATE_DATE",date,message:"Existe mais de um lançamento para esta data. Confira antes de salvar."});}
+    }
+    // Proteção transacional: primeira conferência após a meia-noite,
+    // sem substituição ou remoção de conferências históricas existentes.
     const {validateConferenceMutation}=require("./census-window.cjs");
     const serverNow=new Date();
     for(const before of oldDaily){
@@ -517,7 +523,7 @@ app.put("/api/state",auth,async(req,res)=>{
     await client.query("INSERT INTO siash_state_history(payload,saved_by,reason) VALUES($1,$2,$3)",[cur.rows[0].payload,req.user.u,req.body?.reason||"Antes de atualização do estado"]);
     const updated=await client.query("UPDATE siash_state SET payload=$1,updated_at=NOW(),updated_by=$2,revision=revision+1 WHERE id=1 RETURNING revision,updated_at",[payload,req.user.u]);
     await client.query("COMMIT");
-    return res.json({ok:true,shift_event_stamps:shiftEventStamps,picc_event_stamps:piccEventStamps,bed_event_stamps:Object.fromEntries(["bedMoves","profileHistory","movements"].map(key=>[key,(payload.state?.[key]||[]).slice((cur.rows[0].payload?.state?.[key]||[]).length).map((event,i)=>({index:i+(cur.rows[0].payload?.state?.[key]||[]).length,event}))])),revision:Number(updated.rows[0].revision),updated_at:updated.rows[0].updated_at,pipa_cancellations:pipaAudit.events.map(e=>({index:e.index,cancelledAt:payload.state.pipa[e.index].cancelledAt,cancelledBy:req.user.u,cancelReason:payload.state.pipa[e.index].cancelReason}))});
+    return res.json({ok:true,census_conference_stamps:newDaily.filter(d=>d?.censusConference&&!oldDaily.find(o=>o?.date===d.date)?.censusConference).map(d=>({date:d.date,conference:d.censusConference})),shift_event_stamps:shiftEventStamps,picc_event_stamps:piccEventStamps,bed_event_stamps:Object.fromEntries(["bedMoves","profileHistory","movements"].map(key=>[key,(payload.state?.[key]||[]).slice((cur.rows[0].payload?.state?.[key]||[]).length).map((event,i)=>({index:i+(cur.rows[0].payload?.state?.[key]||[]).length,event}))])),revision:Number(updated.rows[0].revision),updated_at:updated.rows[0].updated_at,pipa_cancellations:pipaAudit.events.map(e=>({index:e.index,cancelledAt:payload.state.pipa[e.index].cancelledAt,cancelledBy:req.user.u,cancelReason:payload.state.pipa[e.index].cancelReason}))});
   }catch(e){try{await client.query("ROLLBACK")}catch(_){}throw e}finally{client.release()}
 });
 // Complementary correction: append-only audit; never mutates an original PIPA row.

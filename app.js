@@ -18,10 +18,11 @@ const SIASH_CLOUD={
  retryCount:0
 };
 // Snapshot imutável da última revisão confirmada. Não usar o estado local como base.
-let cloudBaseSnapshot=null;
-function cloudSetBase(state){cloudBaseSnapshot=JSON.parse(JSON.stringify(state))}
+let cloudBaseSnapshot=null,cloudBaseRevision=null,cloudBaseUser=null;
+function cloudSetBase(state){cloudBaseSnapshot=JSON.parse(JSON.stringify(state));cloudBaseRevision=SIASH_CLOUD.revision;cloudBaseUser=SESSION.user||null;}
+function cloudRestoreDraftBase(pending){cloudBaseSnapshot=null;cloudBaseRevision=null;cloudBaseUser=null;if(pending?.user&&pending.user===SESSION.user&&Number.isSafeInteger(pending.revision)&&pending.revision>0&&pending.baseRevision===pending.revision&&pending.baseState&&typeof pending.baseState==="object"&&!Array.isArray(pending.baseState)){cloudBaseSnapshot=JSON.parse(JSON.stringify(pending.baseState));cloudBaseRevision=pending.baseRevision;cloudBaseUser=pending.user;}}
 function cloudThreeWayMerge(base,local,server){
- const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const eq=cloudStatesEqual;
  const conflicts=[];
  function merge(b,l,r,path){
   if(eq(l,b))return structuredCloneSafe(r);
@@ -33,6 +34,18 @@ function cloudThreeWayMerge(base,local,server){
     const bm=new Map(b.map(x=>[Number(x.n),x])),lm=new Map(l.map(x=>[Number(x.n),x])),rm=new Map(r.map(x=>[Number(x.n),x]));
     const keys=[...new Set([...bm.keys(),...lm.keys(),...rm.keys()])].sort((a,z)=>a-z);
     return keys.map(k=>merge(bm.get(k),lm.get(k),rm.get(k),path+"["+k+"]")).filter(x=>x!==undefined);
+   }
+   if(path==="daily"){
+    const valid=a=>a.every(x=>x&&typeof x.date==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(x.date))&&new Set(a.map(x=>x.date)).size===a.length;
+    if(!valid(b)||!valid(l)||!valid(r)){conflicts.push({path,base:b,local:l,server:r,reason:"invalid-or-duplicate-date"});return structuredCloneSafe(r);}
+    const bm=new Map(b.map(x=>[x.date,x])),lm=new Map(l.map(x=>[x.date,x])),rm=new Map(r.map(x=>[x.date,x]));
+    return [...new Set([...bm.keys(),...lm.keys(),...rm.keys()])].sort().map(k=>{
+     const bv=bm.get(k),lv=lm.get(k),rv=rm.get(k);
+     if(eq(lv,bv))return structuredCloneSafe(rv);
+     if(eq(rv,bv)||eq(lv,rv))return structuredCloneSafe(lv);
+     // Same clinical day changed by both sessions: never synthesize a census.
+     conflicts.push({path:"daily["+k+"]",base:bv,local:lv,server:rv});return structuredCloneSafe(rv);
+    }).filter(x=>x!==undefined);
    }
    if(path==="picc"||path==="pipa"){
     const valid=a=>a.every(x=>x&&typeof x.id==="string"&&x.id.length>0)&&new Set(a.map(x=>x.id)).size===a.length;
@@ -74,7 +87,7 @@ function cloudThreeWayMerge(base,local,server){
 }
 const SIASH_PENDING_KEY="siash_cloud_pending_v1";
 function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
-function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:SIASH_CLOUD.revision,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
+function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:SIASH_CLOUD.revision,baseRevision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:null,baseState:cloudBaseUser===SESSION.user?cloudBaseSnapshot:null,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
 function clearCloudDraft(){try{localStorage.removeItem(SIASH_PENDING_KEY)}catch(e){console.error(e)}}
 // PR #102: deterministic local LGPD gate; same patterns and CPF checksum as docs-governance-integrity.cjs.
 function localCpfValid(value){const d=String(value).replace(/\D/g,"");if(d.length!==11||/^(\d)\1+$/.test(d))return false;for(let t=9;t<11;t++){let sum=0;for(let i=0;i<t;i++)sum+=Number(d[i])*(t+1-i);let check=(sum*10)%11;if(check===10)check=0;if(check!==Number(d[t]))return false}return true}
@@ -101,6 +114,13 @@ async function localDocPrivacyCheck(input){
  return localPrivacyFindings(text);
 }
 window.localDocPrivacyCheck=localDocPrivacyCheck;
+// Exact structural equality; array order remains significant.
+function cloudStatesEqual(a,b){
+ if(a===b)return true;
+ if(!a||!b||typeof a!=="object"||typeof b!=="object"||Array.isArray(a)!==Array.isArray(b))return false;
+ if(Array.isArray(a))return a.length===b.length&&a.every((v,i)=>cloudStatesEqual(v,b[i]));
+ const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(k=>Object.prototype.hasOwnProperty.call(b,k)&&cloudStatesEqual(a[k],b[k]));
+}
 function cloudDraftIsCurrent(pending,remote){return !!(pending&&remote?.exists&&Number.isSafeInteger(pending.revision)&&pending.revision===remote.revision)}
 
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
@@ -117,17 +137,49 @@ async function cloudAuthenticate(username,password,bootstrap=false){
  SIASH_CLOUD.token=data.token;sessionStorage.setItem("siash_cloud_token",data.token);return data;
 }
 function cloudPayload(){return {state:S,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()}}
+function parkCloudDraft(){
+ const pending=cloudPending();
+ if(!pending||!SESSION.user||pending.user!==SESSION.user||!cloudStatesEqual(pending.state,S))return false;
+ const key=SIASH_PENDING_KEY+":parked:"+encodeURIComponent(SESSION.user);
+ try{const raw=JSON.stringify(pending),existing=localStorage.getItem(key);if(existing&&existing!==raw)return false;if(!existing)localStorage.setItem(key,raw);if(localStorage.getItem(key)!==raw||localStorage.getItem(SIASH_PENDING_KEY)!==raw)return false;localStorage.removeItem(SIASH_PENDING_KEY);return localStorage.getItem(SIASH_PENDING_KEY)===null;}catch(e){return false;}
+}
+function restoreParkedCloudDraft(){
+ if(!SESSION.user)return;
+ const key=SIASH_PENDING_KEY+":parked:"+encodeURIComponent(SESSION.user);
+ const raw=localStorage.getItem(key);if(!raw)return;
+ const pending=JSON.parse(raw);if(pending.user!==SESSION.user)throw new Error("Autoria do rascunho inválida.");
+ const active=localStorage.getItem(SIASH_PENDING_KEY);
+ if(active&&active!==raw)return;
+ if(!active)localStorage.setItem(SIASH_PENDING_KEY,raw);
+ if(localStorage.getItem(SIASH_PENDING_KEY)===raw)localStorage.removeItem(key);
+}
 async function cloudLoadAfterLogin(){
  if(!SIASH_CLOUD.enabled||!SIASH_CLOUD.token)return false;
+ restoreParkedCloudDraft();
  const pending=cloudPending();
  if(pending){
    if(pending.user&&pending.user!==SESSION.user)throw new Error("Existe um rascunho pendente de outro usuário neste navegador. Acesse com o usuário original para conciliar os dados.");
    // Recuperar o rascunho antes de consultar a rede: falha na consulta não pode impedir acesso à cópia local.
    SIASH_CLOUD.conflict=true;
+   cloudRestoreDraftBase(pending);
    S=pending.state;normalize();localStorage.setItem(STORE,JSON.stringify(S));
    let remote=null;
    try{remote=await cloudJson("/api/state");SIASH_CLOUD.revision=remote.exists?remote.revision:null}
    catch(e){console.error("Consulta da revisão indisponível",e);SIASH_CLOUD.revision=null}
+   // A lost response or legacy draft can already match the confirmed server.
+   // Never infer equivalence from revision alone or discard another user's draft.
+   if(pending.user===SESSION.user&&remote?.exists&&Number.isSafeInteger(remote.revision)&&remote.revision>0&&remote.payload?.state&&cloudStatesEqual(pending.state,remote.payload.state)&&cloudStatesEqual(S,remote.payload.state)){
+     SIASH_CLOUD.revision=remote.revision;cloudSetBase(remote.payload.state);
+     if(remote.payload.security)setSecurityState(remote.payload.security);
+     SIASH_CLOUD.conflict=false;clearCloudDraft();SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
+   }
+   if(pending.user===SESSION.user&&cloudBaseUser===SESSION.user&&cloudDraftIsCurrent(pending,remote)&&cloudBaseRevision===remote.revision&&cloudStatesEqual(cloudBaseSnapshot,remote.payload?.state)&&cloudStatesEqual(pending,cloudPending())&&cloudStatesEqual(S,pending.state)){
+     SIASH_CLOUD.revision=remote.revision;
+     if(remote.payload.security)setSecurityState(remote.payload.security);
+     SIASH_CLOUD.conflict=false;
+     updateCloudBadge("Rascunho recuperado · aguardando sincronização");
+     scheduleCloudSave({retry:true});return true;
+   }
    updateCloudBadge(!remote?"OFFLINE · rascunho local protegido":cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
    alert("Existe um rascunho não sincronizado. O salvamento permanece bloqueado. Abra a Conciliação de Rascunhos para inspecionar as versões antes de decidir.");
    void showCloudConflictPanel();
@@ -231,6 +283,17 @@ function scheduleCloudSave({retry=false}={}){
          const existing=sentState.piccEvents.findIndex(e=>e.id===stamp.id||(!e.id&&e.type===stamp.type&&e.recordIndex===index&&e.justification===stamp.justification));
          if(existing>=0){sentState.piccEvents[existing]=stamp;if(S.piccEvents[existing])S.piccEvents[existing]=stamp;}
          else{sentState.piccEvents.push(stamp);S.piccEvents.push(stamp);}
+       }
+       localStorage.setItem(STORE,JSON.stringify(S));
+     }
+     if(Array.isArray(r.census_conference_stamps)){
+       for(const stamp of r.census_conference_stamps){
+         const sent=sentState.daily?.find(d=>d.date===stamp.date);
+         const current=S.daily?.find(d=>d.date===stamp.date);
+         if(!sent?.censusConference||!stamp.conference)continue;
+         const original=sent.censusConference;
+         sent.censusConference=stamp.conference;
+         if(current&&cloudStatesEqual(current.censusConference,original))current.censusConference=stamp.conference;
        }
        localStorage.setItem(STORE,JSON.stringify(S));
      }
@@ -387,7 +450,7 @@ async function showCloudConflictPanel(){
     try{
      const response=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:{state:merged,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()},base_revision:remoteRevision})});
      if(SIASH_CLOUD.editGeneration!==localGeneration){preserveCloudDraft("merge-concurrent-edit");SIASH_CLOUD.conflict=true;updateCloudBadge("Nova edição durante conciliação · rascunho protegido",true);return}
-     S=merged;cloudSetBase(merged);SIASH_CLOUD.revision=response.revision;
+     S=merged;SIASH_CLOUD.revision=response.revision;cloudSetBase(merged);
      SIASH_CLOUD.conflict=false;clearCloudDraft();localStorage.setItem(STORE,JSON.stringify(S));
      normalize();renderAll();panel.hidden=true;updateCloudBadge("Conciliação salva");
     }catch(e){
@@ -620,9 +683,13 @@ function auditDailyBalance(records,month){
 function monthStats(m){
  const rows=S.daily.filter(r=>monthOf(r.date)===m).sort((a,b)=>a.date.localeCompare(b.date));
  const sum=k=>rows.reduce((a,b)=>a+(+b[k]||0),0);
- const pd=sum("internados"),days=rows.length,ld=(S.settings.beds||10)*days,outs=sum("altas")+sum("transferencias")+sum("obitos");
+ const dateCounts=new Map();for(const row of rows)dateCounts.set(row.date,(dateCounts.get(row.date)||0)+1);
+ const censusRows=rows.filter(row=>dateCounts.get(row.date)===1&&/^\d{4}-\d{2}-\d{2}$/.test(row.date)&&Number.isFinite(Date.parse(row.date+"T00:00:00Z"))&&new Date(row.date+"T00:00:00Z").toISOString().slice(0,10)===row.date&&(typeof row.internados==="number"||typeof row.internados==="string"&&/^(0|[1-9]|10)$/.test(row.internados))&&Number.isSafeInteger(Number(row.internados))&&Number(row.internados)>=0&&Number(row.internados)<=10);
+ const pd=censusRows.reduce((total,row)=>total+Number(row.internados),0),days=censusRows.length,ld=(S.settings.beds||10)*days,outs=sum("altas")+sum("transferencias")+sum("obitos");
+ const validExit=v=>(typeof v==="number"||typeof v==="string"&&/^(0|[1-9]\d*)$/.test(v))&&Number.isSafeInteger(Number(v))&&Number(v)>=0;
+ const exitFields=["altas","transferencias","obitos"],losComplete=censusRows.length>0&&censusRows.every(row=>exitFields.every(k=>validExit(row[k]))),losOuts=losComplete?censusRows.reduce((n,row)=>n+exitFields.reduce((a,k)=>a+Number(row[k]),0),0):0;
  const latest=rows.length?rows[rows.length-1]:null;
- return{rows,pd,days,ld,outs,occ:ld?pd/ld*100:0,los:outs?pd/outs:0,adm:sum("admissoes"),altas:sum("altas"),transf:sum("transferencias"),deaths:sum("obitos"),pipa:pipaMonthTotal(m),canguru:sum("canguru")+sum("altaCanguru"),altaPediatria:sum("altaPediatria"),altaCanguru:sum("altaCanguru"),picc:S.picc.filter(x=>monthOf(piccInsertDate(x))===m).length,piccDays:piccDaysInMonth(m),piccActive:S.picc.filter(x=>(!x.status||x.status==="Ativo")).length,piccRemoved:S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length,pezinho:sum("pezinho"),vmDays:sum("vm"),vmCurrent:latest?(+latest.vm||0):0,intub:sum("intub"),extubProg:sum("extubProg"),extub:sum("extub"),lpp:sum("lpp"),hypothermia:thermalMonthCount(m,"Hipotermia"),hyperthermia:thermalMonthCount(m,"Hipertermia")}
+ return{rows,pd,days,ld,outs,occ:ld?pd/ld*100:0,los:losOuts?pd/losOuts:null,losOuts,adm:sum("admissoes"),altas:sum("altas"),transf:sum("transferencias"),deaths:sum("obitos"),pipa:pipaMonthTotal(m),canguru:sum("canguru")+sum("altaCanguru"),altaPediatria:sum("altaPediatria"),altaCanguru:sum("altaCanguru"),picc:S.picc.filter(x=>monthOf(piccInsertDate(x))===m).length,piccDays:piccDaysInMonth(m),piccActive:S.picc.filter(x=>(!x.status||x.status==="Ativo")).length,piccRemoved:S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length,pezinho:sum("pezinho"),vmDays:sum("vm"),vmCurrent:latest?(+latest.vm||0):0,intub:sum("intub"),extubProg:sum("extubProg"),extub:sum("extub"),lpp:sum("lpp"),hypothermia:thermalMonthCount(m,"Hipotermia"),hyperthermia:thermalMonthCount(m,"Hipertermia")}
 }
 function monthCoverage(m,days){const parts=String(m||"").split("-").map(Number);if(parts.length!==2||!parts[0]||parts[1]<1||parts[1]>12)return null;const calendarDays=new Date(parts[0],parts[1],0).getDate();return{registered:days,calendarDays,incomplete:days<calendarDays};}
 function allMonths(){const months=[...S.daily.map(r=>monthOf(r.date)),...S.pipa.filter(r=>!r.cancelledAt).map(r=>r.date?monthOf(r.date):r.month),...S.picc.map(x=>monthOf(piccInsertDate(x))),...S.picc.filter(x=>x.removalDate).map(x=>monthOf(x.removalDate)),currentMonth()];return [...new Set(months.filter(Boolean))].sort()}
@@ -637,10 +704,10 @@ function piccInsertedOn(date){return S.picc.filter(x=>piccInsertDate(x)===date).
 function piccDaysInMonth(m){const y=+m.slice(0,4),mo=+m.slice(5,7),monthStart=`${m}-01`,monthEnd=`${m}-${pad(new Date(y,mo,0).getDate())}`,today=todayISO();let total=0;S.picc.forEach(x=>{const start=piccInsertDate(x);if(!start)return;const stop=x.status==="Retirado"&&x.removalDate?x.removalDate:(today<monthEnd?today:monthEnd);const a=start>monthStart?start:monthStart;const b=stop<monthEnd?stop:monthEnd;if(b>=a)total+=piccDaysBetween(a,b)});return total}
 function populateBedSelects(){document.querySelectorAll(".bed-select").forEach(sel=>{const current=sel.value;let first=sel.id==="pending-bed"?'<option value="Geral / Setor">Geral / Setor</option>':'<option value="">Selecione</option>';sel.innerHTML=first+S.beds.map(b=>`<option value="${b.n}">Leito ${pad(b.n)} — ${b.profile}${b.isolation?" — Isolamento":""} — ${b.status}</option>`).join("");if([...sel.options].some(o=>o.value===current))sel.value=current})}
 function renderClock(){const d=new Date();$("clock-date").textContent=d.toLocaleDateString("pt-BR");$("clock-time").textContent=d.toLocaleTimeString("pt-BR");const h=d.getHours();$("shift-label").textContent=h>=7&&h<19?"Diurno 07h–19h":"Noturno 19h–07h"}
-function renderDashboard(){const m=currentMonth(),c=monthStats(m);$("m-pacientedias").textContent=c.pd;$("m-ocupacao").textContent=fmt(c.occ,1)+"%";$("m-permanencia").textContent=c.outs?fmt(c.los,1)+" d":"—";$("m-admissoes").textContent=c.adm;$("m-transferencias").textContent=c.transf;$("m-pipa").textContent=pipaMonthTotal(m);$("m-leitosdia").textContent=c.ld;$("m-diaslancados").textContent=c.days;const totalDays=new Date(+m.slice(0,4),+m.slice(5,7),0).getDate();$("m-diaspendentes").textContent=Math.max(0,totalDays-c.days);$("m-pendencias").textContent=pendingLoaded?sharedPending.filter(x=>x.status!=="Concluída").length:S.pending.filter(x=>!x.done).length;
+function renderDashboard(){const m=currentMonth(),c=monthStats(m);$("m-pacientedias").textContent=c.pd;$("m-ocupacao").textContent=fmt(c.occ,1)+"%";$("m-permanencia").textContent=c.los!==null?fmt(c.los,1)+" d":"—";$("m-admissoes").textContent=c.adm;$("m-transferencias").textContent=c.transf;$("m-pipa").textContent=pipaMonthTotal(m);$("m-leitosdia").textContent=c.ld;$("m-diaslancados").textContent=c.days;const totalDays=new Date(+m.slice(0,4),+m.slice(5,7),0).getDate();$("m-diaspendentes").textContent=Math.max(0,totalDays-c.days);$("m-pendencias").textContent=pendingLoaded?sharedPending.filter(x=>x.status!=="Concluída").length:S.pending.filter(x=>!x.done).length;
  const recent=[...c.rows].sort((a,b)=>a.date.localeCompare(b.date)).slice(-10);$("occupancy-bars").innerHTML=recent.length?recent.map(r=>{const p=Math.min(100,(r.internados/(S.settings.beds||10))*100);return`<div class="bar-item"><div class="bar-value">${p.toFixed(0)}%</div><div class="bar" style="height:${p}%"></div><div class="bar-label">${r.date.slice(8)}</div></div>`}).join(""):'<span class="muted">Sem lançamentos nesta competência.</span>';
  const alerts=[];if(c.days===0)alerts.push({t:"warn",x:"Ainda não há lançamento diário nesta competência."});else if(c.occ<S.settings.target)alerts.push({t:"warn",x:`Taxa de ocupação (${fmt(c.occ,1)}%) abaixo da meta configurada (${S.settings.target}%).`});else alerts.push({t:"ok",x:"Taxa de ocupação em ou acima da meta configurada."});if((pendingLoaded?sharedPending.some(x=>x.status!=="Concluída"&&x.priority==="Crítica"):S.pending.some(x=>!x.done&&x.priority==="Crítica")))alerts.push({t:"bad",x:"Existe pendência crítica aberta para continuidade."});if(S.docs.some(d=>docStatus(d).key==="expired"))alerts.push({t:"bad",x:"Há documento/POP com revisão vencida no SIASH Docs."});$("alerts").innerHTML=alerts.map(a=>`<div class="alert ${a.t}">${safe(a.x)}</div>`).join("");
- $("executive-summary").textContent=c.days?`Na competência ${m.split("-").reverse().join("/")}, foram registrados ${c.pd} pacientes-dia em ${c.days} dia(s), com taxa de ocupação de ${fmt(c.occ,1)}%. Houve ${c.adm} admissões, ${c.altas} altas, ${c.transf} transferências e ${c.deaths} óbitos. ${c.outs?`A média de permanência calculada é ${fmt(c.los,1)} dias.`:"Ainda não há saídas suficientes para média de permanência."}`:"O painel será atualizado automaticamente à medida que os lançamentos diários forem salvos."}
+ $("executive-summary").textContent=c.days?`Na competência ${m.split("-").reverse().join("/")}, foram registrados ${c.pd} pacientes-dia em ${c.days} dia(s), com taxa de ocupação de ${fmt(c.occ,1)}%. Houve ${c.adm} admissões, ${c.altas} altas, ${c.transf} transferências e ${c.deaths} óbitos. ${c.los!==null?`A média de permanência calculada para os dias válidos é ${fmt(c.los,1)} dias.`:"Média de permanência indisponível: confira a cobertura do censo e das saídas."}`:"O painel será atualizado automaticamente à medida que os lançamentos diários forem salvos."}
 function renderShift(){showShiftHistory();const score=checkScore();$("shift-steps").innerHTML=STEPS.map((x,i)=>`<div class="check-row"><strong>${i+1}</strong><span>${x}</span></div>`).join("");$("timeline").innerHTML=S.events.length?S.events.map(e=>`<div class="event"><strong>${safe(e.when)} • ${safe(e.type)}</strong><br>${e.bed?`Leito ${safe(e.bed)} — `:""}${safe(e.text)}</div>`).join(""):'<span class="muted">Nenhum evento registrado neste plantão.</span>';$("shift-summary").innerHTML=`<div class="cards"><article class="metric-card"><span>Checklist</span><strong>${score}%</strong></article><article class="metric-card"><span>Pendências abertas</span><strong>${(pendingLoaded?sharedPending.filter(x=>x.status!=="Concluída").length:S.pending.filter(x=>!x.done).length)}</strong></article><article class="metric-card"><span>Eventos registrados</span><strong>${S.events.length}</strong></article><article class="metric-card"><span>Leitos ocupados</span><strong>${S.beds.filter(b=>b.status==="Ocupado").length}/10</strong></article></div>`}
 function checkScore(){const app=S.checklist.filter(c=>c.status!=="N/A");return app.length?Math.round(app.filter(c=>c.status==="Realizado").length/app.length*100):0}
 const DAILY_FIELD_MAP={internados:"d-internados",admissoes:"d-admissoes",altas:"d-altas",transferencias:"d-transferencias",obitos:"d-obitos",pipa:"d-pipa",altaCanguru:"d-alta-canguru",picc:"d-picc",pezinho:"d-pezinho",intub:"d-intub",vm:"d-vm",extubProg:"d-extub-prog",extub:"d-extub",lpp:"d-lpp",hypothermia:"d-hypothermia",hyperthermia:"d-hyperthermia"};
@@ -655,17 +722,19 @@ function syncAllDischargesToCanguru(){
  if(!$("d-altas-todas-canguru").checked)return;
  $("d-alta-canguru").value=String(Math.max(0,Number($("d-altas").value)||0));
 }
-function loadDailyForm(date){const r=S.daily.find(x=>x.date===date);Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>{$(id).value=k==="pipa"?pipaCountOn(date):k==="picc"?piccInsertedOn(date):k==="hypothermia"?thermalCount(date,"Hipotermia"):k==="hyperthermia"?thermalCount(date,"Hipertermia"):(r?(+r[k]||0):0)});$("d-obs").value=r?(r.obs||""):"";$("d-altas-todas-canguru").checked=false}
+function loadDailyForm(date){const r=S.daily.find(x=>x.date===date);Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>{$(id).value=k==="pipa"?pipaCountOn(date):k==="picc"?piccInsertedOn(date):k==="hypothermia"?thermalCount(date,"Hipotermia"):k==="hyperthermia"?thermalCount(date,"Hipertermia"):(k==="internados"?(r?.internados??""):(r?(+r[k]||0):0))});$("d-obs").value=r?(r.obs||""):"";$("d-altas-todas-canguru").checked=false}
 function registerCensusConference(date,responsible){
  const daily=S.daily.find(r=>r.date===date);
  if(!daily)return {ok:false,reason:"Salve o lançamento diário antes da conferência."};
  if(!String(responsible||"").trim())return {ok:false,reason:"Informe o responsável pelo plantão noturno."};
- if(date>todayISO())return {ok:false,reason:"Não é permitido conferir censo de uma data futura."};
+ if(date>=new Intl.DateTimeFormat("sv-SE",{timeZone:"America/Sao_Paulo"}).format(new Date()))return {ok:false,reason:"Confirme somente datas encerradas à meia-noite."};
+ if(daily.censusConference)return {ok:false,reason:"Censo já confirmado. Utilize o fluxo de retificação."};
+ if($("d-internados").value.trim()===""||daily.internados==null)return {ok:false,reason:"Informe explicitamente o total de internados."};
  if(Number($("d-internados").value)!==Number(daily.internados))return {ok:false,reason:"O valor exibido no formulário difere do lançamento salvo. Salve ou recarregue os dados antes de conferir."};
  const count=Number(daily.internados);
  if(!Number.isSafeInteger(count)||count<0||count>(S.settings.beds||10))return {ok:false,reason:"Confira o total de pacientes e a capacidade de leitos antes de registrar."};
  if(daily.censusConference){daily.censusConferenceHistory=[...(Array.isArray(daily.censusConferenceHistory)?daily.censusConferenceHistory:[]),daily.censusConference];}
- daily.censusConference={referenceDate:date,registeredAt:new Date().toISOString(),responsible:String(responsible).trim(),registeredBy:SESSION.user||null,count,bedOccupancyAtRegistration:S.beds.filter(b=>b.status==="Ocupado").length};
+ daily.censusConference={referenceDate:date,registeredAt:new Date().toISOString(),responsible:String(responsible).trim(),registeredBy:SESSION.user||null,count,countSource:"manual_reference_date",bedOccupancyAtRegistration:S.beds.filter(b=>b.status==="Ocupado").length};
  return {ok:true};
 }
 async function refreshMidnightCensusStatus(){
@@ -679,11 +748,11 @@ async function refreshMidnightCensusStatus(){
   const pending=data.attention==="overdue",warning=data.attention==="warning";
   if(attention){attention.classList.toggle("hidden",!pending);attention.disabled=!pending;}
   lateCensusSetStatus(data);
-  if(pending){el.textContent="ATENÇÃO — Censo de "+ref+" pendente após 00h10. Regularização supervisionada necessária."+context;el.style.color="#b45309";}
-  else if(warning){el.textContent="Censo de "+ref+": faltam menos de cinco minutos para o encerramento da janela de confirmação manual."+context;el.style.color="#b45309";}
+  if(pending){el.textContent="ATENÇÃO — Censo de "+ref+" pendente após 00h10. Lançamento atrasado permitido. Confira a ocupação da data de referência."+context;el.style.color="#b45309";}
+  else if(warning){el.textContent="Censo de "+ref+": lembrete de conferência; o lançamento continuará disponível."+context;el.style.color="#b45309";}
   else if(data.attention==="closed"){el.textContent="Conferência manual de "+ref+" registrada. A confirmação histórica não comprova, por si só, presença à meia-noite.";el.style.color="";}
   else if(data.phase==="preparation"){el.textContent="Preparação do censo de "+ref+" disponível; confirmação oficial somente após 00h00.";el.style.color="";}
-  else if(data.phase==="confirmation"){el.textContent="Janela de conferência manual do censo de "+ref+" aberta até 00h10.";el.style.color="";}
+  else if(data.phase==="confirmation"){el.textContent="Conferência manual do censo de "+ref+" disponível.";el.style.color="";}
   else{el.textContent="Verifique o censo de "+ref+" e o estado de sincronização.";el.style.color="";}
  }catch(err){if(attention)attention.classList.add("hidden");el.textContent="Não foi possível consultar o servidor. O status do censo está indisponível; não presuma fechamento.";el.style.color="#b45309";}
 }
@@ -697,9 +766,10 @@ function lateCensusSetStatus(data){
  const panel=$("census-late-section");
  if(!panel)return;
  const overdue=data?.attention==="overdue";
- panel.classList.toggle("hidden",!overdue);
+ // Atraso simples não exige regularização supervisionada; mantenha acesso a solicitações históricas.
+ panel.classList.toggle("hidden",false);
  if(overdue){LATE_CENSUS_REFERENCE=data.referenceDate;const input=$("census-late-date");if(input&&!input.value)input.value=data.referenceDate;}
- if(overdue&&SIASH_CLOUD.token)void lateCensusLoadRequests();
+ if(SIASH_CLOUD.token)void lateCensusLoadRequests();
 }
 function lateCensusMessage(id,message){const el=$(id);if(el)el.textContent=message;}
 function lateCensusConflict(id){
@@ -812,7 +882,7 @@ function renderCensusConference(date){
    const historyCount=Array.isArray(daily.censusConferenceHistory)?daily.censusConferenceHistory.length:0;
    const historyNote=historyCount?` Histórico preservado: ${historyCount} conferência(s) anterior(es).`:"";
    closure.textContent=(record&&record.count===census
-     ?`Conferência registrada por ${record.responsible} em ${new Date(record.registeredAt).toLocaleString("pt-BR")} (referência ${dateBR(record.referenceDate)}; ${record.count} RN). Ocupação do mapa naquele registro: ${record.bedOccupancyAtRegistration}. Registro manual, não valida automaticamente o horário da meia-noite.`
+     ?`Conferência registrada por ${record.responsible} em ${new Date(record.registeredAt).toLocaleString("pt-BR")} (referência ${dateBR(record.referenceDate)}; ${record.count} RN). Ocupação atual no momento do registro (não corresponde necessariamente à meia-noite): ${record.bedOccupancyAtRegistration??"não informada"}. Contagem da referência declarada manualmente pelo responsável.`
      :record?"Conferência anterior desatualizada: o censo foi alterado. Registre nova conferência.":"Sem conferência registrada para esta data.")+historyNote;
  }
  count.textContent=census;
@@ -822,7 +892,7 @@ function renderCensusConference(date){
    ?"Totais coincidem numericamente. Confirme o horário de referência antes de validar o fechamento."
    :"Divergência de "+Math.abs(delta)+" RN(s) entre o lançamento de "+dateBR(date)+" e o mapa atual. Confira admissões, altas e horário; nenhum dado foi alterado automaticamente.";
 }
-function renderDaily(){const date=$("d-date").value||todayISO();if(!$("d-date").value)$("d-date").value=date;const m=monthOf(date),c=monthStats(m);$("competence-label").textContent="Competência "+m.split("-").reverse().join("/");if($("d-picc-month"))$("d-picc-month").textContent=c.picc;$("d-pipa").value=pipaCountOn(date);const pipaAudit=pipaDailyAudit(date),pipaNote=$("d-pipa-audit");if(pipaNote)pipaNote.textContent=pipaAudit.legacy?`Registro diário legado: ${pipaAudit.legacy}. PIPA datado: ${pipaAudit.dated}. Valores não somados automaticamente; conferir possível duplicidade.`:"Encaminhamentos datados do PIPA. Registros antigos sem data permanecem preservados.";$("d-hypothermia").value=thermalCount(date,"Hipotermia");$("d-hyperthermia").value=thermalCount(date,"Hipertermia");renderThermalEvents(date);renderCensusConference(date);$("d-kpi-pd").textContent=c.pd;$("d-kpi-ld").textContent=c.ld;$("d-kpi-occ").textContent=fmt(c.occ,1)+"%";$("d-kpi-outs").textContent=c.outs;$("d-kpi-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("d-kpi-days").textContent=c.days;if($("d-kpi-vm-current"))$("d-kpi-vm-current").textContent=c.vmCurrent;if($("d-kpi-vm-days"))$("d-kpi-vm-days").textContent=c.vmDays;$("daily-table").innerHTML=[...c.rows].sort((a,b)=>b.date.localeCompare(a.date)).map(r=>`<tr><td>${dateBR(r.date)}</td><td>${r.internados}</td><td>${r.admissoes}</td><td>${r.altas}</td><td>${r.transferencias}</td><td>${r.obitos}</td><td>${pipaDailyAudit(r.date).hasDated?`${pipaDailyAudit(r.date).dated} (datado)${pipaDailyAudit(r.date).legacy?` / ${pipaDailyAudit(r.date).legacy} (legado, conferir)`:""}`:`${pipaDailyAudit(r.date).legacy} (legado)`}</td><td>${(+r.altaCanguru||0)+(+r.canguru||0)}</td><td>${piccInsertedOn(r.date)}</td><td>${r.pezinho}</td><td>${+r.intub||0}</td><td>${+r.vm||0}</td><td>${+r.extubProg||0}</td><td>${+r.extub||0}</td><td><button class="ghost" onclick="deleteDaily('${r.date}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="15">Nenhum lançamento.</td></tr>'}
+function renderDaily(){const date=$("d-date").value||todayISO();if(!$("d-date").value)$("d-date").value=date;const m=monthOf(date),c=monthStats(m);$("competence-label").textContent="Competência "+m.split("-").reverse().join("/");if($("d-picc-month"))$("d-picc-month").textContent=c.picc;$("d-pipa").value=pipaCountOn(date);const pipaAudit=pipaDailyAudit(date),pipaNote=$("d-pipa-audit");if(pipaNote)pipaNote.textContent=pipaAudit.legacy?`Registro diário legado: ${pipaAudit.legacy}. PIPA datado: ${pipaAudit.dated}. Valores não somados automaticamente; conferir possível duplicidade.`:"Encaminhamentos datados do PIPA. Registros antigos sem data permanecem preservados.";$("d-hypothermia").value=thermalCount(date,"Hipotermia");$("d-hyperthermia").value=thermalCount(date,"Hipertermia");renderThermalEvents(date);renderCensusConference(date);$("d-kpi-pd").textContent=c.pd;$("d-kpi-ld").textContent=c.ld;$("d-kpi-occ").textContent=fmt(c.occ,1)+"%";$("d-kpi-outs").textContent=c.outs;$("d-kpi-los").textContent=c.los!==null?fmt(c.los,1)+" d":"—";$("d-kpi-days").textContent=c.days;if($("d-kpi-vm-current"))$("d-kpi-vm-current").textContent=c.vmCurrent;if($("d-kpi-vm-days"))$("d-kpi-vm-days").textContent=c.vmDays;$("daily-table").innerHTML=[...c.rows].sort((a,b)=>b.date.localeCompare(a.date)).map(r=>`<tr><td>${dateBR(r.date)}</td><td>${r.internados}</td><td>${r.admissoes}</td><td>${r.altas}</td><td>${r.transferencias}</td><td>${r.obitos}</td><td>${pipaDailyAudit(r.date).hasDated?`${pipaDailyAudit(r.date).dated} (datado)${pipaDailyAudit(r.date).legacy?` / ${pipaDailyAudit(r.date).legacy} (legado, conferir)`:""}`:`${pipaDailyAudit(r.date).legacy} (legado)`}</td><td>${(+r.altaCanguru||0)+(+r.canguru||0)}</td><td>${piccInsertedOn(r.date)}</td><td>${r.pezinho}</td><td>${+r.intub||0}</td><td>${+r.vm||0}</td><td>${+r.extubProg||0}</td><td>${+r.extub||0}</td><td><button class="ghost" onclick="deleteDaily('${r.date}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="15">Nenhum lançamento.</td></tr>'}
 function renderThermalEvents(date){
  const rows=S.thermalEvents.filter(x=>x.date===date).sort((a,b)=>(b.createdAt||"").localeCompare(a.createdAt||""));
  $("thermal-table").innerHTML=rows.map(x=>`<tr><td>${dateBR(x.date)}</td><td>Leito ${pad(x.bed)}</td><td>${safe(x.rn||"Sem identificador")}</td><td>${safe(x.type)}</td><td>${safe(x.note||"—")}</td><td><button class="ghost" onclick="deleteThermalEvent('${x.id}')">Excluir</button></td></tr>`).join("")||'<tr><td colspan="6">Nenhum evento térmico registrado nesta data.</td></tr>';
@@ -971,7 +1041,7 @@ async function changeSharedPending(id,status){
 }
 
 function fillMonthSelect(id){const sel=$(id),cur=sel.value;sel.innerHTML=allMonths().map(m=>`<option value="${m}">${m.split("-").reverse().join("/")}</option>`).join("");sel.value=allMonths().includes(cur)?cur:currentMonth()}
-function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.outs?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Leito Canguru",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];const coverage=monthCoverage(m,c.days);const coverageAlert=$("indicator-coverage-alert");coverageAlert.hidden=!coverage?.incomplete;coverageAlert.textContent=coverage?.incomplete?`Cobertura parcial: ${coverage.registered} de ${coverage.calendarDays} dias com lançamento nesta competência. Leitos-dia e taxa de ocupação consideram somente os dias lançados; não representam necessariamente o mês completo. Nenhum valor foi ajustado automaticamente.`:"";const balanceWarnings=auditDailyBalance(S.daily,m);
+function renderIndicators(){fillMonthSelect("indicator-month");const m=$("indicator-month").value,c=monthStats(m);$("i-pd").textContent=c.pd;$("i-occ").textContent=fmt(c.occ,1)+"%";$("i-los").textContent=c.los!==null?fmt(c.los,1)+" d":"—";$("i-adm").textContent=c.adm;$("i-transf").textContent=c.transf;$("i-deaths").textContent=c.deaths;const prod=[["Dias lançados",c.days],["Leitos-dia",c.ld],["Saídas",c.outs],["Altas",c.altas],["PIPA",c.pipa],["Altas → Leito Canguru",c.canguru],["PICCs inseridos",c.picc],["PICC-dia",c.piccDays],["PICCs ativos atualmente",c.piccActive],["PICCs retirados",c.piccRemoved],["Testes do pezinho",c.pezinho],["RN em VM atualmente",c.vmCurrent],["VM-dia no mês",c.vmDays],["Intubações no mês",c.intub],["Extubações programadas",c.extubProg],["Extubações acidentais",c.extub],["Lesões por pressão",c.lpp],["Hipotermia",c.hypothermia],["Hipertermia",c.hyperthermia]];const coverage=monthCoverage(m,c.days);const coverageAlert=$("indicator-coverage-alert");coverageAlert.hidden=!coverage?.incomplete;coverageAlert.textContent=coverage?.incomplete?`Cobertura parcial: ${coverage.registered} de ${coverage.calendarDays} dias com lançamento nesta competência. Leitos-dia e taxa de ocupação consideram somente os dias lançados; não representam necessariamente o mês completo. Nenhum valor foi ajustado automaticamente.`:"";const balanceWarnings=auditDailyBalance(S.daily,m);
  let balanceAlert=$("indicator-balance-alert");
  if(!balanceAlert){balanceAlert=document.createElement("div");balanceAlert.id="indicator-balance-alert";balanceAlert.setAttribute("role","status");balanceAlert.className="indicator-coverage-alert";coverageAlert.insertAdjacentElement("afterend",balanceAlert)}
  balanceAlert.hidden=balanceWarnings.length===0;
@@ -1559,12 +1629,12 @@ $("owner-create-btn").addEventListener("click",async()=>{
  }catch(e){alert(e.message||"Falha na configuração Cloud.")}
 })
 $("login-btn").addEventListener("click",async()=>{const user=$("login-user").value.trim(),pass=$("login-pass").value,sec=securityState();$("login-feedback").textContent="";try{let role=null;if(SIASH_CLOUD.enabled){const auth=await cloudAuthenticate(user,pass,false);role=auth.role;SESSION={authenticated:true,role,user:auth.user||user};await cloudLoadAfterLogin();await applyPendingBackupAfterLogin()}else{if(sec&&user===sec.ownerUser&&(await sha256(user+"|"+pass))===sec.ownerHash)role="owner";else if(OPERATIONAL_USERS[user]===pass)role="operational";if(!role)throw new Error("Usuário ou senha inválidos.");SESSION={authenticated:true,role,user}}rememberLogin(SESSION.user||user);$("login-view").classList.add("hidden");$("app-view").classList.remove("hidden");$("logged-user").textContent=SESSION.user;applyPermissions();if(role==="owner")auditAdmin("Login do Administrador Proprietário.");renderAll();refreshMidnightCensusStatus();if(role==="owner")setTimeout(()=>migrateLegacyWordDocsIfNeeded().catch(e=>console.error("Migração automática .doc",e)),700)}catch(e){$("login-feedback").textContent=e.message||"Falha no login."}})
-$("logout-btn").addEventListener("click",()=>{SIASH_CLOUD.token="";sessionStorage.removeItem("siash_cloud_token");SESSION={authenticated:false,role:null,user:null};$("change-password-panel")?.classList.add("hidden");$("change-password-form")?.reset();$("app-view").classList.add("hidden");$("login-view").classList.remove("hidden");initSecurityUI()})
+$("logout-btn").addEventListener("click",()=>{if(SIASH_CLOUD.syncing){alert("Aguarde o envio em andamento.");return;}if(cloudPending()&&!(confirm("Há dados não sincronizados. Preservar rascunho neste navegador e sair? O próximo plantão não verá estes dados até a recuperação pelo autor.")&&parkCloudDraft())){if(!SIASH_CLOUD.syncing&&!SIASH_CLOUD.conflict&&SIASH_CLOUD.token)scheduleCloudSave({retry:true});alert(SIASH_CLOUD.conflict?"Há um rascunho protegido deste usuário. Concilie antes da troca de plantão.":"Aguarde a confirmação do salvamento antes de sair. Depois, clique novamente em Sair.");return;}clearTimeout(cloudSaveTimer);clearTimeout(cloudRetryTimer);SIASH_CLOUD.token="";sessionStorage.removeItem("siash_cloud_token");SESSION={authenticated:false,role:null,user:null};$("change-password-panel")?.classList.add("hidden");$("change-password-form")?.reset();$("app-view").classList.add("hidden");$("login-view").classList.remove("hidden");initSecurityUI()})
 $("refresh-dashboard").addEventListener("click",renderAll)
 $("close-shift").addEventListener("click",()=>{if(S.shiftClosed)return alert("Plantão já encerrado; inicie o próximo.");const a=shiftAlerts();if(!confirm(`Encerrar plantão? Checklist pendente: ${a.pending}; pendências críticas abertas: ${a.critical}. Nenhuma tarefa será concluída automaticamente.`))return;S.shiftId=S.shiftId||shiftUid();S.shiftHistory.push({shiftId:S.shiftId,startedAt:S.shiftStarted,closedAt:"Aguardando servidor",checklist:structuredClone(S.checklist),events:structuredClone(S.events),care:structuredClone(S.care)});S.shiftClosed=true;save()});
 $("reset-shift").addEventListener("click",()=>{if(!S.shiftClosed)return alert("Encerre o plantão atual antes de iniciar outro.");if(!confirm("Iniciar novo plantão com checklist pendente? O histórico anterior permanecerá consultável."))return;S.shiftId=shiftUid();S.shiftClosed=false;S.checklist=CHECKS.map(x=>({text:x,status:"Pendente"}));S.events=[];S.shiftStarted=new Date().toISOString();save()})
 $("event-form").addEventListener("submit",e=>{e.preventDefault();if(!$("ev-text").value.trim())return;S.events.unshift({when:nowBR(),type:$("ev-type").value,bed:$("ev-bed").value,text:$("ev-text").value.trim()});shiftAudit("event",{type:$("ev-type").value,bed:$("ev-bed").value,text:$("ev-text").value.trim()});$("ev-text").value="";save()})
-$("daily-form").addEventListener("submit",e=>{e.preventDefault();if($("d-altas-todas-canguru").checked){syncAllDischargesToCanguru();const existing=S.daily.find(x=>x.date===$("d-date").value);if((Number(existing?.canguru)||0)>0){alert("Este dia possui registro histórico de Canguru. Desmarque a opção e confira os dados antes de salvar, para evitar contagem duplicada.");return;}}const issue=validateDailyCanguruSubset($("d-altas").value,$("d-alta-canguru").value,S.daily.find(x=>x.date===$("d-date").value)?.canguru);if(issue){alert(issue);return;}const date=$("d-date").value;const previous=S.daily.find(x=>x.date===date);const r={...(previous||{}),date,internados:+$("d-internados").value||0,admissoes:+$("d-admissoes").value||0,altas:+$("d-altas").value||0,transferencias:+$("d-transferencias").value||0,obitos:+$("d-obitos").value||0,pipa:(S.daily.find(x=>x.date===date)?.pipa||0),altaPediatria:(S.daily.find(x=>x.date===date)?.altaPediatria||0),altaCanguru:+$("d-alta-canguru").value||0,picc:piccInsertedOn(date),pezinho:+$("d-pezinho").value||0,intub:+$("d-intub").value||0,vm:+$("d-vm").value||0,extubProg:+$("d-extub-prog").value||0,extub:+$("d-extub").value||0,lpp:+$("d-lpp").value||0,hypothermia:thermalCount(date,"Hipotermia"),hyperthermia:thermalCount(date,"Hipertermia"),obs:$("d-obs").value.trim()};if(previous?.censusConferenceHistory)r.censusConferenceHistory=previous.censusConferenceHistory;if(previous?.censusConference){if(Number(previous.internados)===r.internados)r.censusConference=previous.censusConference;else{r.censusConferenceHistory=[...(r.censusConferenceHistory||[]),previous.censusConference];delete r.censusConference;}}S.daily=S.daily.filter(x=>x.date!==r.date);S.daily.push(r);S.daily.sort((a,b)=>a.date.localeCompare(b.date));save();showToast("Dados salvos",1000)})
+$("daily-form").addEventListener("submit",e=>{e.preventDefault();if($("d-altas-todas-canguru").checked){syncAllDischargesToCanguru();const existing=S.daily.find(x=>x.date===$("d-date").value);if((Number(existing?.canguru)||0)>0){alert("Este dia possui registro histórico de Canguru. Desmarque a opção e confira os dados antes de salvar, para evitar contagem duplicada.");return;}}const issue=validateDailyCanguruSubset($("d-altas").value,$("d-alta-canguru").value,S.daily.find(x=>x.date===$("d-date").value)?.canguru);if(issue){alert(issue);return;}const date=$("d-date").value;const previous=S.daily.find(x=>x.date===date);const rawCount=$("d-internados").value.trim();if(rawCount===""||!Number.isSafeInteger(Number(rawCount))||Number(rawCount)<0||Number(rawCount)>10){alert("Informe o total real de internados, entre 0 e 10.");return;}if(previous?.censusConference&&Number(rawCount)!==previous.censusConference.count){alert("Censo confirmado: utilize o fluxo de retificação para alterar o total.");return;}const r={...(previous||{}),date,internados:Number(rawCount),admissoes:+$("d-admissoes").value||0,altas:+$("d-altas").value||0,transferencias:+$("d-transferencias").value||0,obitos:+$("d-obitos").value||0,pipa:(S.daily.find(x=>x.date===date)?.pipa||0),altaPediatria:(S.daily.find(x=>x.date===date)?.altaPediatria||0),altaCanguru:+$("d-alta-canguru").value||0,picc:piccInsertedOn(date),pezinho:+$("d-pezinho").value||0,intub:+$("d-intub").value||0,vm:+$("d-vm").value||0,extubProg:+$("d-extub-prog").value||0,extub:+$("d-extub").value||0,lpp:+$("d-lpp").value||0,hypothermia:thermalCount(date,"Hipotermia"),hyperthermia:thermalCount(date,"Hipertermia"),obs:$("d-obs").value.trim()};if(previous?.censusConferenceHistory)r.censusConferenceHistory=previous.censusConferenceHistory;if(previous?.censusConference){if(Number(previous.internados)===r.internados)r.censusConference=previous.censusConference;else{r.censusConferenceHistory=[...(r.censusConferenceHistory||[]),previous.censusConference];delete r.censusConference;}}S.daily=S.daily.filter(x=>x.date!==r.date);S.daily.push(r);S.daily.sort((a,b)=>a.date.localeCompare(b.date));save();showToast("Dados salvos",1000)})
 $("census-close").addEventListener("click",()=>{
  if(censusConferencePending)return;
  const date=$("d-date").value||todayISO();
@@ -1574,7 +1644,7 @@ $("census-close").addEventListener("click",()=>{
  if(!result.ok)return alert(result.reason);
  save();if(SIASH_CLOUD.enabled&&SIASH_CLOUD.token){censusConferencePending={date,generation:SIASH_CLOUD.editGeneration};censusConferenceFeedback("Salvando conferência… aguardando confirmação do servidor.");}else{censusConferenceFeedback("Conferência salva somente neste navegador. Sem confirmação do servidor.",true);}showToast("Conferência registrada localmente; aguardando sincronização",2200);
 });
-$("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):0);$("d-obs").value="";$("d-altas-todas-canguru").checked=false})
+$("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):k==="internados"?"":0);$("d-obs").value="";$("d-altas-todas-canguru").checked=false})
 $("d-altas").addEventListener("input",syncAllDischargesToCanguru);
 $("d-altas-todas-canguru").addEventListener("change",syncAllDischargesToCanguru);
 $("d-alta-canguru").addEventListener("input",()=>{$("d-altas-todas-canguru").checked=false});

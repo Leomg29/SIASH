@@ -76,7 +76,7 @@ test('conferencia registra horario real e preserva somente se total nao mudar',(
 });
 
 test('bloqueia conferencia com data futura ou formulario divergente',()=>{
- assert.match(js,/if\(date>todayISO\(\)\)return \{ok:false/);
+ assert.match(js,/if\(date>=new Intl\.DateTimeFormat\("sv-SE",\{timeZone:"America\/Sao_Paulo"\}\)\.format\(new Date\(\)\)\)return \{ok:false/);
  assert.match(js,/Number\(\$\("d-internados"\)\.value\)!==Number\(daily\.internados\)/);
 });
 test('confirmacao precede qualquer mutacao de conferencia',()=>{

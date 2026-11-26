@@ -64,6 +64,7 @@ test("PR102 Chromium UI: real AI update click, privacy, metadata, draft reconcil
   assert.equal(await page.locator("#doc-send-ai").isVisible(),true);
   await page.locator("#doc-send-ai").click();
   await page.waitForFunction(code=>S.docs.find(d=>d.code===code)?.versions?.some(v=>v.aiProvider&&v.aiResearchMode&&v.docxPreparedIntegrity),code,{timeout:60000});
+  await page.waitForFunction(()=>/Conferência Técnica Assistida/.test(document.querySelector("#doc-revision-panel")?.innerText||""),null,{timeout:60000});
   const panel=await page.locator("#doc-revision-panel").innerText();
   assert.match(panel,/Conferência Técnica Assistida/);
   assert.match(panel,/Referências científicas verificadas/);

@@ -19,7 +19,18 @@ test('incomplete months are disclosed in indicators and comparison',()=>{
  assert.match(src,/const coverage=monthCoverage\(m,c\.days\)/);
  assert.match(src,/const coverageNote=data\.some\(x=>monthCoverage\(x\.m,x\.days\)\?\.incomplete\)/);
 });
-test('existing occupancy and length of stay formulas remain unchanged',()=>{
- assert.match(src,/ld=\(S\.settings\.beds\|\|10\)\*days,outs=sum\("altas"\)\+sum\("transferencias"\)\+sum\("obitos"\)/);
- assert.match(src,/occ:ld\?pd\/ld\*100:0,los:outs\?pd\/outs:0/);
+const stats=rows=>vm.runInNewContext(src.slice(src.indexOf('function monthStats('),src.indexOf('function monthCoverage('))+';monthStats("2026-06")',{S:{daily:rows,settings:{beds:10},picc:[]},monthOf:d=>d.slice(0,7),pipaMonthTotal:()=>0,piccDaysInMonth:()=>0,thermalMonthCount:()=>0});
+const row=(day,internados,altas=0)=>({date:"2026-06-"+String(day).padStart(2,"0"),internados,altas,transferencias:0,obitos:0});
+test('occupancy and stay use matching valid census dates',()=>{
+ const c=stats([row(1,7,2),row(2,9,2),row(3,null,8),row(4,5,3),row(4,6,4)]);
+ assert.equal(c.pd,16);assert.equal(c.ld,20);assert.equal(c.occ,80);assert.equal(c.losOuts,4);assert.equal(c.los,4);
+});
+test('missing or invalid exits and zero exits do not fabricate stay',()=>{
+ for(const v of [null,"",false,-1,1.5])assert.equal(stats([row(1,7,v)]).los,null);
+ assert.equal(stats([row(1,7)]).los,null);
+ assert.equal(stats([row(1,0,1)]).los,0);
+});
+test('June historical occupancy reference',()=>{
+ const c=stats(Array.from({length:30},(_,i)=>row(i+1,i<18?7:6,1)));
+ assert.equal(c.pd,198);assert.equal(c.ld,300);assert.equal(c.occ,66);assert.equal(c.los,6.6);
 });
