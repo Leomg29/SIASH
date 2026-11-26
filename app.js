@@ -758,9 +758,9 @@ async function refreshMidnightCensusStatus(){
   const selected=$("d-date")?.value||todayISO();
   const context=selected===data.referenceDate?"":" Selecione "+ref+" no lançamento diário para conferir.";
   const pending=data.attention==="overdue",warning=data.attention==="warning";
-  if(attention){attention.classList.toggle("hidden",!pending);attention.disabled=!pending;}
+  if(attention){attention.classList.toggle("hidden",!pending&&!warning);attention.disabled=false;attention.setAttribute("aria-label","Lembrete informativo de conferência do censo");}
   lateCensusSetStatus(data);
-  if(pending){el.textContent="ATENÇÃO — Censo de "+ref+" pendente após 00h10. Lançamento atrasado permitido. Confira a ocupação da data de referência."+context;el.style.color="#b45309";}
+  if(pending){el.textContent="LEMBRETE — Censo de "+ref+" ainda não conferido. Registre quando possível; as demais funções continuam disponíveis."+context;el.style.color="#b45309";}
   else if(warning){el.textContent="Censo de "+ref+": lembrete de conferência; o lançamento continuará disponível."+context;el.style.color="#b45309";}
   else if(data.attention==="closed"){el.textContent="Conferência manual de "+ref+" registrada. A confirmação histórica não comprova, por si só, presença à meia-noite.";el.style.color="";}
   else if(data.phase==="preparation"){el.textContent="Preparação do censo de "+ref+" disponível; confirmação oficial somente após 00h00.";el.style.color="";}
