@@ -77,3 +77,13 @@ test("official census receipt preserves later unrelated edits and permits next s
  assert.equal(S.daily[0].admissoes,2);
  assert.equal(validate(S.daily[0],"2026-11-26T10:01:00Z",sentState.daily[0]).ok,true);
 });
+
+test("closure status rejects false zero and absent audit timestamp",()=>{
+ const {decideMidnightClosure}=require("../census-midnight.cjs");
+ const now=new Date("2026-11-26T10:00:00Z");
+ const check=(count,registeredAt)=>decideMidnightClosure({daily:{internados:count,censusConference:{referenceDate:date,count,responsible:"Teste",registeredAt}},referenceDate:date,now}).status;
+ for(const invalid of [false,true,[],[0]," ","00",null,undefined])assert.equal(check(invalid,now.toISOString()),"pending");
+ for(const invalid of [null,undefined,0,false,""])assert.equal(check(0,invalid),"pending");
+ assert.equal(check(0,now.toISOString()),"manual");
+ assert.equal(check("7",now.toISOString()),"manual");
+});
