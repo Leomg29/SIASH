@@ -102,6 +102,13 @@ async function localDocPrivacyCheck(input){
  return localPrivacyFindings(text);
 }
 window.localDocPrivacyCheck=localDocPrivacyCheck;
+// Exact structural equality; array order remains significant.
+function cloudStatesEqual(a,b){
+ if(a===b)return true;
+ if(!a||!b||typeof a!=="object"||typeof b!=="object"||Array.isArray(a)!==Array.isArray(b))return false;
+ if(Array.isArray(a))return a.length===b.length&&a.every((v,i)=>cloudStatesEqual(v,b[i]));
+ const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(k=>Object.prototype.hasOwnProperty.call(b,k)&&cloudStatesEqual(a[k],b[k]));
+}
 function cloudDraftIsCurrent(pending,remote){return !!(pending&&remote?.exists&&Number.isSafeInteger(pending.revision)&&pending.revision===remote.revision)}
 
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
@@ -130,6 +137,13 @@ async function cloudLoadAfterLogin(){
    let remote=null;
    try{remote=await cloudJson("/api/state");SIASH_CLOUD.revision=remote.exists?remote.revision:null}
    catch(e){console.error("Consulta da revisão indisponível",e);SIASH_CLOUD.revision=null}
+   // A lost response or legacy draft can already match the confirmed server.
+   // Never infer equivalence from revision alone or discard another user's draft.
+   if(pending.user===SESSION.user&&remote?.exists&&Number.isSafeInteger(remote.revision)&&remote.revision>0&&remote.payload?.state&&cloudStatesEqual(pending.state,remote.payload.state)&&cloudStatesEqual(S,remote.payload.state)){
+     SIASH_CLOUD.revision=remote.revision;cloudSetBase(remote.payload.state);
+     if(remote.payload.security)setSecurityState(remote.payload.security);
+     SIASH_CLOUD.conflict=false;clearCloudDraft();SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
+   }
    updateCloudBadge(!remote?"OFFLINE · rascunho local protegido":cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
    alert("Existe um rascunho não sincronizado. O salvamento permanece bloqueado. Abra a Conciliação de Rascunhos para inspecionar as versões antes de decidir.");
    void showCloudConflictPanel();
