@@ -8,7 +8,7 @@ const end=src.indexOf('$("census-close").addEventListener',start);
 assert.ok(start>=0&&end>start);
 const handler=src.slice(start,end);
 test('daily edit merges previous record before explicit form fields',()=>{
- assert.match(handler,/const previous=S\.daily\.find\(x=>x\.date===date\);const r=\{\.\.\.\(previous\|\|\{\}\),date,internados:/);
+ assert.match(handler,/const previous=S\.daily\.find\(x=>x\.date===date\);[\s\S]*?const r=\{\.\.\.\(previous\|\|\{\}\),date,internados:/);
  assert.match(handler,/altaCanguru:\+\$\("d-alta-canguru"\)\.value\|\|0/);
 });
 test('census conference invalidation remains in place on count change',()=>{
