@@ -35,9 +35,8 @@ function validateConferenceMutation({before,after,referenceDate,now=new Date()})
  if(JSON.stringify(oldRecord??null)===JSON.stringify(newRecord??null))return {ok:true,changed:false};
  if(oldRecord)return {ok:false,code:"CENSUS_CONFERENCE_IMMUTABLE",reason:"Conferência anterior não pode ser substituída nem removida."};
  if(!newRecord||typeof newRecord!=="object")return {ok:false,code:"CENSUS_CONFERENCE_INVALID"};
- const window=censusWindow(now);
- if(!window.canConfirm||window.referenceDate!==referenceDate)return {ok:false,code:"CENSUS_OUTSIDE_WINDOW",reason:"Confirmação oficial permitida somente entre 00h00 e 00h09min59s do dia seguinte."};
- if(newRecord.referenceDate!==referenceDate||!Number.isSafeInteger(Number(newRecord.count))||Number(newRecord.count)!==Number(after.internados)||!String(newRecord.responsible||"").trim())return {ok:false,code:"CENSUS_CONFERENCE_INVALID",reason:"Data, contagem ou responsável inválidos."};
+ if(typeof referenceDate!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(referenceDate)||!Number.isFinite(Date.parse(referenceDate+"T00:00:00Z"))||new Date(referenceDate+"T00:00:00Z").toISOString().slice(0,10)!==referenceDate||referenceDate>=dateInBrazil(now))return {ok:false,code:"CENSUS_OUTSIDE_WINDOW",reason:"Confirme somente datas encerradas à meia-noite, inclusive lançamentos atrasados."};
+ if(newRecord.referenceDate!==referenceDate||!Number.isSafeInteger(newRecord.count)||newRecord.count<0||newRecord.count>10||!Number.isSafeInteger(after.internados)||newRecord.count!==after.internados||!String(newRecord.responsible||"").trim())return {ok:false,code:"CENSUS_CONFERENCE_INVALID",reason:"Data, contagem ou responsável inválidos."};
  return {ok:true,changed:true};
 }
 module.exports={censusWindow,censusAttention,effectiveAdmissionDate,validateConferenceMutation};
