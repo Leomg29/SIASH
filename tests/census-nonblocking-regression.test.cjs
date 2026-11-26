@@ -103,3 +103,26 @@ test("parked draft survives sequential users and restores only original owner",(
  ctx.SESSION.user="night";vm.runInContext("restoreParkedCloudDraft()",ctx);assert.equal(ctx.cloudPending().state.daily[0].internados,7);
  assert.equal(localStorage.getItem("pending:parked:night"),null);
 });
+
+test("interrupted parking and restoration are retryable without data loss",()=>{
+ const vm=require("node:vm"),data=new Map();let failRemove=null;
+ const localStorage={getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,v),removeItem:k=>{if(k===failRemove)throw Error("simulated interruption");data.delete(k)}};
+ const ctx={localStorage,SESSION:{user:"night"},S:{daily:[{date,internados:7}]},SIASH_PENDING_KEY:"pending",console};
+ ctx.cloudPending=()=>JSON.parse(localStorage.getItem("pending")||"null");
+ const raw=JSON.stringify({user:"night",state:ctx.S,revision:4});
+ data.set("pending",raw);
+ vm.createContext(ctx);
+ vm.runInContext(mergeSource.slice(mergeSource.indexOf("function cloudStatesEqual("),mergeSource.indexOf("function cloudDraftIsCurrent("))+mergeSource.slice(mergeSource.indexOf("function parkCloudDraft("),mergeSource.indexOf("async function cloudLoadAfterLogin(")),ctx);
+ failRemove="pending";assert.equal(vm.runInContext("parkCloudDraft()",ctx),false);
+ assert.equal(data.get("pending"),raw);assert.equal(data.get("pending:parked:night"),raw);
+ failRemove=null;assert.equal(vm.runInContext("parkCloudDraft()",ctx),true);
+ failRemove="pending:parked:night";assert.throws(()=>vm.runInContext("restoreParkedCloudDraft()",ctx));
+ assert.equal(data.get("pending"),raw);assert.equal(data.get("pending:parked:night"),raw);
+ failRemove=null;vm.runInContext("restoreParkedCloudDraft()",ctx);
+ assert.equal(data.get("pending"),raw);assert.equal(data.has("pending:parked:night"),false);
+ data.set("pending:parked:night",JSON.stringify({user:"night",state:{daily:[]}}));
+ const divergent=data.get("pending:parked:night");
+ assert.equal(vm.runInContext("parkCloudDraft()",ctx),false);
+ vm.runInContext("restoreParkedCloudDraft()",ctx);
+ assert.equal(data.get("pending"),raw);assert.equal(data.get("pending:parked:night"),divergent);
+});
