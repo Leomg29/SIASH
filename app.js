@@ -141,14 +141,16 @@ function parkCloudDraft(){
  const pending=cloudPending();
  if(!pending||!SESSION.user||pending.user!==SESSION.user||!cloudStatesEqual(pending.state,S))return false;
  const key=SIASH_PENDING_KEY+":parked:"+encodeURIComponent(SESSION.user);
- try{if(localStorage.getItem(key))return false;const raw=JSON.stringify(pending);localStorage.setItem(key,raw);if(localStorage.getItem(key)!==raw)return false;clearCloudDraft();return !cloudPending();}catch(e){return false;}
+ try{const raw=JSON.stringify(pending),existing=localStorage.getItem(key);if(existing&&existing!==raw)return false;if(!existing)localStorage.setItem(key,raw);if(localStorage.getItem(key)!==raw||localStorage.getItem(SIASH_PENDING_KEY)!==raw)return false;localStorage.removeItem(SIASH_PENDING_KEY);return localStorage.getItem(SIASH_PENDING_KEY)===null;}catch(e){return false;}
 }
 function restoreParkedCloudDraft(){
- if(!SESSION.user||cloudPending())return;
+ if(!SESSION.user)return;
  const key=SIASH_PENDING_KEY+":parked:"+encodeURIComponent(SESSION.user);
  const raw=localStorage.getItem(key);if(!raw)return;
  const pending=JSON.parse(raw);if(pending.user!==SESSION.user)throw new Error("Autoria do rascunho inválida.");
- localStorage.setItem(SIASH_PENDING_KEY,raw);
+ const active=localStorage.getItem(SIASH_PENDING_KEY);
+ if(active&&active!==raw)return;
+ if(!active)localStorage.setItem(SIASH_PENDING_KEY,raw);
  if(localStorage.getItem(SIASH_PENDING_KEY)===raw)localStorage.removeItem(key);
 }
 async function cloudLoadAfterLogin(){
