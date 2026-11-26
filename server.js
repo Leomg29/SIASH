@@ -480,8 +480,14 @@ app.put("/api/state",auth,async(req,res)=>{
     const removalAudit=detectDailyRecordRemoval(oldDaily,newDaily);
     if(removalAudit.blocked){await client.query("ROLLBACK");return res.status(422).json({error:"CLINICAL_RECORD_REMOVAL_BLOCKED",message:removalAudit.reason,date:removalAudit.date||null});}
     if(!Array.isArray(newDaily)){await client.query("ROLLBACK");return res.status(422).json({error:"Lançamentos diários inválidos."});}
-    // Proteção transacional: nenhuma conferência nova fora da janela oficial,
-    // nem substituição ou remoção de conferências históricas existentes.
+    // Reject newly introduced duplicate dates; preserve existing legacy rows.
+    const dateCounts=rows=>{const counts=new Map();for(const row of rows){if(typeof row?.date==="string")counts.set(row.date,(counts.get(row.date)||0)+1);}return counts;};
+    const oldDateCounts=dateCounts(oldDaily);
+    for(const [date,count] of dateCounts(newDaily)){
+      if(count>1&&count>(oldDateCounts.get(date)||0)){await client.query("ROLLBACK");return res.status(422).json({error:"CENSUS_DUPLICATE_DATE",date,message:"Existe mais de um lançamento para esta data. Confira antes de salvar."});}
+    }
+    // Proteção transacional: primeira conferência após a meia-noite,
+    // sem substituição ou remoção de conferências históricas existentes.
     const {validateConferenceMutation}=require("./census-window.cjs");
     const serverNow=new Date();
     for(const before of oldDaily){
