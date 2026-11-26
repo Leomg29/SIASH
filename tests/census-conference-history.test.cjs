@@ -26,3 +26,18 @@ test("historico valido preservado sem sobrescrever conferencia",()=>{
  assert.deepEqual(daily.censusConferenceHistory,history);
  assert.equal(daily.censusConference.responsible,"Anterior");
 });
+
+test("late manual census preserves seven historical patients despite nine current occupied beds",()=>{
+ const daily={date:"2026-11-25",internados:7};
+ const fixedDate=class extends Date {constructor(...args){super(...(args.length?args:["2026-11-26T10:00:00Z"]))}};
+ const ctx={S:{daily:[daily],settings:{beds:10},beds:Array.from({length:10},(_,i)=>({status:i<9?"Ocupado":"Livre"}))},SESSION:{user:"teste"},$:()=>({value:"7"}),Date:fixedDate};
+ vm.createContext(ctx);vm.runInContext(fn,ctx);
+ const result=vm.runInContext('registerCensusConference("2026-11-25","Noturno")',ctx);
+ assert.equal(result.ok,true);
+ assert.equal(daily.internados,7);
+ assert.equal(daily.censusConference.count,7);
+ assert.equal(daily.censusConference.bedOccupancyAtRegistration,9);
+ assert.equal(daily.censusConference.countSource,"manual_reference_date");
+ assert.equal(daily.censusConference.referenceDate,"2026-11-25");
+ assert.equal(daily.censusConference.registeredAt,"2026-11-26T10:00:00.000Z");
+});
