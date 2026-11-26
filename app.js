@@ -18,8 +18,9 @@ const SIASH_CLOUD={
  retryCount:0
 };
 // Snapshot imutável da última revisão confirmada. Não usar o estado local como base.
-let cloudBaseSnapshot=null;
-function cloudSetBase(state){cloudBaseSnapshot=JSON.parse(JSON.stringify(state))}
+let cloudBaseSnapshot=null,cloudBaseRevision=null,cloudBaseUser=null;
+function cloudSetBase(state){cloudBaseSnapshot=JSON.parse(JSON.stringify(state));cloudBaseRevision=SIASH_CLOUD.revision;cloudBaseUser=SESSION.user||null;}
+function cloudRestoreDraftBase(pending){cloudBaseSnapshot=null;cloudBaseRevision=null;cloudBaseUser=null;if(pending?.user&&pending.user===SESSION.user&&Number.isSafeInteger(pending.revision)&&pending.revision>0&&pending.baseRevision===pending.revision&&pending.baseState&&typeof pending.baseState==="object"&&!Array.isArray(pending.baseState)){cloudBaseSnapshot=JSON.parse(JSON.stringify(pending.baseState));cloudBaseRevision=pending.baseRevision;cloudBaseUser=pending.user;}}
 function cloudThreeWayMerge(base,local,server){
  const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
  const conflicts=[];
@@ -74,7 +75,7 @@ function cloudThreeWayMerge(base,local,server){
 }
 const SIASH_PENDING_KEY="siash_cloud_pending_v1";
 function cloudPending(){try{return JSON.parse(localStorage.getItem(SIASH_PENDING_KEY)||"null")}catch(e){return null}}
-function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:SIASH_CLOUD.revision,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
+function preserveCloudDraft(reason){try{localStorage.setItem(SIASH_PENDING_KEY,JSON.stringify({user:SESSION.user||null,reason,revision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:SIASH_CLOUD.revision,baseRevision:cloudBaseUser===SESSION.user&&cloudBaseSnapshot?cloudBaseRevision:null,baseState:cloudBaseUser===SESSION.user?cloudBaseSnapshot:null,updatedAt:new Date().toISOString(),state:S}));localStorage.setItem(STORE,JSON.stringify(S))}catch(e){console.error("Não foi possível preservar o rascunho local",e);updateCloudBadge("ERRO · armazenamento local indisponível",true)}}
 function clearCloudDraft(){try{localStorage.removeItem(SIASH_PENDING_KEY)}catch(e){console.error(e)}}
 // PR #102: deterministic local LGPD gate; same patterns and CPF checksum as docs-governance-integrity.cjs.
 function localCpfValid(value){const d=String(value).replace(/\D/g,"");if(d.length!==11||/^(\d)\1+$/.test(d))return false;for(let t=9;t<11;t++){let sum=0;for(let i=0;i<t;i++)sum+=Number(d[i])*(t+1-i);let check=(sum*10)%11;if(check===10)check=0;if(check!==Number(d[t]))return false}return true}
@@ -124,6 +125,7 @@ async function cloudLoadAfterLogin(){
    if(pending.user&&pending.user!==SESSION.user)throw new Error("Existe um rascunho pendente de outro usuário neste navegador. Acesse com o usuário original para conciliar os dados.");
    // Recuperar o rascunho antes de consultar a rede: falha na consulta não pode impedir acesso à cópia local.
    SIASH_CLOUD.conflict=true;
+   cloudRestoreDraftBase(pending);
    S=pending.state;normalize();localStorage.setItem(STORE,JSON.stringify(S));
    let remote=null;
    try{remote=await cloudJson("/api/state");SIASH_CLOUD.revision=remote.exists?remote.revision:null}
@@ -387,7 +389,7 @@ async function showCloudConflictPanel(){
     try{
      const response=await cloudJson("/api/state",{method:"PUT",body:JSON.stringify({payload:{state:merged,security:securityState(),schema:"siash-0.14.19",savedAt:new Date().toISOString()},base_revision:remoteRevision})});
      if(SIASH_CLOUD.editGeneration!==localGeneration){preserveCloudDraft("merge-concurrent-edit");SIASH_CLOUD.conflict=true;updateCloudBadge("Nova edição durante conciliação · rascunho protegido",true);return}
-     S=merged;cloudSetBase(merged);SIASH_CLOUD.revision=response.revision;
+     S=merged;SIASH_CLOUD.revision=response.revision;cloudSetBase(merged);
      SIASH_CLOUD.conflict=false;clearCloudDraft();localStorage.setItem(STORE,JSON.stringify(S));
      normalize();renderAll();panel.hidden=true;updateCloudBadge("Conciliação salva");
     }catch(e){
