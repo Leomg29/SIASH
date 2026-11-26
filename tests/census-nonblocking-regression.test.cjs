@@ -126,3 +126,21 @@ test("interrupted parking and restoration are retryable without data loss",()=>{
  vm.runInContext("restoreParkedCloudDraft()",ctx);
  assert.equal(data.get("pending"),raw);assert.equal(data.get("pending:parked:night"),divergent);
 });
+
+test("login recovery retries only verified unchanged base, preserving real divergence",async()=>{
+ const vm=require("node:vm");
+ const start=mergeSource.indexOf("async function cloudLoadAfterLogin("),end=mergeSource.indexOf(" // Uma edição local iniciada durante o GET",start);
+ const source=mergeSource.slice(mergeSource.indexOf("function cloudStatesEqual("),mergeSource.indexOf("function cloudHeaders("))+mergeSource.slice(start,end)+"}";
+ for(const mode of ["same","revision","content","missing","offline","already-saved"]){
+  const base={daily:[{date,internados:7}]},local={daily:[{date,internados:8}]};
+  const pending={user:"night",revision:4,baseRevision:4,baseState:base,state:local};
+  let retries=0,panels=0,clears=0;
+  const ctx={SESSION:{user:"night"},SIASH_CLOUD:{enabled:true,token:"test"},cloudBaseUser:null,cloudBaseRevision:null,cloudBaseSnapshot:null,STORE:"test",localStorage:{setItem(){}},restoreParkedCloudDraft(){},cloudPending:()=>pending,normalize(){},cloudRestoreDraftBase(p){ctx.cloudBaseUser=p.user;ctx.cloudBaseRevision=p.baseRevision;ctx.cloudBaseSnapshot=mode==="missing"?null:p.baseState},cloudJson:async()=>{if(mode==="offline")throw Error("offline");return {exists:true,revision:mode==="revision"?5:4,payload:{state:mode==="content"?{daily:[]}:mode==="already-saved"?local:base}}},cloudSetBase(){},clearCloudDraft(){clears++},updateCloudBadge(){},loadSharedPending(){},scheduleCloudSave(o){assert.equal(o.retry,true);retries++},alert(){},showCloudConflictPanel(){panels++},console:{error(){}}};
+  await vm.runInNewContext(source+";cloudLoadAfterLogin()",ctx);
+  assert.equal(retries,mode==="same"?1:0,mode);
+  assert.equal(clears,mode==="already-saved"?1:0,mode);
+  assert.equal(panels,["same","already-saved"].includes(mode)?0:1,mode);
+  assert.equal(ctx.SIASH_CLOUD.conflict,!["same","already-saved"].includes(mode),mode);
+  assert.equal(pending.state.daily[0].internados,8);
+ }
+});
