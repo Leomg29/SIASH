@@ -123,7 +123,16 @@ function cloudStatesEqual(a,b){
 }
 function cloudDraftDifferenceSummary(local,remote){
  const keys=[...new Set([...Object.keys(local||{}),...Object.keys(remote||{})])].sort();
- return keys.filter(k=>!cloudStatesEqual(local?.[k],remote?.[k])).map(k=>({module:k,localCount:Array.isArray(local?.[k])?local[k].length:null,remoteCount:Array.isArray(remote?.[k])?remote[k].length:null}));
+ return keys.filter(k=>!cloudStatesEqual(local?.[k],remote?.[k])).map(k=>{
+  const l=local?.[k],r=remote?.[k],idField={beds:"n",daily:"date",picc:"id",pipa:"id"}[k];
+  const valid=a=>Array.isArray(a)&&a.every(v=>v&&["string","number"].includes(typeof v[idField])&&String(v[idField]).length>0)&&new Set(a.map(v=>String(v[idField]))).size===a.length;
+  let records=null;
+  if(idField&&valid(l)&&valid(r)){
+   const lm=new Map(l.map(v=>[String(v[idField]),v])),rm=new Map(r.map(v=>[String(v[idField]),v]));
+   records=[...new Set([...lm.keys(),...rm.keys()])].filter(id=>!cloudStatesEqual(lm.get(id),rm.get(id))).map(id=>({id,status:!lm.has(id)?"somente servidor":!rm.has(id)?"somente local":"conteúdo diferente"}));
+  }
+  return {module:k,localCount:Array.isArray(l)?l.length:null,remoteCount:Array.isArray(r)?r.length:null,records};
+ });
 }
 function cloudDraftIsCurrent(pending,remote){return !!(pending&&remote?.exists&&Number.isSafeInteger(pending.revision)&&pending.revision===remote.revision)}
 
@@ -404,7 +413,7 @@ async function showCloudConflictPanel(){
    if(!remote.exists||!remote.payload?.state||!Number.isSafeInteger(remote.revision)||remote.revision<1)throw Error("Estado ou revisão inválidos");
    remoteRevision=remote.revision;remoteState=remote.payload.state;
    if(remoteEl)remoteEl.textContent=JSON.stringify(remoteState,null,2);
-   if(!cloudBaseSnapshot){
+   if(!cloudBaseSnapshot||cloudBaseUser!==SESSION.user){
     const differences=cloudDraftDifferenceSummary(local,remoteState);
     if(pending?.user===SESSION.user&&cloudStatesEqual(pending,cloudPending())&&SIASH_CLOUD.editGeneration===localGeneration&&cloudStatesEqual(local,remoteState)&&cloudStatesEqual(S,remoteState)){
      SIASH_CLOUD.revision=remoteRevision;cloudSetBase(remoteState);
@@ -413,7 +422,7 @@ async function showCloudConflictPanel(){
      updateCloudBadge("Sincronizado");panel.hidden=true;return;
     }
     if(msg)msg.textContent="Rascunho antigo sem base original. "+differences.length+" módulo(s) com diferenças. Nenhum dado foi substituído.";
-    if(resolutions)for(const d of differences){const p=document.createElement("p");p.textContent=d.module+(d.localCount===null||d.remoteCount===null?" — conteúdo diferente":" — local: "+d.localCount+" registro(s); servidor: "+d.remoteCount+" registro(s)");resolutions.appendChild(p);}
+    if(resolutions)for(const d of differences){const p=document.createElement("p");p.textContent=d.module+(d.localCount===null||d.remoteCount===null?" — conteúdo diferente":" — local: "+d.localCount+" registro(s); servidor: "+d.remoteCount+" registro(s)");resolutions.appendChild(p);if(d.records)for(const record of d.records){const row=document.createElement("p");row.textContent="  "+record.id+" — "+record.status;resolutions.appendChild(row);}}
     return;
    }
    proposal=cloudThreeWayMerge(cloudBaseSnapshot,local,remoteState);
