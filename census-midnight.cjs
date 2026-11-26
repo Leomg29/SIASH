@@ -17,14 +17,15 @@ function midnightBrazilUtc(today){
  }
  throw new Error("Não foi possível resolver meia-noite em America/Sao_Paulo");
 }
+const validCount=value=> (typeof value==="number"||typeof value==="string"&&/^(0|[1-9]|10)$/.test(value))&&Number.isSafeInteger(Number(value))&&Number(value)>=0&&Number(value)<=10;
 function decideMidnightClosure({daily,referenceDate,admissionRecord,now=new Date()}){
  const today=dateInBrazil(now);
  if(referenceDate!==previousDate(today))return {status:"skip",reason:"Somente o último dia encerrado é elegível."};
  if(!daily)return {status:"pending",reason:"Lançamento diário ausente: conferência manual necessária."};
  const conference=daily.censusConference;
- if(conference&&conference.referenceDate===referenceDate&&conference.count!==null&&conference.count!==undefined&&conference.count!==""&&daily.internados!==null&&daily.internados!==undefined&&daily.internados!==""&&Number.isSafeInteger(Number(conference.count))&&Number.isSafeInteger(Number(daily.internados))&&Number(conference.count)>=0&&Number(conference.count)<=10&&Number(conference.count)===Number(daily.internados)&&
+ if(conference&&conference.referenceDate===referenceDate&&validCount(conference.count)&&validCount(daily.internados)&&Number(conference.count)===Number(daily.internados)&&
     typeof conference.responsible==="string"&&conference.responsible.trim()&&
-    Number.isFinite(new Date(conference.registeredAt).getTime()))
+    typeof conference.registeredAt==="string"&&conference.registeredAt.trim()!==""&&Number.isFinite(Date.parse(conference.registeredAt)))
   return {status:"manual",referenceDate,registeredAt:conference.registeredAt,responsible:conference.responsible,reason:"Conferência manual válida registrada para a data de referência."};
  if(conference)return {status:"pending",reason:"Conferência anterior não corresponde à data ou à contagem atual; revisar manualmente."};
  return {status:"pending",reason:"Fechamento exclusivamente manual: registre a conferência do censo com responsável e contagem válida."};
