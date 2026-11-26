@@ -60,3 +60,20 @@ for(const scenario of [{name:"clean handoff",pending:false,syncing:false,conflic
   assert.equal(ctx.SIASH_CLOUD.token==="",scenario.exit);assert.equal(retries,Number(scenario.retry));assert.equal(removed,Number(scenario.exit));assert.equal(timers,scenario.exit?2:0);
  });
 }
+
+test("official census receipt preserves later unrelated edits and permits next save",()=>{
+ const vm=require("node:vm");
+ const original={referenceDate:date,count:7,responsible:"Teste",registeredAt:"2026-11-26T10:00:00.000Z"};
+ const official={...original,registeredAt:"2026-11-26T10:00:02.000Z",registeredBy:"night"};
+ const sentState={daily:[{date,internados:7,censusConference:{...original}}]};
+ const S={daily:[{date,internados:7,admissoes:2,censusConference:{...original}}]};
+ const start=mergeSource.indexOf("     if(Array.isArray(r.census_conference_stamps))");
+ const end=mergeSource.indexOf("     cloudSetBase(sentState);",start);
+ assert.ok(start>=0&&end>start);
+ const ctx={sentState,S,r:{census_conference_stamps:[{date,conference:official}]},localStorage:{setItem(){}},STORE:"test"};
+ vm.runInNewContext(mergeSource.slice(mergeSource.indexOf("function cloudStatesEqual("),mergeSource.indexOf("function cloudDraftIsCurrent("))+mergeSource.slice(start,end),ctx);
+ assert.deepEqual(S.daily[0].censusConference,official);
+ assert.deepEqual(sentState.daily[0].censusConference,official);
+ assert.equal(S.daily[0].admissoes,2);
+ assert.equal(validate(S.daily[0],"2026-11-26T10:01:00Z",sentState.daily[0]).ok,true);
+});
