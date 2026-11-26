@@ -16,3 +16,6 @@ for(const count of [null,"",undefined,-1,11,1.5,"7"]){
 test("confirmed total immutable",()=>assert.equal(validate({...record(),internados:9},"2026-11-26T10:00:00Z",record()).ok,false));
 test("unchanged confirmed record",()=>assert.equal(validate(record(),"2026-11-26T10:00:00Z",record()).ok,true));
 test("overdue status permits confirmation",()=>assert.equal(censusWindow(new Date("2026-11-26T10:00:00Z")).canConfirm,true));
+
+test("conference removal rejected",()=>assert.equal(validate({date,internados:7},"2026-11-26T10:00:00Z",record()).ok,false));
+test("invalid calendar date rejected",()=>{const d="2026-10-32";assert.equal(validate({date:d,internados:7,censusConference:{referenceDate:d,count:7,responsible:"Teste"}},"2026-11-26T10:00:00Z").ok,false);});
