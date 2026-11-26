@@ -5,12 +5,12 @@ const clockParts=instant=>Object.fromEntries(new Intl.DateTimeFormat("en-US",{ti
 function censusWindow(now=new Date()){
  if(!(now instanceof Date)||!Number.isFinite(now.getTime()))throw new TypeError("Horário do servidor inválido");
  const p=clockParts(now),minute=Number(p.hour)*60+Number(p.minute),today=dateInBrazil(now);
- if(minute>=23*60+55)return {phase:"preparation",referenceDate:today,canPrepare:true,canConfirm:false,expiresAtLocal:"00:10"};
+ if(minute>=23*60+55)return {phase:"preparation",referenceDate:today,canPrepare:true,canConfirm:false};
  if(minute<=10){
   const referenceDate=previousDate(today);
-  return minute===10?{phase:"expired",referenceDate,canPrepare:false,canConfirm:false,requiresJustification:true}:{phase:"confirmation",referenceDate,canPrepare:false,canConfirm:true};
+  return minute===10?{phase:"expired",referenceDate,canPrepare:false,canConfirm:true,requiresJustification:false}:{phase:"confirmation",referenceDate,canPrepare:false,canConfirm:true};
  }
- return {phase:"expired",referenceDate:previousDate(today),canPrepare:false,canConfirm:false,requiresJustification:true};
+ return {phase:"expired",referenceDate:previousDate(today),canPrepare:false,canConfirm:true,requiresJustification:false};
 }
 function censusAttention({now=new Date(),officiallyClosed=false}={}){
  const window=censusWindow(now);
