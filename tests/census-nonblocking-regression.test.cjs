@@ -24,3 +24,28 @@ for(const missing of [null,"",undefined,false,"0"]){
  test("confirmed zero cannot become "+String(missing),()=>assert.equal(validate({...record(0),internados:missing},"2026-11-26T10:00:00Z",record(0)).ok,false));
 }
 test("confirmed explicit zero remains valid on identical replay",()=>assert.equal(validate(record(0),"2026-11-26T10:00:00Z",record(0)).ok,true));
+
+const mergeSource=require("node:fs").readFileSync(require("node:path").join(__dirname,"../app.js"),"utf8");
+const mergeVM=require("node:vm").createContext({});
+require("node:vm").runInContext(mergeSource.slice(mergeSource.indexOf("function cloudStatesEqual("),mergeSource.indexOf("function cloudDraftIsCurrent("))+mergeSource.slice(mergeSource.indexOf("function cloudThreeWayMerge("),mergeSource.indexOf("const SIASH_PENDING_KEY=")),mergeVM);
+const mergeDaily=(b,l,r)=>JSON.parse(JSON.stringify(require("node:vm").runInContext("cloudThreeWayMerge("+JSON.stringify({daily:b})+","+JSON.stringify({daily:l})+","+JSON.stringify({daily:r})+")",mergeVM)));
+test("four successive independent census sessions preserve every date",()=>{
+ const records=[1,2,3,4].map(n=>({date:"2026-11-2"+n,internados:n}));
+ let remote=[];
+ for(const row of records){const result=mergeDaily([], [row],remote);assert.equal(result.conflicts.length,0);remote=result.state.daily;}
+ assert.deepEqual(remote,records);
+});
+test("same date divergent count cannot be silently combined",()=>{
+ const base=[{date:"2026-11-25",internados:7}];
+ const result=mergeDaily(base,[{...base[0],internados:8}],[{...base[0],internados:9}]);
+ assert.equal(result.conflicts.length,1);assert.equal(result.conflicts[0].local.internados,8);assert.equal(result.conflicts[0].server.internados,9);
+});
+test("object property ordering is not a clinical conflict",()=>{
+ const result=mergeDaily([], [{date:"2026-11-25",internados:7}],[{internados:7,date:"2026-11-25"}]);
+ assert.equal(result.conflicts.length,0);assert.equal(result.state.daily.length,1);
+});
+test("duplicate dates block automatic reconciliation",()=>{
+ const row={date:"2026-11-25",internados:7};
+ const result=mergeDaily([], [row,row],[{...row,internados:8}]);
+ assert.equal(result.conflicts.length,1);
+});
