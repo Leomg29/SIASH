@@ -13,17 +13,16 @@ function run(history){
  vm.createContext(ctx);vm.runInContext(fn,ctx);
  return {daily,result:vm.runInContext('registerCensusConference("2026-11-18","Noturno")',ctx)};
 }
-test("historico malformado nao impede nova conferencia",()=>{
+test("historico malformado preservado e reconferencia bloqueada",()=>{
  const {daily,result}=run({invalid:true});
- assert.equal(result.ok,true);
- assert.equal(daily.censusConferenceHistory.length,1);
- assert.equal(daily.censusConferenceHistory[0].responsible,"Anterior");
- assert.equal(daily.censusConference.responsible,"Noturno");
+ assert.equal(result.ok,false);
+ assert.deepEqual(daily.censusConferenceHistory,{invalid:true});
+ assert.equal(daily.censusConference.responsible,"Anterior");
 });
-test("historico valido preserva conferencias anteriores",()=>{
- const {daily,result}=run([{count:2,responsible:"Mais antigo"}]);
- assert.equal(result.ok,true);
- assert.equal(daily.censusConferenceHistory.length,2);
- assert.equal(daily.censusConferenceHistory[0].responsible,"Mais antigo");
- assert.equal(daily.censusConferenceHistory[1].responsible,"Anterior");
+test("historico valido preservado sem sobrescrever conferencia",()=>{
+ const history=[{count:2,responsible:"Mais antigo"}];
+ const {daily,result}=run(history);
+ assert.equal(result.ok,false);
+ assert.deepEqual(daily.censusConferenceHistory,history);
+ assert.equal(daily.censusConference.responsible,"Anterior");
 });
