@@ -19,3 +19,8 @@ test("overdue status permits confirmation",()=>assert.equal(censusWindow(new Dat
 
 test("conference removal rejected",()=>assert.equal(validate({date,internados:7},"2026-11-26T10:00:00Z",record()).ok,false));
 test("invalid calendar date rejected",()=>{const d="2026-10-32";assert.equal(validate({date:d,internados:7,censusConference:{referenceDate:d,count:7,responsible:"Teste"}},"2026-11-26T10:00:00Z").ok,false);});
+
+for(const missing of [null,"",undefined,false,"0"]){
+ test("confirmed zero cannot become "+String(missing),()=>assert.equal(validate({...record(0),internados:missing},"2026-11-26T10:00:00Z",record(0)).ok,false));
+}
+test("confirmed explicit zero remains valid on identical replay",()=>assert.equal(validate(record(0),"2026-11-26T10:00:00Z",record(0)).ok,true));
