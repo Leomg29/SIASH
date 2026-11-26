@@ -77,7 +77,7 @@ test('PostgreSQL real isolado: corrida, falha de rede, rascunho e conciliacao ma
    const end=appSource.indexOf('const SIASH_PENDING_KEY=',begin);
    assert.ok(begin>=0&&end>begin,'algoritmo frontend deve existir');
    const context=vm.createContext({});
-   vm.runInContext(appSource.slice(begin,end),context);
+   vm.runInContext(appSource.slice(appSource.indexOf("function cloudStatesEqual("),appSource.indexOf("function cloudDraftIsCurrent("))+appSource.slice(begin,end),context);
    const merge=(base,local,remote)=>vm.runInContext('cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(local)+','+JSON.stringify(remote)+')',context);
    const initial={beds:[bed('BASE-1','PICC-1'),{n:4,patient:'BASE-4'}],picc:[{id:'picc-base-1',bed:1,status:'Ativo',insertDate:'2026-11-19',vein:'Basílica'},{id:'picc-base-4',bed:4,status:'Ativo',insertDate:'2026-11-19',vein:'Cefálica'}]};
    await seed(initial);
@@ -103,7 +103,7 @@ test('PostgreSQL real isolado: corrida, falha de rede, rascunho e conciliacao ma
    const end=source.indexOf('const SIASH_PENDING_KEY=',begin);
    assert.ok(begin>=0&&end>begin);
    const context=vm.createContext({});
-   vm.runInContext(source.slice(begin,end),context);
+   vm.runInContext(source.slice(source.indexOf("function cloudStatesEqual("),source.indexOf("function cloudDraftIsCurrent("))+source.slice(begin,end),context);
    const merge=(base,local,remote)=>vm.runInContext('cloudThreeWayMerge('+JSON.stringify(base)+','+JSON.stringify(local)+','+JSON.stringify(remote)+')',context);
    const base={beds:[bed('BASE','PICC-BASE')],picc:[],pipa:[]};
    const entry=(id,city)=>({id,date:'2026-11-20',month:'2026-11',city,qty:1,postDischargeConfirmed:true,updated:'2026-11-20'});
