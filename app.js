@@ -121,6 +121,10 @@ function cloudStatesEqual(a,b){
  if(Array.isArray(a))return a.length===b.length&&a.every((v,i)=>cloudStatesEqual(v,b[i]));
  const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(k=>Object.prototype.hasOwnProperty.call(b,k)&&cloudStatesEqual(a[k],b[k]));
 }
+function cloudDraftDifferenceSummary(local,remote){
+ const keys=[...new Set([...Object.keys(local||{}),...Object.keys(remote||{})])].sort();
+ return keys.filter(k=>!cloudStatesEqual(local?.[k],remote?.[k])).map(k=>({module:k,localCount:Array.isArray(local?.[k])?local[k].length:null,remoteCount:Array.isArray(remote?.[k])?remote[k].length:null}));
+}
 function cloudDraftIsCurrent(pending,remote){return !!(pending&&remote?.exists&&Number.isSafeInteger(pending.revision)&&pending.revision===remote.revision)}
 
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
@@ -168,7 +172,7 @@ async function cloudLoadAfterLogin(){
    catch(e){console.error("Consulta da revisão indisponível",e);SIASH_CLOUD.revision=null}
    // A lost response or legacy draft can already match the confirmed server.
    // Never infer equivalence from revision alone or discard another user's draft.
-   if(pending.user===SESSION.user&&remote?.exists&&Number.isSafeInteger(remote.revision)&&remote.revision>0&&remote.payload?.state&&cloudStatesEqual(pending.state,remote.payload.state)&&cloudStatesEqual(S,remote.payload.state)){
+   if(pending.user===SESSION.user&&remote?.exists&&Number.isSafeInteger(remote.revision)&&remote.revision>0&&remote.payload?.state&&cloudStatesEqual(pending,cloudPending())&&cloudStatesEqual(pending.state,remote.payload.state)&&cloudStatesEqual(S,remote.payload.state)){
      SIASH_CLOUD.revision=remote.revision;cloudSetBase(remote.payload.state);
      if(remote.payload.security)setSecurityState(remote.payload.security);
      SIASH_CLOUD.conflict=false;clearCloudDraft();SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
@@ -181,7 +185,7 @@ async function cloudLoadAfterLogin(){
      scheduleCloudSave({retry:true});return true;
    }
    updateCloudBadge(!remote?"OFFLINE · rascunho local protegido":cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
-   alert("Existe um rascunho não sincronizado. O salvamento permanece bloqueado. Abra a Conciliação de Rascunhos para inspecionar as versões antes de decidir.");
+   // A conciliação informa a pendência sem interromper o login com alerta modal duplicado.
    void showCloudConflictPanel();
    return true;
  }
@@ -401,7 +405,15 @@ async function showCloudConflictPanel(){
    remoteRevision=remote.revision;remoteState=remote.payload.state;
    if(remoteEl)remoteEl.textContent=JSON.stringify(remoteState,null,2);
    if(!cloudBaseSnapshot){
-    if(msg)msg.textContent="Base original indisponível. Conciliação automática bloqueada; rascunho protegido.";
+    const differences=cloudDraftDifferenceSummary(local,remoteState);
+    if(pending?.user===SESSION.user&&cloudStatesEqual(pending,cloudPending())&&SIASH_CLOUD.editGeneration===localGeneration&&cloudStatesEqual(local,remoteState)&&cloudStatesEqual(S,remoteState)){
+     SIASH_CLOUD.revision=remoteRevision;cloudSetBase(remoteState);
+     if(remote.payload.security)setSecurityState(remote.payload.security);
+     clearCloudDraft();SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();
+     updateCloudBadge("Sincronizado");panel.hidden=true;return;
+    }
+    if(msg)msg.textContent="Rascunho antigo sem base original. "+differences.length+" módulo(s) com diferenças. Nenhum dado foi substituído.";
+    if(resolutions)for(const d of differences){const p=document.createElement("p");p.textContent=d.module+(d.localCount===null||d.remoteCount===null?" — conteúdo diferente":" — local: "+d.localCount+" registro(s); servidor: "+d.remoteCount+" registro(s)");resolutions.appendChild(p);}
     return;
    }
    proposal=cloudThreeWayMerge(cloudBaseSnapshot,local,remoteState);
