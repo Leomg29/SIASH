@@ -22,7 +22,7 @@ let cloudBaseSnapshot=null,cloudBaseRevision=null,cloudBaseUser=null;
 function cloudSetBase(state){cloudBaseSnapshot=JSON.parse(JSON.stringify(state));cloudBaseRevision=SIASH_CLOUD.revision;cloudBaseUser=SESSION.user||null;}
 function cloudRestoreDraftBase(pending){cloudBaseSnapshot=null;cloudBaseRevision=null;cloudBaseUser=null;if(pending?.user&&pending.user===SESSION.user&&Number.isSafeInteger(pending.revision)&&pending.revision>0&&pending.baseRevision===pending.revision&&pending.baseState&&typeof pending.baseState==="object"&&!Array.isArray(pending.baseState)){cloudBaseSnapshot=JSON.parse(JSON.stringify(pending.baseState));cloudBaseRevision=pending.baseRevision;cloudBaseUser=pending.user;}}
 function cloudThreeWayMerge(base,local,server){
- const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+ const eq=cloudStatesEqual;
  const conflicts=[];
  function merge(b,l,r,path){
   if(eq(l,b))return structuredCloneSafe(r);
@@ -34,6 +34,18 @@ function cloudThreeWayMerge(base,local,server){
     const bm=new Map(b.map(x=>[Number(x.n),x])),lm=new Map(l.map(x=>[Number(x.n),x])),rm=new Map(r.map(x=>[Number(x.n),x]));
     const keys=[...new Set([...bm.keys(),...lm.keys(),...rm.keys()])].sort((a,z)=>a-z);
     return keys.map(k=>merge(bm.get(k),lm.get(k),rm.get(k),path+"["+k+"]")).filter(x=>x!==undefined);
+   }
+   if(path==="daily"){
+    const valid=a=>a.every(x=>x&&typeof x.date==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(x.date))&&new Set(a.map(x=>x.date)).size===a.length;
+    if(!valid(b)||!valid(l)||!valid(r)){conflicts.push({path,base:b,local:l,server:r,reason:"invalid-or-duplicate-date"});return structuredCloneSafe(r);}
+    const bm=new Map(b.map(x=>[x.date,x])),lm=new Map(l.map(x=>[x.date,x])),rm=new Map(r.map(x=>[x.date,x]));
+    return [...new Set([...bm.keys(),...lm.keys(),...rm.keys()])].sort().map(k=>{
+     const bv=bm.get(k),lv=lm.get(k),rv=rm.get(k);
+     if(eq(lv,bv))return structuredCloneSafe(rv);
+     if(eq(rv,bv)||eq(lv,rv))return structuredCloneSafe(lv);
+     // Same clinical day changed by both sessions: never synthesize a census.
+     conflicts.push({path:"daily["+k+"]",base:bv,local:lv,server:rv});return structuredCloneSafe(rv);
+    }).filter(x=>x!==undefined);
    }
    if(path==="picc"||path==="pipa"){
     const valid=a=>a.every(x=>x&&typeof x.id==="string"&&x.id.length>0)&&new Set(a.map(x=>x.id)).size===a.length;
