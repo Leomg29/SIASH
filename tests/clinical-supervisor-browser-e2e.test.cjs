@@ -37,6 +37,8 @@ test("Chromium: owner grants supervisor, nurse requests, supervisor decides with
    await page.evaluate(({referenceDate,revision})=>{SIASH_CLOUD.revision=revision;document.querySelector("#view-lancamento")?.classList.remove("hidden");lateCensusSetStatus({attention:"overdue",referenceDate});},{referenceDate,revision});return page;
   }
   const nursePage=await censusPage(nurse,"operational",nurseToken);
+  assert.equal(await nursePage.locator("#census-late-open").isVisible(),false);
+  await nursePage.evaluate(()=>document.querySelector("#census-late-section").classList.remove("hidden"));
   await nursePage.locator("#census-late-open").click();
   await nursePage.locator("#census-late-date").fill(referenceDate);
   await nursePage.locator("#census-late-count").fill("4");
@@ -47,7 +49,8 @@ test("Chromium: owner grants supervisor, nurse requests, supervisor decides with
   const supervisorPage=await censusPage(supervisor,"clinical_supervisor",supervisorToken);
   assert.equal(await supervisorPage.locator('[data-view="administracao"]').isVisible(),false);
   assert.equal(await supervisorPage.locator('[data-view="configuracoes"]').isVisible(),false);
-  await supervisorPage.evaluate(()=>lateCensusLoadRequests());
+  assert.equal(await supervisorPage.locator("#census-late-section").isVisible(),false);
+  await supervisorPage.evaluate(()=>{document.querySelector("#census-late-section").classList.remove("hidden");return lateCensusLoadRequests()});
   await supervisorPage.locator("#census-late-requests button").filter({hasText:"Analisar solicitação"}).first().click();
   await supervisorPage.locator("#census-late-review-reason").fill("Documentação conferida de maneira independente");
   await supervisorPage.locator("#census-late-approve").click();
