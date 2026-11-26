@@ -262,6 +262,17 @@ function scheduleCloudSave({retry=false}={}){
        }
        localStorage.setItem(STORE,JSON.stringify(S));
      }
+     if(Array.isArray(r.census_conference_stamps)){
+       for(const stamp of r.census_conference_stamps){
+         const sent=sentState.daily?.find(d=>d.date===stamp.date);
+         const current=S.daily?.find(d=>d.date===stamp.date);
+         if(!sent?.censusConference||!stamp.conference)continue;
+         const original=sent.censusConference;
+         sent.censusConference=stamp.conference;
+         if(current&&cloudStatesEqual(current.censusConference,original))current.censusConference=stamp.conference;
+       }
+       localStorage.setItem(STORE,JSON.stringify(S));
+     }
      cloudSetBase(sentState);
      // O servidor é a fonte de verdade para autor e horário do cancelamento.
      // Se houve novas edições durante o PUT, não sobrescrever o rascunho atual.
