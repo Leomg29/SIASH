@@ -659,7 +659,9 @@ function auditDailyBalance(records,month){
 function monthStats(m){
  const rows=S.daily.filter(r=>monthOf(r.date)===m).sort((a,b)=>a.date.localeCompare(b.date));
  const sum=k=>rows.reduce((a,b)=>a+(+b[k]||0),0);
- const pd=sum("internados"),days=rows.length,ld=(S.settings.beds||10)*days,outs=sum("altas")+sum("transferencias")+sum("obitos");
+ const dateCounts=new Map();for(const row of rows)dateCounts.set(row.date,(dateCounts.get(row.date)||0)+1);
+ const censusRows=rows.filter(row=>dateCounts.get(row.date)===1&&/^\d{4}-\d{2}-\d{2}$/.test(row.date)&&Number.isFinite(Date.parse(row.date+"T00:00:00Z"))&&new Date(row.date+"T00:00:00Z").toISOString().slice(0,10)===row.date&&(typeof row.internados==="number"||typeof row.internados==="string"&&/^(0|[1-9]|10)$/.test(row.internados))&&Number.isSafeInteger(Number(row.internados))&&Number(row.internados)>=0&&Number(row.internados)<=10);
+ const pd=censusRows.reduce((total,row)=>total+Number(row.internados),0),days=censusRows.length,ld=(S.settings.beds||10)*days,outs=sum("altas")+sum("transferencias")+sum("obitos");
  const latest=rows.length?rows[rows.length-1]:null;
  return{rows,pd,days,ld,outs,occ:ld?pd/ld*100:0,los:outs?pd/outs:0,adm:sum("admissoes"),altas:sum("altas"),transf:sum("transferencias"),deaths:sum("obitos"),pipa:pipaMonthTotal(m),canguru:sum("canguru")+sum("altaCanguru"),altaPediatria:sum("altaPediatria"),altaCanguru:sum("altaCanguru"),picc:S.picc.filter(x=>monthOf(piccInsertDate(x))===m).length,piccDays:piccDaysInMonth(m),piccActive:S.picc.filter(x=>(!x.status||x.status==="Ativo")).length,piccRemoved:S.picc.filter(x=>x.status==="Retirado"&&x.removalDate&&monthOf(x.removalDate)===m).length,pezinho:sum("pezinho"),vmDays:sum("vm"),vmCurrent:latest?(+latest.vm||0):0,intub:sum("intub"),extubProg:sum("extubProg"),extub:sum("extub"),lpp:sum("lpp"),hypothermia:thermalMonthCount(m,"Hipotermia"),hyperthermia:thermalMonthCount(m,"Hipertermia")}
 }
