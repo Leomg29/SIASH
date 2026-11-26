@@ -33,7 +33,7 @@ function effectiveAdmissionDate({effectiveAt,recordedAt}){
 function validateConferenceMutation({before,after,referenceDate,now=new Date()}){
  const oldRecord=before?.censusConference,newRecord=after?.censusConference;
  if(JSON.stringify(oldRecord??null)===JSON.stringify(newRecord??null)){
-  if(oldRecord&&Number(before.internados)!==Number(after.internados))return {ok:false,code:"CENSUS_CONFERENCE_IMMUTABLE",reason:"Total confirmado protegido; utilize a retificação."};
+  if(oldRecord&&!Object.is(before.internados,after.internados))return {ok:false,code:"CENSUS_CONFERENCE_IMMUTABLE",reason:"Total confirmado protegido; utilize a retificação."};
   return {ok:true,changed:false};
  }
  if(oldRecord)return {ok:false,code:"CENSUS_CONFERENCE_IMMUTABLE",reason:"Conferência anterior não pode ser substituída nem removida."};
