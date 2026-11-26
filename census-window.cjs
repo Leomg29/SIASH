@@ -32,7 +32,10 @@ function effectiveAdmissionDate({effectiveAt,recordedAt}){
 }
 function validateConferenceMutation({before,after,referenceDate,now=new Date()}){
  const oldRecord=before?.censusConference,newRecord=after?.censusConference;
- if(JSON.stringify(oldRecord??null)===JSON.stringify(newRecord??null))return {ok:true,changed:false};
+ if(JSON.stringify(oldRecord??null)===JSON.stringify(newRecord??null)){
+  if(oldRecord&&Number(before.internados)!==Number(after.internados))return {ok:false,code:"CENSUS_CONFERENCE_IMMUTABLE",reason:"Total confirmado protegido; utilize a retificação."};
+  return {ok:true,changed:false};
+ }
  if(oldRecord)return {ok:false,code:"CENSUS_CONFERENCE_IMMUTABLE",reason:"Conferência anterior não pode ser substituída nem removida."};
  if(!newRecord||typeof newRecord!=="object")return {ok:false,code:"CENSUS_CONFERENCE_INVALID"};
  if(typeof referenceDate!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(referenceDate)||!Number.isFinite(Date.parse(referenceDate+"T00:00:00Z"))||new Date(referenceDate+"T00:00:00Z").toISOString().slice(0,10)!==referenceDate||referenceDate>=dateInBrazil(now))return {ok:false,code:"CENSUS_OUTSIDE_WINDOW",reason:"Confirme somente datas encerradas à meia-noite, inclusive lançamentos atrasados."};
