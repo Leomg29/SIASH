@@ -54,7 +54,7 @@ for(const scenario of [{name:"clean handoff",pending:false,syncing:false,conflic
  test("shift logout: "+scenario.name,()=>{
   const vm=require("node:vm");let handler,retries=0,removed=0,timers=0;
   const element={addEventListener:(event,fn)=>{handler=fn},classList:{add(){},remove(){}},reset(){}};
-  const ctx={$:()=>element,SIASH_CLOUD:{token:"test",syncing:scenario.syncing,conflict:scenario.conflict},SESSION:{user:"night",authenticated:true},cloudPending:()=>scenario.pending,scheduleCloudSave:()=>{retries++},alert:()=>{},clearTimeout:()=>{timers++},cloudSaveTimer:1,cloudRetryTimer:2,sessionStorage:{removeItem(){removed++}},initSecurityUI(){}};
+  const ctx={$:()=>element,SIASH_CLOUD:{token:"test",syncing:scenario.syncing,conflict:scenario.conflict},SESSION:{user:"night",authenticated:true},cloudPending:()=>scenario.pending,confirm:()=>false,parkCloudDraft:()=>false,scheduleCloudSave:()=>{retries++},alert:()=>{},clearTimeout:()=>{timers++},cloudSaveTimer:1,cloudRetryTimer:2,sessionStorage:{removeItem(){removed++}},initSecurityUI(){}};
   const line=mergeSource.split("\n").find(x=>x.startsWith('$("logout-btn").addEventListener'));
   assert.ok(line);vm.runInNewContext(line,ctx);handler();
   assert.equal(ctx.SIASH_CLOUD.token==="",scenario.exit);assert.equal(retries,Number(scenario.retry));assert.equal(removed,Number(scenario.exit));assert.equal(timers,scenario.exit?2:0);
@@ -86,4 +86,20 @@ test("closure status rejects false zero and absent audit timestamp",()=>{
  for(const invalid of [null,undefined,0,false,""])assert.equal(check(0,invalid),"pending");
  assert.equal(check(0,now.toISOString()),"manual");
  assert.equal(check("7",now.toISOString()),"manual");
+});
+
+test("parked draft survives sequential users and restores only original owner",()=>{
+ const vm=require("node:vm"),data=new Map();
+ const localStorage={getItem:k=>data.get(k)??null,setItem:(k,v)=>data.set(k,v),removeItem:k=>data.delete(k)};
+ const ctx={localStorage,SESSION:{user:"night"},S:{daily:[{date,internados:7}]},SIASH_PENDING_KEY:"pending",console};
+ ctx.cloudPending=()=>JSON.parse(localStorage.getItem("pending")||"null");
+ ctx.clearCloudDraft=()=>localStorage.removeItem("pending");
+ localStorage.setItem("pending",JSON.stringify({user:"night",state:ctx.S,revision:4}));
+ vm.createContext(ctx);
+ vm.runInContext(mergeSource.slice(mergeSource.indexOf("function cloudStatesEqual("),mergeSource.indexOf("function cloudDraftIsCurrent("))+mergeSource.slice(mergeSource.indexOf("function parkCloudDraft("),mergeSource.indexOf("async function cloudLoadAfterLogin(")),ctx);
+ assert.equal(vm.runInContext("parkCloudDraft()",ctx),true);
+ assert.equal(ctx.cloudPending(),null);
+ ctx.SESSION.user="day";vm.runInContext("restoreParkedCloudDraft()",ctx);assert.equal(ctx.cloudPending(),null);
+ ctx.SESSION.user="night";vm.runInContext("restoreParkedCloudDraft()",ctx);assert.equal(ctx.cloudPending().state.daily[0].internados,7);
+ assert.equal(localStorage.getItem("pending:parked:night"),null);
 });
