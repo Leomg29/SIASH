@@ -2,7 +2,7 @@ const test=require("node:test");
 const assert=require("node:assert/strict");
 const {censusWindow,censusAttention,effectiveAdmissionDate,validateConferenceMutation}=require("../census-window.cjs");
 const at=(day,time)=>new Date(day+"T"+time+"-03:00");
-test("23h54 bloqueia; 23h55 permite apenas preparar; 23h59 não fecha",()=>{
+test("23h54 permite censo anterior; 23h55 permite apenas preparar; 23h59 não fecha",()=>{
  assert.equal(censusWindow(at("2026-11-22","23:54:59")).phase,"expired");
  for(const time of ["23:55:00","23:59:59"]){
   const w=censusWindow(at("2026-11-22",time));
@@ -19,10 +19,10 @@ test("00h00 a 00h09:59 permite confirmação humana do dia anterior",()=>{
  assert.equal(censusAttention({now:at("2026-11-23","00:04:59")}).attention,"open");
  assert.equal(censusAttention({now:at("2026-11-23","00:05:00")}).attention,"warning");
 });
-test("00h10 encerra janela, sem certificar contagem automaticamente",()=>{
+test("00h10 sinaliza atraso, sem certificar contagem automaticamente",()=>{
  const w=censusAttention({now:at("2026-11-23","00:10:00")});
- assert.equal(w.phase,"expired");assert.equal(w.canConfirm,false);
- assert.equal(w.requiresJustification,true);assert.equal(w.attention,"overdue");
+ assert.equal(w.phase,"expired");assert.equal(w.canConfirm,true);
+ assert.equal(w.requiresJustification,false);assert.equal(w.attention,"overdue");
  assert.equal(censusAttention({now:at("2026-11-23","00:10:00"),officiallyClosed:true}).attention,"closed");
 });
 test("admissão 00h20 pertence ao novo dia, independente do registro",()=>{
@@ -37,7 +37,7 @@ test("não aceitar timestamp ambíguo ou admissão futura",()=>{
 test("pendência continua visível após 00h10, sem fechamento automático",()=>{
  for(const time of ["00:10:01","00:11:00","08:42:00","23:54:59"]){
   const w=censusAttention({now:at("2026-11-23",time)});
-  assert.equal(w.attention,"overdue");assert.equal(w.canConfirm,false);
+  assert.equal(w.attention,"overdue");assert.equal(w.canConfirm,true);
   assert.equal(w.referenceDate,"2026-11-22");
  }
 });
@@ -53,12 +53,12 @@ test("API de janela apenas consulta o estado e usa relógio do servidor",()=>{
  assert.doesNotMatch(route,/INSERT INTO|UPDATE siash_|DELETE FROM|pool\.query\("INSERT/i);
 });
 
-test("servidor bloqueia conferência antes e depois da janela",()=>{
+test("servidor bloqueia antes da meia-noite e aceita atraso",()=>{
  const after={internados:4,censusConference:{referenceDate:"2026-11-22",count:4,responsible:"Enfermeiro"}};
  for(const time of ["23:59:59","00:10:00","08:00:00"]){
   const day=time.startsWith("23")?"2026-11-22":"2026-11-23";
   const result=validateConferenceMutation({before:{internados:4},after,referenceDate:"2026-11-22",now:at(day,time)});
-  assert.equal(result.ok,false);assert.equal(result.code,"CENSUS_OUTSIDE_WINDOW");
+  assert.equal(result.ok,time!=="23:59:59");if(!result.ok)assert.equal(result.code,"CENSUS_OUTSIDE_WINDOW");
  }
  assert.equal(validateConferenceMutation({before:{internados:4},after,referenceDate:"2026-11-22",now:at("2026-11-23","00:05:00")}).ok,true);
 });
