@@ -788,9 +788,9 @@ function lateCensusSetStatus(data){
  if(!panel)return;
  const overdue=data?.attention==="overdue";
  // Atraso simples não exige regularização supervisionada; mantenha acesso a solicitações históricas.
- panel.classList.toggle("hidden",false);
+ panel.classList.add("hidden");
  if(overdue){LATE_CENSUS_REFERENCE=data.referenceDate;const input=$("census-late-date");if(input&&!input.value)input.value=data.referenceDate;}
- if(SIASH_CLOUD.token)void lateCensusLoadRequests();
+ // Historical requests remain stored; no automatic loading in daily workflow.
 }
 function lateCensusMessage(id,message){const el=$(id);if(el)el.textContent=message;}
 function lateCensusConflict(id){
