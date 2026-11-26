@@ -715,9 +715,10 @@ function lateCensusSetStatus(data){
  const panel=$("census-late-section");
  if(!panel)return;
  const overdue=data?.attention==="overdue";
- panel.classList.toggle("hidden",!overdue);
+ // Atraso simples não exige regularização supervisionada; mantenha acesso a solicitações históricas.
+ panel.classList.toggle("hidden",!overdue||data?.canConfirm===true);
  if(overdue){LATE_CENSUS_REFERENCE=data.referenceDate;const input=$("census-late-date");if(input&&!input.value)input.value=data.referenceDate;}
- if(overdue&&SIASH_CLOUD.token)void lateCensusLoadRequests();
+ if(overdue&&!data?.canConfirm&&SIASH_CLOUD.token)void lateCensusLoadRequests();
 }
 function lateCensusMessage(id,message){const el=$(id);if(el)el.textContent=message;}
 function lateCensusConflict(id){
@@ -1592,7 +1593,7 @@ $("census-close").addEventListener("click",()=>{
  if(!result.ok)return alert(result.reason);
  save();if(SIASH_CLOUD.enabled&&SIASH_CLOUD.token){censusConferencePending={date,generation:SIASH_CLOUD.editGeneration};censusConferenceFeedback("Salvando conferência… aguardando confirmação do servidor.");}else{censusConferenceFeedback("Conferência salva somente neste navegador. Sem confirmação do servidor.",true);}showToast("Conferência registrada localmente; aguardando sincronização",2200);
 });
-$("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):0);$("d-obs").value="";$("d-altas-todas-canguru").checked=false})
+$("daily-clear").addEventListener("click",()=>{Object.entries(DAILY_FIELD_MAP).forEach(([k,id])=>$(id).value=k==="pipa"?pipaCountOn($("d-date").value):k==="picc"?piccInsertedOn($("d-date").value):k==="hypothermia"?thermalCount($("d-date").value,"Hipotermia"):k==="hyperthermia"?thermalCount($("d-date").value,"Hipertermia"):k==="internados"?"":0);$("d-obs").value="";$("d-altas-todas-canguru").checked=false})
 $("d-altas").addEventListener("input",syncAllDischargesToCanguru);
 $("d-altas-todas-canguru").addEventListener("change",syncAllDischargesToCanguru);
 $("d-alta-canguru").addEventListener("input",()=>{$("d-altas-todas-canguru").checked=false});
