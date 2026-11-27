@@ -32,7 +32,12 @@ test("Chromium: enfermeiro solicita, preserva formulário em 409, supervisor ind
    return page;
   }
   const nursePage=await open(nurse,"operational",nurseToken);
-  await assert.equal(await nursePage.locator("#census-late-open").isVisible(),true);
+  assert.equal(await nursePage.locator("#census-late-open").isVisible(),false);
+  assert.equal(await nursePage.locator("#census-close").isVisible(),true);
+  assert.equal(await nursePage.locator("#census-close").isEnabled(),true);
+  assert.equal(await nursePage.locator("#d-internados").isEnabled(),true);
+  // Exercise retained historical controls in the isolated fixture only; production keeps them hidden.
+  await nursePage.evaluate(()=>document.querySelector("#census-late-section").classList.remove("hidden"));
   await nursePage.locator("#census-late-open").click();
   await nursePage.locator("#census-late-date").fill(referenceDate);
   await nursePage.locator("#census-late-count").fill("4");
@@ -52,7 +57,8 @@ test("Chromium: enfermeiro solicita, preserva formulário em 409, supervisor ind
   await nursePage.waitForFunction(()=>document.querySelector("#census-late-requests")?.textContent?.includes("Autoaprovação proibida"),null,{timeout:10000});
   assert.equal(await nursePage.locator("#census-late-requests button").filter({hasText:"Analisar solicitação"}).count(),0);
   const supervisorPage=await open(supervisor,"owner",superToken);
-  await supervisorPage.evaluate(()=>lateCensusLoadRequests());
+  assert.equal(await supervisorPage.locator("#census-late-section").isVisible(),false);
+  await supervisorPage.evaluate(()=>{document.querySelector("#census-late-section").classList.remove("hidden");return lateCensusLoadRequests()});
   await supervisorPage.locator("#census-late-requests button").filter({hasText:"Analisar solicitação"}).first().click();
   await supervisorPage.locator("#census-late-review-reason").fill("Evidências verificadas por supervisor independente");
   await supervisorPage.locator("#census-late-approve").click();

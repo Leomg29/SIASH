@@ -121,6 +121,19 @@ function cloudStatesEqual(a,b){
  if(Array.isArray(a))return a.length===b.length&&a.every((v,i)=>cloudStatesEqual(v,b[i]));
  const keys=Object.keys(a);return keys.length===Object.keys(b).length&&keys.every(k=>Object.prototype.hasOwnProperty.call(b,k)&&cloudStatesEqual(a[k],b[k]));
 }
+function cloudDraftDifferenceSummary(local,remote){
+ const keys=[...new Set([...Object.keys(local||{}),...Object.keys(remote||{})])].sort();
+ return keys.filter(k=>!cloudStatesEqual(local?.[k],remote?.[k])).map(k=>{
+  const l=local?.[k],r=remote?.[k],idField={beds:"n",daily:"date",picc:"id",pipa:"id"}[k];
+  const valid=a=>Array.isArray(a)&&a.every(v=>v&&["string","number"].includes(typeof v[idField])&&String(v[idField]).length>0)&&new Set(a.map(v=>String(v[idField]))).size===a.length;
+  let records=null;
+  if(idField&&valid(l)&&valid(r)){
+   const lm=new Map(l.map(v=>[String(v[idField]),v])),rm=new Map(r.map(v=>[String(v[idField]),v]));
+   records=[...new Set([...lm.keys(),...rm.keys()])].filter(id=>!cloudStatesEqual(lm.get(id),rm.get(id))).map(id=>({id,status:!lm.has(id)?"somente servidor":!rm.has(id)?"somente local":"conteúdo diferente"}));
+  }
+  return {module:k,localCount:Array.isArray(l)?l.length:null,remoteCount:Array.isArray(r)?r.length:null,records};
+ });
+}
 function cloudDraftIsCurrent(pending,remote){return !!(pending&&remote?.exists&&Number.isSafeInteger(pending.revision)&&pending.revision===remote.revision)}
 
 function cloudHeaders(extra={}){return {...extra,...(SIASH_CLOUD.token?{Authorization:"Bearer "+SIASH_CLOUD.token}:{})}}
@@ -162,13 +175,13 @@ async function cloudLoadAfterLogin(){
    // Recuperar o rascunho antes de consultar a rede: falha na consulta não pode impedir acesso à cópia local.
    SIASH_CLOUD.conflict=true;
    cloudRestoreDraftBase(pending);
-   S=pending.state;normalize();localStorage.setItem(STORE,JSON.stringify(S));
+   S=JSON.parse(JSON.stringify(pending.state));normalize();localStorage.setItem(STORE,JSON.stringify(S));
    let remote=null;
    try{remote=await cloudJson("/api/state");SIASH_CLOUD.revision=remote.exists?remote.revision:null}
    catch(e){console.error("Consulta da revisão indisponível",e);SIASH_CLOUD.revision=null}
    // A lost response or legacy draft can already match the confirmed server.
    // Never infer equivalence from revision alone or discard another user's draft.
-   if(pending.user===SESSION.user&&remote?.exists&&Number.isSafeInteger(remote.revision)&&remote.revision>0&&remote.payload?.state&&cloudStatesEqual(pending.state,remote.payload.state)&&cloudStatesEqual(S,remote.payload.state)){
+   if(pending.user===SESSION.user&&remote?.exists&&Number.isSafeInteger(remote.revision)&&remote.revision>0&&remote.payload?.state&&cloudStatesEqual(pending,cloudPending())&&cloudStatesEqual(pending.state,remote.payload.state)&&cloudStatesEqual(S,remote.payload.state)){
      SIASH_CLOUD.revision=remote.revision;cloudSetBase(remote.payload.state);
      if(remote.payload.security)setSecurityState(remote.payload.security);
      SIASH_CLOUD.conflict=false;clearCloudDraft();SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();updateCloudBadge("Sincronizado");loadSharedPending();return true;
@@ -181,7 +194,7 @@ async function cloudLoadAfterLogin(){
      scheduleCloudSave({retry:true});return true;
    }
    updateCloudBadge(!remote?"OFFLINE · rascunho local protegido":cloudDraftIsCurrent(pending,remote)?"PENDENTE · revisão conferida, conciliação necessária":"CONFLITO · revisão remota diferente",true);
-   alert("Existe um rascunho não sincronizado. O salvamento permanece bloqueado. Abra a Conciliação de Rascunhos para inspecionar as versões antes de decidir.");
+   // A conciliação informa a pendência sem interromper o login com alerta modal duplicado.
    void showCloudConflictPanel();
    return true;
  }
@@ -400,8 +413,16 @@ async function showCloudConflictPanel(){
    if(!remote.exists||!remote.payload?.state||!Number.isSafeInteger(remote.revision)||remote.revision<1)throw Error("Estado ou revisão inválidos");
    remoteRevision=remote.revision;remoteState=remote.payload.state;
    if(remoteEl)remoteEl.textContent=JSON.stringify(remoteState,null,2);
-   if(!cloudBaseSnapshot){
-    if(msg)msg.textContent="Base original indisponível. Conciliação automática bloqueada; rascunho protegido.";
+   if(!cloudBaseSnapshot||cloudBaseUser!==SESSION.user){
+    const differences=cloudDraftDifferenceSummary(local,remoteState);
+    if(pending?.user===SESSION.user&&cloudStatesEqual(pending,cloudPending())&&SIASH_CLOUD.editGeneration===localGeneration&&cloudStatesEqual(local,remoteState)&&cloudStatesEqual(S,remoteState)){
+     SIASH_CLOUD.revision=remoteRevision;cloudSetBase(remoteState);
+     if(remote.payload.security)setSecurityState(remote.payload.security);
+     clearCloudDraft();SIASH_CLOUD.conflict=false;SIASH_CLOUD.lastSync=remote.updated_at||new Date().toISOString();
+     updateCloudBadge("Sincronizado");panel.hidden=true;return;
+    }
+    if(msg)msg.textContent="Rascunho antigo sem base original. "+differences.length+" módulo(s) com diferenças. Nenhum dado foi substituído.";
+    if(resolutions)for(const d of differences){const p=document.createElement("p");p.textContent=d.module+(d.localCount===null||d.remoteCount===null?" — conteúdo diferente":" — local: "+d.localCount+" registro(s); servidor: "+d.remoteCount+" registro(s)");resolutions.appendChild(p);if(d.records)for(const record of d.records){const row=document.createElement("p");row.textContent="  "+record.id+" — "+record.status;resolutions.appendChild(row);}}
     return;
    }
    proposal=cloudThreeWayMerge(cloudBaseSnapshot,local,remoteState);
@@ -746,9 +767,9 @@ async function refreshMidnightCensusStatus(){
   const selected=$("d-date")?.value||todayISO();
   const context=selected===data.referenceDate?"":" Selecione "+ref+" no lançamento diário para conferir.";
   const pending=data.attention==="overdue",warning=data.attention==="warning";
-  if(attention){attention.classList.toggle("hidden",!pending);attention.disabled=!pending;}
+  if(attention){attention.classList.toggle("hidden",!pending&&!warning);attention.disabled=false;attention.setAttribute("aria-label","Lembrete informativo de conferência do censo");}
   lateCensusSetStatus(data);
-  if(pending){el.textContent="ATENÇÃO — Censo de "+ref+" pendente após 00h10. Lançamento atrasado permitido. Confira a ocupação da data de referência."+context;el.style.color="#b45309";}
+  if(pending){el.textContent="LEMBRETE — Censo de "+ref+" ainda não conferido. Registre quando possível; as demais funções continuam disponíveis."+context;el.style.color="#b45309";}
   else if(warning){el.textContent="Censo de "+ref+": lembrete de conferência; o lançamento continuará disponível."+context;el.style.color="#b45309";}
   else if(data.attention==="closed"){el.textContent="Conferência manual de "+ref+" registrada. A confirmação histórica não comprova, por si só, presença à meia-noite.";el.style.color="";}
   else if(data.phase==="preparation"){el.textContent="Preparação do censo de "+ref+" disponível; confirmação oficial somente após 00h00.";el.style.color="";}
@@ -767,9 +788,9 @@ function lateCensusSetStatus(data){
  if(!panel)return;
  const overdue=data?.attention==="overdue";
  // Atraso simples não exige regularização supervisionada; mantenha acesso a solicitações históricas.
- panel.classList.toggle("hidden",false);
+ panel.classList.add("hidden");
  if(overdue){LATE_CENSUS_REFERENCE=data.referenceDate;const input=$("census-late-date");if(input&&!input.value)input.value=data.referenceDate;}
- if(SIASH_CLOUD.token)void lateCensusLoadRequests();
+ // Historical requests remain stored; no automatic loading in daily workflow.
 }
 function lateCensusMessage(id,message){const el=$(id);if(el)el.textContent=message;}
 function lateCensusConflict(id){
