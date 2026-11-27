@@ -175,7 +175,7 @@ async function cloudLoadAfterLogin(){
    // Recuperar o rascunho antes de consultar a rede: falha na consulta não pode impedir acesso à cópia local.
    SIASH_CLOUD.conflict=true;
    cloudRestoreDraftBase(pending);
-   S=pending.state;normalize();localStorage.setItem(STORE,JSON.stringify(S));
+   S=JSON.parse(JSON.stringify(pending.state));normalize();localStorage.setItem(STORE,JSON.stringify(S));
    let remote=null;
    try{remote=await cloudJson("/api/state");SIASH_CLOUD.revision=remote.exists?remote.revision:null}
    catch(e){console.error("Consulta da revisão indisponível",e);SIASH_CLOUD.revision=null}
